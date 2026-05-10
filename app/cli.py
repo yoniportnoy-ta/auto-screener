@@ -74,6 +74,43 @@ async def cmd_poll_feedback() -> int:
     return 0
 
 
+async def cmd_clear_score_locks(position_uid: str | None = None) -> int:
+    """Delete score-done locks so the next scan re-queues those candidates.
+
+    Usage:
+        python -m app.cli clear-score-locks                # all positions (nuclear)
+        python -m app.cli clear-score-locks <position_uid> # only candidates on this position
+    """
+    from sqlalchemy import select
+    from .comeet_client import ComeetClient
+    from .db import db_session
+    from .models import CandidateLock
+
+    cleared = 0
+    if position_uid:
+        # Fetch candidate UIDs on the position so we only clear those.
+        with ComeetClient() as client:
+            candidates = client.list_candidates_for_position(position_uid)
+        uids = {str(c.get("uid")) for c in candidates if c.get("uid")}
+        log.info("clear-score-locks: %d candidates on position %s", len(uids), position_uid)
+        if not uids:
+            return 0
+        keys = [f"score_done:{u}" for u in uids]
+        with db_session() as ses:
+            cleared = ses.query(CandidateLock).filter(CandidateLock.key.in_(keys)).delete(
+                synchronize_session=False,
+            )
+    else:
+        log.warning("clear-score-locks: clearing ALL score-done locks (no position uid given)")
+        with db_session() as ses:
+            cleared = ses.query(CandidateLock).filter(
+                CandidateLock.key.like("score_done:%")
+            ).delete(synchronize_session=False)
+
+    log.info("clear-score-locks done: deleted=%d", cleared)
+    return 0
+
+
 async def cmd_backfill_tags(position_uid: str | None = None) -> int:
     """Apply rating tags to every candidate in debug_scoring that has a final_rating
     but no applied_tags row yet. Useful for back-filling tags after a scan was run
@@ -146,7 +183,11 @@ COMMANDS = {
     "refresh-comeet-session": cmd_refresh_comeet_session,
     "poll-feedback": cmd_poll_feedback,
     "backfill-tags": cmd_backfill_tags,
+    "clear-score-locks": cmd_clear_score_locks,
 }
+
+# Commands that accept an optional position_uid positional arg.
+COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks"}
 
 
 def main() -> int:
@@ -156,7 +197,7 @@ def main() -> int:
     parser.add_argument("position_uid", nargs="?", default=None)
     args = parser.parse_args()
     cmd = COMMANDS[args.command]
-    if args.command == "backfill-tags":
+    if args.command in COMMANDS_WITH_POSITION:
         return asyncio.run(cmd(args.position_uid))
     return asyncio.run(cmd())
 
