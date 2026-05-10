@@ -3,7 +3,7 @@ name = "auto-screener"
 version = "0.1.0"
 description = "Comeet candidate auto-screener with Anthropic Claude scoring + recruiter feedback learning. Python port of the Apps Script implementation."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     # Web server + templates
     "fastapi>=0.115",
@@ -42,6 +42,7 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "respx>=0.21",           # mock httpx in tests
+    "socksio>=1.0",          # required when test envs have a SOCKS proxy var set
 ]
 
 [build-system]
@@ -53,7 +54,7 @@ include = ["app*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "W"]
