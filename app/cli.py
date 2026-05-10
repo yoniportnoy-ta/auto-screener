@@ -74,11 +74,78 @@ async def cmd_poll_feedback() -> int:
     return 0
 
 
+async def cmd_backfill_tags(position_uid: str | None = None) -> int:
+    """Apply rating tags to every candidate in debug_scoring that has a final_rating
+    but no applied_tags row yet. Useful for back-filling tags after a scan was run
+    while AUTO_TAG_ENABLED was off.
+
+    Usage:
+        python -m app.cli backfill-tags                # all positions
+        python -m app.cli backfill-tags <position_uid> # one position
+    """
+    from sqlalchemy import select
+    from .comeet_app_client import ComeetAppClient
+    from .db import db_session
+    from .models import AppliedTag, DebugScoring
+    from .tagging import RATING_TAG_NAMES, apply_rating_tag
+
+    with db_session() as ses:
+        stmt = select(DebugScoring).where(DebugScoring.final_rating.isnot(None))
+        if position_uid:
+            stmt = stmt.where(DebugScoring.position_uid == position_uid)
+        rows = ses.scalars(stmt).all()
+    log.info("backfill-tags: %d debug-scoring rows to consider", len(rows))
+
+    # Drop rows that already have ANY applied_tags entry (already tagged).
+    with db_session() as ses:
+        existing_uids = {
+            row[0] for row in ses.execute(
+                select(AppliedTag.candidate_uid).distinct()
+            ).all()
+        }
+
+    rating_lookup = RATING_TAG_NAMES
+    client = ComeetAppClient()
+
+    tagged = 0
+    skipped = 0
+    errors = 0
+    for r in rows:
+        if not r.candidate_uid:
+            skipped += 1
+            continue
+        if r.candidate_uid in existing_uids:
+            skipped += 1
+            continue
+        if r.final_rating not in rating_lookup:
+            skipped += 1
+            continue
+        try:
+            applied = apply_rating_tag(
+                r.candidate_uid, r.final_rating,
+                client=client,
+                position_uid=r.position_uid,
+                position_name=r.position_name,
+                force=True,  # bypass the AUTO_TAG_ENABLED check (we know we want this)
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("backfill-tags: %s failed: %s", r.candidate_uid, exc)
+            errors += 1
+            continue
+        if applied:
+            tagged += 1
+        else:
+            skipped += 1
+    log.info("backfill-tags done: tagged=%d skipped=%d errors=%d", tagged, skipped, errors)
+    return 0
+
+
 COMMANDS = {
     "scan-all": cmd_scan_all,
     "refresh-rubrics": cmd_refresh_rubrics,
     "refresh-comeet-session": cmd_refresh_comeet_session,
     "poll-feedback": cmd_poll_feedback,
+    "backfill-tags": cmd_backfill_tags,
 }
 
 
@@ -86,8 +153,12 @@ def main() -> int:
     configure_logging()
     parser = argparse.ArgumentParser(prog="app.cli")
     parser.add_argument("command", choices=COMMANDS.keys())
+    parser.add_argument("position_uid", nargs="?", default=None)
     args = parser.parse_args()
-    return asyncio.run(COMMANDS[args.command]())
+    cmd = COMMANDS[args.command]
+    if args.command == "backfill-tags":
+        return asyncio.run(cmd(args.position_uid))
+    return asyncio.run(cmd())
 
 
 if __name__ == "__main__":

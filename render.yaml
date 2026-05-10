@@ -59,7 +59,7 @@ services:
       - key: SCORING_USE_V2
         value: "1"
       - key: AUTO_TAG_ENABLED
-        value: "0"
+        value: "1"   # apply rating tags from both UI scans and the cron
       - key: TAG_RATING_THRESHOLD
         value: "3"
       - key: NOTE_RATING_THRESHOLD
