@@ -8,15 +8,16 @@ from __future__ import annotations
 import pytest
 
 from app.comeet_app_client import _coerce_int, _extract_person_id
-from app.tagging import RATING_TAG_SUFFIX, rating_tag_name
+from app.tagging import RATING_TAG_NAMES, rating_tag_color, rating_tag_name
 
 
-def test_rating_tag_name_for_each_rating() -> None:
-    assert rating_tag_name(5) == "AI: Superstar"
-    assert rating_tag_name(4) == "AI: Great"
-    assert rating_tag_name(3) == "AI: OK"
-    assert rating_tag_name(2) == "AI: Not a fit"
-    assert rating_tag_name(1) == "AI: Way off"
+def test_rating_tag_name_matches_comeet_tags() -> None:
+    """Tag names match the human-created Comeet tags (incl. the space typo in 'Way off')."""
+    assert rating_tag_name(5) == "Superstar (AI Screener)"
+    assert rating_tag_name(4) == "Great (AI Screener)"
+    assert rating_tag_name(3) == "OK (AI Screener)"
+    assert rating_tag_name(2) == "Not a fit (AI Screener)"
+    assert rating_tag_name(1) == "Way off ( AI Screener)"
 
 
 def test_rating_tag_name_unknown_rating_raises() -> None:
@@ -26,8 +27,14 @@ def test_rating_tag_name_unknown_rating_raises() -> None:
         rating_tag_name(6)
 
 
-def test_rating_tag_suffix_covers_full_range() -> None:
-    assert set(RATING_TAG_SUFFIX.keys()) == {1, 2, 3, 4, 5}
+def test_rating_tag_names_covers_full_range() -> None:
+    assert set(RATING_TAG_NAMES.keys()) == {1, 2, 3, 4, 5}
+
+
+def test_rating_tag_color_is_none_for_all_ratings() -> None:
+    """Colors are owned by Comeet's tag-management UI; we never overwrite."""
+    for rating in (1, 2, 3, 4, 5):
+        assert rating_tag_color(rating) is None
 
 
 def test_extract_person_id_from_modern_top_level_person_field() -> None:

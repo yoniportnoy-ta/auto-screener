@@ -362,24 +362,48 @@ class ComeetAppClient:
         _, body = self._request("GET", "/api/v1/persontags")
         return body if isinstance(body, list) else []
 
-    def create_persontag(self, name: str) -> dict[str, Any]:
-        """POST /api/v1/persontags. Returns the created tag dict (with id)."""
+    def create_persontag(self, name: str, *, color: str | None = None) -> dict[str, Any]:
+        """POST /api/v1/persontags. Returns the created tag dict (with id).
+
+        `color` is a Comeet palette token (e.g. "green", "darkOrange", "red");
+        omit/None for the default uncolored tag.
+        """
+        body: dict[str, Any] = {"name": name, "is_new_tag": True}
+        if color:
+            body["color"] = color
+        _, resp = self._request("POST", "/api/v1/persontags", json_body=body)
+        if not isinstance(resp, dict) or "id" not in resp:
+            raise ComeetAppError(f"create_persontag unexpected response: {resp!r}")
+        return resp
+
+    def update_persontag_color(self, tag_id: int, color: str | None) -> dict[str, Any]:
+        """PATCH the color of an existing tag. Pass None to clear."""
         _, body = self._request(
-            "POST", "/api/v1/persontags",
-            json_body={"name": name, "is_new_tag": True},
+            "PATCH", f"/api/v1/persontags/{tag_id}",
+            json_body={"color": color},
         )
-        if not isinstance(body, dict) or "id" not in body:
-            raise ComeetAppError(f"create_persontag unexpected response: {body!r}")
+        if not isinstance(body, dict):
+            raise ComeetAppError(f"update_persontag_color unexpected response: {body!r}")
         return body
 
-    def get_or_create_persontag(self, name: str) -> dict[str, Any]:
-        """Idempotent: try to find a tag by exact name; create if absent."""
-        existing = self.list_persontags()
+    def get_or_create_persontag(self, name: str, *, color: str | None = None) -> dict[str, Any]:
+        """Idempotent: find a tag by exact name; create with color if absent.
+
+        If the tag already exists but has no color (or a different color) and
+        `color` was requested, we PATCH it to match — useful when migrating
+        existing AI: tags to the new colored scheme.
+        """
         target = name.strip()
-        for tag in existing:
-            if isinstance(tag, dict) and (tag.get("name") or "").strip() == target:
-                return tag
-        return self.create_persontag(target)
+        for tag in self.list_persontags():
+            if not isinstance(tag, dict) or (tag.get("name") or "").strip() != target:
+                continue
+            if color and (tag.get("color") or "") != color:
+                try:
+                    return self.update_persontag_color(int(tag["id"]), color)
+                except ComeetAppError as exc:
+                    log.info("could not update color on tag %s: %s", target, exc)
+            return tag
+        return self.create_persontag(target, color=color)
 
     def assign_tag_to_person(self, person_id: int, tag_id: int) -> dict[str, Any]:
         """POST /api/v1/persons/{person_id}/tags  body={tag_id}"""

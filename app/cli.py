@@ -18,18 +18,46 @@ log = logging.getLogger(__name__)
 
 
 async def cmd_scan_all() -> int:
-    """Hourly cron entrypoint. Walks all positions, scores new candidates, posts notes/tags."""
-    log.info("scan-all: not yet wired up; will be implemented after scoring port lands")
+    """Hourly cron entrypoint. Walks open positions, scores new candidates, applies rating tags."""
+    from .automation import run_autoscan
+
+    result = run_autoscan()
+    if result.error:
+        log.error("scan-all: %s", result.error)
+        return 1
+    log.info(
+        "scan-all done: positions=%d candidates_scored=%d tags_applied=%d duration=%.1fs",
+        result.positions_scanned, result.candidates_scored, result.tags_applied, result.duration_s,
+    )
     return 0
 
 
 async def cmd_refresh_rubrics() -> int:
-    log.info("refresh-rubrics: not yet wired up")
+    """Force-regenerate learned rubrics for every class with enough feedback."""
+    from .position_classes import list_all_classes
+    from .rubrics import refresh_learned_rubric
+
+    refreshed = 0
+    for cls in list_all_classes():
+        result = refresh_learned_rubric(cls["id"], cls["name"])
+        if result.get("ok"):
+            log.info("refreshed rubric for %s (samples=%s)", cls["id"], result.get("feedback_count"))
+            refreshed += 1
+        else:
+            log.debug("rubric refresh skipped for %s: %s", cls["id"], result.get("error"))
+    log.info("refresh-rubrics done: %d classes refreshed", refreshed)
     return 0
 
 
 async def cmd_refresh_comeet_session() -> int:
-    log.info("refresh-comeet-session: not yet wired up")
+    """Force a fresh app.comeet.co login (drops the cached session first)."""
+    from .comeet_app_client import ComeetAppClient, clear_session
+
+    clear_session()
+    client = ComeetAppClient()
+    client.login()
+    summary = client.session_summary()
+    log.info("refresh-comeet-session done: %s", summary)
     return 0
 
 

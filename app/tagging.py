@@ -25,23 +25,40 @@ from .models import AppliedTag, TagCatalog
 log = logging.getLogger(__name__)
 
 # Tag prefix lets us identify our own tags vs. anything a recruiter applied manually.
+# Prefix kept for legacy log-output / `remove_rating_tags` filtering. The actual
+# Comeet tag names live in RATING_TAG_NAMES below.
 AI_TAG_PREFIX = "AI: "
 
-# Rating → suffix. Same vocabulary the existing screener uses for note headlines.
-RATING_TAG_SUFFIX: dict[int, str] = {
-    5: "Superstar",
-    4: "Great",
-    3: "OK",
-    2: "Not a fit",
-    1: "Way off",
+# The exact tag names that already exist in Comeet (manually created by recruiters
+# with colors set in the Comeet tag-management UI). The screener never creates
+# these — it only assigns them. Mind the spacing inside "Way off ( AI Screener)";
+# we match by exact string.
+RATING_TAG_NAMES: dict[int, str] = {
+    5: "Superstar (AI Screener)",
+    4: "Great (AI Screener)",
+    3: "OK (AI Screener)",
+    2: "Not a fit (AI Screener)",
+    1: "Way off ( AI Screener)",
 }
+
+# Color is set in Comeet's tag UI when the recruiter creates the tag. The screener
+# never overrides it — pass None on every call so get_or_create_persontag won't
+# PATCH the color of an existing tag.
+RATING_TAG_COLOR: dict[int, str | None] = {k: None for k in RATING_TAG_NAMES}
+
+# Legacy alias kept for backwards-compatibility with any callers that imported it.
+RATING_TAG_SUFFIX = RATING_TAG_NAMES
 
 
 def rating_tag_name(rating: int) -> str:
-    suffix = RATING_TAG_SUFFIX.get(int(rating))
-    if not suffix:
+    name = RATING_TAG_NAMES.get(int(rating))
+    if not name:
         raise ValueError(f"unsupported rating {rating!r} (expected 1-5)")
-    return f"{AI_TAG_PREFIX}{suffix}"
+    return name
+
+
+def rating_tag_color(rating: int) -> str | None:
+    return RATING_TAG_COLOR.get(int(rating))
 
 
 # ─── Tag-id cache (Postgres) ─────────────────────────────────────────────────
@@ -83,12 +100,16 @@ def _was_tag_applied(candidate_uid: str, tag_name: str) -> bool:
 
 
 # ─── Public helpers ──────────────────────────────────────────────────────────
-def get_or_create_tag_id(client: ComeetAppClient, name: str) -> int:
-    """Idempotent tag-id resolver. Hits Postgres cache first, then Comeet."""
+def get_or_create_tag_id(client: ComeetAppClient, name: str, *, color: str | None = None) -> int:
+    """Idempotent tag-id resolver. Hits Postgres cache first, then Comeet.
+
+    `color` is the Comeet palette token to apply when creating the tag (and to
+    PATCH onto an existing tag if it differs). None leaves the color alone.
+    """
     cached = _cached_tag_id(name)
     if cached is not None:
         return cached
-    tag = client.get_or_create_persontag(name)
+    tag = client.get_or_create_persontag(name, color=color)
     tag_id = int(tag["id"])
     _cache_tag_id(name, tag_id)
     return tag_id
@@ -129,7 +150,7 @@ def apply_rating_tag(
             log.warning("apply_rating_tag: cannot resolve person_id for %s", candidate_uid)
             return None
 
-    tag_id = get_or_create_tag_id(owner_client, tag_name)
+    tag_id = get_or_create_tag_id(owner_client, tag_name, color=rating_tag_color(rating))
 
     try:
         owner_client.assign_tag_to_person(person_id, tag_id)
@@ -158,10 +179,14 @@ def remove_rating_tags(
     """
     owner_client = client or ComeetAppClient()
     with db_session() as session:
+        # Match any AI-rating tag we've previously applied to this candidate —
+        # both legacy "AI: …" names and the current "<verdict> (AI Screener)" set.
+        rating_names = list(RATING_TAG_NAMES.values())
         rows = session.scalars(
             select(AppliedTag).where(
                 AppliedTag.candidate_uid == candidate_uid,
-                AppliedTag.tag_name.startswith(AI_TAG_PREFIX),
+                (AppliedTag.tag_name.startswith(AI_TAG_PREFIX))
+                | (AppliedTag.tag_name.in_(rating_names)),
             )
         ).all()
     if not rows:
