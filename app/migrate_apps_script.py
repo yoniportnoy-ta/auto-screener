@@ -53,6 +53,43 @@ EXPECTED_HEADERS = (
     "CandidateUID", "CandidateName", "AIRating", "Verdict", "Note",
 )
 
+# Older/alternate Apps Script schema used spaces and "Recruiter" / "Recruiter Verdict".
+# We accept both. Map alternate header → canonical via case+space normalisation.
+_HEADER_ALIASES: dict[str, str] = {
+    "Timestamp": "Timestamp",
+    "Recruiter": "RecruiterEmail",
+    "RecruiterEmail": "RecruiterEmail",
+    "Recruiter Email": "RecruiterEmail",
+    "PositionUID": "PositionUID",
+    "Position UID": "PositionUID",
+    "PositionName": "PositionName",
+    "Position Name": "PositionName",
+    "CandidateUID": "CandidateUID",
+    "Candidate UID": "CandidateUID",
+    "CandidateName": "CandidateName",
+    "Candidate Name": "CandidateName",
+    "AIRating": "AIRating",
+    "AI Rating": "AIRating",
+    "Verdict": "Verdict",
+    "Recruiter Verdict": "Verdict",
+    "Note": "Note",
+    "Notes": "Note",
+}
+
+
+def _normalize_headers(raw_headers: list[str]) -> list[str] | None:
+    """Map a row of headers to the canonical EXPECTED_HEADERS order.
+
+    Returns None when the headers can't be mapped (i.e. the tab isn't a
+    feedback tab — WaTemplates, Users, Subscriptions etc.).
+    """
+    normalized = [_HEADER_ALIASES.get(h.strip()) for h in raw_headers]
+    if any(n is None for n in normalized):
+        return None
+    if set(normalized) != set(EXPECTED_HEADERS):
+        return None
+    return normalized  # type: ignore[return-value]
+
 
 @dataclass
 class ImportSummary:
@@ -199,19 +236,46 @@ def _import_rows_for_tab(
     if not rows:
         summary.errors.append(f"{tab_label}: empty")
         return
-    if rows[0] != list(EXPECTED_HEADERS):
-        summary.errors.append(
-            f"{tab_label}: header mismatch (expected {EXPECTED_HEADERS}, got {rows[0]})"
-        )
+
+    # Map this tab's actual headers to canonical names, then build a column-index
+    # map. Tabs that don't match any feedback header set get skipped silently
+    # (WaTemplates / Users / Subscriptions etc.).
+    raw_headers = [str(h or "") for h in rows[0]]
+    canonical_headers = _normalize_headers(raw_headers)
+    if canonical_headers is None:
+        log.info("skipping non-feedback tab %s (headers: %s)", tab_label, raw_headers[:6])
         return
+
+    col_index = {name: canonical_headers.index(name) for name in EXPECTED_HEADERS}
+
+    # Auto-register the class if it's not in the catalogue (the user had ad-hoc
+    # tabs like "Android Team Lead" in the legacy sheet).
+    if class_id == "general" and class_name and class_name != "General":
+        derived_id = "".join(c.lower() if c.isalnum() else "_" for c in class_name).strip("_")
+        if derived_id:
+            _ensure_custom_class(derived_id, class_name)
+            class_id = derived_id
 
     log.info("importing %s as class_id=%s class_name=%s", tab_label, class_id, class_name)
     for raw in rows[1:]:
         summary.rows_seen += 1
         if not raw:
             continue
-        row = (list(raw) + [""] * len(EXPECTED_HEADERS))[: len(EXPECTED_HEADERS)]
-        ts_raw, recruiter_email, pos_uid, pos_name, cand_uid, cand_name, ai_str, rec_str, note = row
+        # Pad the row in case the writer trimmed trailing empties.
+        padded = list(raw) + [""] * (len(canonical_headers) - len(raw))
+
+        def _cell(name: str) -> str:
+            return str(padded[col_index[name]] or "").strip() if col_index[name] < len(padded) else ""
+
+        ts_raw = _cell("Timestamp")
+        recruiter_email = _cell("RecruiterEmail")
+        pos_uid = _cell("PositionUID")
+        pos_name = _cell("PositionName")
+        cand_uid = _cell("CandidateUID")
+        cand_name = _cell("CandidateName")
+        ai_str = _cell("AIRating")
+        rec_str = _cell("Verdict")
+        note = _cell("Note")
         if not (cand_uid and pos_uid):
             summary.bump_skip("missing candidate or position uid")
             continue
