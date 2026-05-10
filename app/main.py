@@ -1,0 +1,101 @@
+"""FastAPI entrypoint.
+
+The web app exposes:
+  - /          — recruiter UI (Jinja-rendered Index template)
+  - /healthz   — health probe for Render
+  - /api/*     — JSON endpoints called by the UI (positions, scan, score, feedback)
+  - /webhook/* — placeholder for Comeet evaluation webhook (later)
+
+Routes are organised under app/routes/ and registered here.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+
+from .config import settings
+from .logging_config import configure_logging
+
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    configure_logging()
+    log.info(
+        "starting auto-screener env=%s log_level=%s scoring_v2=%s auto_tag=%s",
+        settings.app_env, settings.log_level, settings.scoring_use_v2, settings.auto_tag_enabled,
+    )
+    yield
+    log.info("shutting down")
+
+
+app = FastAPI(
+    title="Auto Screener",
+    description="Comeet candidate auto-screener with Claude scoring + recruiter feedback learning.",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if not settings.is_production else None,
+    redoc_url=None,
+)
+
+
+@app.middleware("http")
+async def request_logger(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration_ms = int((time.monotonic() - start) * 1000)
+    log.info(
+        "%s %s -> %d (%dms)",
+        request.method, request.url.path, response.status_code, duration_ms,
+    )
+    return response
+
+
+@app.get("/healthz", response_class=PlainTextResponse, include_in_schema=False)
+async def healthz() -> str:
+    """Render's health-check endpoint. Cheap; no DB hit."""
+    return "ok"
+
+
+@app.get("/readyz", include_in_schema=False)
+async def readyz() -> JSONResponse:
+    """Readiness probe — checks DB connectivity."""
+    from sqlalchemy import text
+    from .db import engine
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return JSONResponse({"ready": True})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("readiness check failed")
+        return JSONResponse({"ready": False, "error": str(exc)}, status_code=503)
+
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
+# Will be wired as we port modules. Stubbed for now so the deployment works.
+try:
+    from .routes import api as api_routes  # noqa: F401
+    app.include_router(api_routes.router, prefix="/api", tags=["api"])
+except ImportError:
+    log.warning("routes/api.py not yet implemented")
+
+try:
+    from .routes import ui as ui_routes  # noqa: F401
+    app.include_router(ui_routes.router, tags=["ui"])
+except ImportError:
+    log.warning("routes/ui.py not yet implemented")
+
+
+# Static assets (CSS / JS extracted from the Apps Script Index.html, when ported).
+try:
+    app.mount("/static", StaticFiles(directory="app/static"), name="static")
+except RuntimeError:
+    # static/ dir may not exist yet during early scaffolding
+    log.debug("app/static missing; static mount skipped")

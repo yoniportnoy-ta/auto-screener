@@ -1,0 +1,101 @@
+# Render Blueprint: auto-screener web service + Postgres database.
+#
+# To deploy:
+#   1. Create a new Blueprint instance pointing at this repo.
+#   2. Render reads this file, provisions the database, deploys the web service.
+#   3. After first deploy, set the secret env vars (see env: from-database below for which
+#      are auto-injected; the rest must be set manually in the dashboard).
+
+databases:
+  - name: auto-screener-db
+    databaseName: auto_screener
+    user: auto_screener
+    plan: starter        # $7/mo. Bump to "standard" when you outgrow it.
+
+services:
+  - type: web
+    name: auto-screener
+    runtime: python
+    plan: starter        # $7/mo.
+    region: frankfurt    # match Comeet's likely region; closer to recruiters in EU.
+    branch: main
+    rootDir: .
+    buildCommand: pip install -e .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: auto-screener-db
+          property: connectionString
+      # Secrets — set in the Render dashboard, never committed.
+      - key: SCREENER_API_TOKEN
+        sync: false
+      - key: COMEET_API_KEY
+        sync: false
+      - key: COMEET_API_SECRET
+        sync: false
+      - key: COMEET_APP_EMAIL
+        sync: false
+      - key: COMEET_APP_PASSWORD
+        sync: false
+      - key: CAPTCHA_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-20250514
+      - key: SCORING_USE_V2
+        value: "1"
+      - key: AUTO_TAG_ENABLED
+        value: "0"
+      - key: TAG_RATING_THRESHOLD
+        value: "3"
+      - key: NOTE_RATING_THRESHOLD
+        value: "3"
+      - key: SCREENER_MAX_PER_RUN
+        value: "20"
+      - key: SCREENER_STEP_SUBSTRINGS
+        value: "cv screen / recruiter"
+      - key: EXCLUDED_RECRUITING_STATUSES
+        value: "Rejected,Withdrawn,Hired"
+
+  # Scheduled scan across all open positions. Hourly is reasonable; tune as needed.
+  - type: cron
+    name: auto-screener-scan
+    runtime: python
+    plan: starter
+    region: frankfurt
+    branch: main
+    rootDir: .
+    buildCommand: pip install -e .
+    schedule: "0 * * * *"   # every hour at :00
+    startCommand: python -m app.cli scan-all
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: auto-screener-db
+          property: connectionString
+      - key: SCREENER_API_TOKEN
+        sync: false
+      - key: COMEET_API_KEY
+        sync: false
+      - key: COMEET_API_SECRET
+        sync: false
+      - key: COMEET_APP_EMAIL
+        sync: false
+      - key: COMEET_APP_PASSWORD
+        sync: false
+      - key: CAPTCHA_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
