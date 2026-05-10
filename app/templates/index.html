@@ -131,6 +131,16 @@
           <span id="autoScreenStatus" class="small">— pick a class first —</span>
         </label>
       </div>
+      <div class="filter-field" style="flex:0 0 auto; align-self:flex-end">
+        <button class="ghost" id="btnNewClass" style="font-size:0.78rem">+ New class</button>
+      </div>
+    </div>
+
+    <div id="newClassRow" style="display:none; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-top:0.45rem; padding:0.45rem 0.6rem; background:rgba(var(--accent-rgb), 0.06); border:1px solid var(--border); border-radius:8px">
+      <input type="text" id="newClassName" placeholder="New class name…" style="flex:1; min-width:180px; padding:0.35rem 0.55rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem" />
+      <button type="button" class="primary" id="btnSaveNewClass">Create</button>
+      <button type="button" class="ghost" id="btnCancelNewClass">Cancel</button>
+      <span id="newClassStatus" class="small" style="color:var(--muted)"></span>
     </div>
 
     <div class="row">
@@ -317,6 +327,40 @@
       status.style.color = 'var(--muted)';
     }
   }
+
+  // ─── Create class inline form ────────────────────────────────────────
+  document.getElementById('btnNewClass').addEventListener('click', () => {
+    const row = document.getElementById('newClassRow');
+    const showing = row.style.display === 'flex';
+    row.style.display = showing ? 'none' : 'flex';
+    if (!showing) document.getElementById('newClassName').focus();
+  });
+  document.getElementById('btnCancelNewClass').addEventListener('click', () => {
+    document.getElementById('newClassRow').style.display = 'none';
+    document.getElementById('newClassName').value = '';
+    document.getElementById('newClassStatus').textContent = '';
+  });
+  document.getElementById('btnSaveNewClass').addEventListener('click', async () => {
+    const name = document.getElementById('newClassName').value.trim();
+    if (!name) return;
+    const status = document.getElementById('newClassStatus');
+    status.textContent = 'Creating…';
+    status.style.color = 'var(--muted)';
+    try {
+      const res = await api('/api/position-classes', { name: name, levels: [] });
+      // Refresh class list and select the newly-created one.
+      allClasses = await api('/api/position-classes');
+      populateClasses();
+      document.getElementById('posClass').value = res.id;
+      updateLevels();
+      document.getElementById('newClassRow').style.display = 'none';
+      document.getElementById('newClassName').value = '';
+      status.textContent = '';
+    } catch (err) {
+      status.textContent = err.message;
+      status.style.color = 'var(--bad)';
+    }
+  });
 
   document.getElementById('autoScreenToggle').addEventListener('change', async (e) => {
     const uid = document.getElementById('pos').value;
