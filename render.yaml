@@ -14,6 +14,9 @@ databases:
                          # (changed from 90 in May 2024). Render emails warnings; there's
                          # a 14-day grace period to upgrade after expiry. Fine for the
                          # smoke test — upgrade via dashboard before going live for recruiters.
+    region: frankfurt    # Match the web service + cron region so the internal DB
+                         # hostname (dpg-…-a) resolves. Cross-region uses the external
+                         # hostname which adds ~150 ms per query.
 
 services:
   - type: web
