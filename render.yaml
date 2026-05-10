@@ -10,8 +10,10 @@ databases:
   - name: auto-screener-db
     databaseName: auto_screener
     user: auto_screener
-    plan: free           # 1 GB, 256 MB RAM. Auto-deleted after 90 days unless upgraded
-                         # via the dashboard. Fine for the initial smoke test.
+    plan: free           # 1 GB storage, 256 MB RAM. Free Postgres expires after 30 days
+                         # (changed from 90 in May 2024). Render emails warnings; there's
+                         # a 14-day grace period to upgrade after expiry. Fine for the
+                         # smoke test — upgrade via dashboard before going live for recruiters.
 
 services:
   - type: web
