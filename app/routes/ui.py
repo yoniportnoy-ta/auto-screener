@@ -15,4 +15,6 @@ templates = Jinja2Templates(directory=str(templates_dir))
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "title": "Auto Screener"})
+    # Starlette ≥0.27 expects (request, name, context) positionally; the older
+    # (name, context_with_request) form raises "unhashable type: 'dict'".
+    return templates.TemplateResponse(request, "index.html", {"title": "Auto Screener"})
