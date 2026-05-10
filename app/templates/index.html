@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #9671ff;
+      --accent-rgb: 150, 113, 255;
+      --accent-link: #c9b8ff;
+      --accent-link-hover: #ddd0ff;
+      --ok: #22c55e;
+      --warn: #eab308;
+      --bad: #ef4444;
+      --border: #2d3a4d;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5;
+    }
+    .wrap { max-width: 1480px; margin: 0 auto; padding: 1.5rem clamp(1rem, 2vw, 2rem); }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; font-weight: 600; }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.25rem; margin-bottom: 1rem;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    select, input, button { font: inherit; }
+    select, input[type="text"] {
+      width: 100%; padding: 0.5rem 0.65rem; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-top: 0.75rem; }
+    .row > div { flex: 1 1 200px; }
+    .filters-row { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; margin-bottom: 0.75rem; }
+    .filter-field { flex: 1 1 160px; min-width: 140px; }
+    .filter-field.grow { flex: 2 1 260px; }
+    button.primary {
+      background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
+      padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
+      font-weight: 600; font-size: 0.85rem;
+    }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.ghost {
+      background: transparent; color: var(--muted); border: 1px solid var(--border);
+      padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
+      font-weight: 600; font-size: 0.85rem;
+    }
+    .err { color: #fca5a5; font-size: 0.9rem; margin-top: 0.75rem; }
+    .meta { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td {
+      text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 500; }
+    .pill {
+      display: inline-block; padding: 0.4rem 0.75rem; border-radius: 8px;
+      font-size: 0.8rem; font-weight: 600; border: 1px solid var(--border);
+    }
+    .pill.r5 { border-color: rgba(34,197,94,0.75);  background: rgba(34,197,94,0.12); color: #4ade80; }
+    .pill.r4 { border-color: rgba(132,204,22,0.7);  background: rgba(132,204,22,0.12); color: #a3e635; }
+    .pill.r3 { border-color: rgba(234,179,8,0.7);   background: rgba(234,179,8,0.12); color: #fbbf24; }
+    .pill.r2 { border-color: rgba(249,115,22,0.7);  background: rgba(249,115,22,0.12); color: #fb923c; }
+    .pill.r1 { border-color: rgba(239,68,68,0.75);  background: rgba(239,68,68,0.10); color: #fca5a5; }
+    .small { font-size: 0.78rem; color: var(--muted); }
+    .reasons { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+    .reasons .col { flex: 1 1 45%; min-width: 180px; }
+    .reasons .label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.2rem; }
+    .reasons ul { margin: 0; padding-left: 1.05rem; font-size: 0.82rem; }
+    .reasons .yes .label { color: #4ade80; }
+    .reasons .no  .label { color: #f87171; }
+    .feedback {
+      margin-top: 0.45rem; padding: 0.55rem 0.65rem;
+      background: rgba(var(--accent-rgb), 0.06); border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .feedback .verdict-row { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+    .feedback .verdict-row button {
+      padding: 0.25rem 0.6rem; border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted); cursor: pointer;
+      font: inherit; font-size: 0.78rem; font-weight: 600;
+    }
+    .feedback .verdict-row button.selected { color: var(--text); background: rgba(var(--accent-rgb), 0.18); border-color: var(--accent); }
+    .feedback input[type="text"] { font-size: 0.8rem; }
+    a.link { color: var(--accent-link); text-decoration: none; }
+    a.link:hover { color: var(--accent-link-hover); }
+    .row-error td { background: rgba(239,68,68,0.07); color: #fca5a5; }
+    .row-skipped td { background: rgba(234,179,8,0.05); color: #facc15; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Auto Screener</h1>
+
+  <div class="panel">
+    <div class="filters-row">
+      <div class="filter-field">
+        <label for="filterRecruiter">Lead recruiter</label>
+        <select id="filterRecruiter"></select>
+      </div>
+      <div class="filter-field">
+        <label for="filterLocation">Location</label>
+        <select id="filterLocation"></select>
+      </div>
+      <div class="filter-field grow">
+        <label for="pos">Open position</label>
+        <select id="pos"></select>
+      </div>
+    </div>
+
+    <div class="filters-row">
+      <div class="filter-field grow">
+        <label for="posClass">Position class <span id="classRequired" style="color:var(--bad)">*</span></label>
+        <select id="posClass"><option value="">— select class —</option></select>
+      </div>
+      <div class="filter-field" id="levelWrap" style="display:none">
+        <label for="posLevel">Level</label>
+        <select id="posLevel"><option value="">Any level</option></select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div style="flex: 0 0 auto; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button class="primary" id="scan">Scan &amp; rate</button>
+        <button class="ghost" id="clearFilters">Clear filters</button>
+      </div>
+    </div>
+
+    <div id="err" class="err" style="display:none"></div>
+    <div id="meta" class="meta"></div>
+  </div>
+
+  <div class="panel" id="resultsPanel" style="display:none">
+    <div id="batchNav" class="meta" style="margin-bottom:0.65rem"></div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Candidate</th>
+            <th>Applied</th>
+            <th>Rating</th>
+            <th>Summary</th>
+            <th>Feedback</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ─── Tiny JSON helper ───────────────────────────────────────────────────
+  async function api(path, body) {
+    const opts = { method: body ? 'POST' : 'GET', headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(path, opts);
+    if (!r.ok) {
+      let detail = await r.text();
+      try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
+      throw new Error('HTTP ' + r.status + ': ' + detail);
+    }
+    return r.json();
+  }
+
+  function setErr(msg) {
+    const el = document.getElementById('err');
+    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.style.display = 'block'; el.textContent = msg;
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ─── State ──────────────────────────────────────────────────────────────
+  let allPositions = [];
+  let allClasses = [];
+  let lastResults = [];
+  let currentPositionName = '';
+  let seenUids = [];
+
+  // ─── Position dropdowns ─────────────────────────────────────────────────
+  function uniqSorted(values) {
+    return [...new Set(values.filter(Boolean))].sort();
+  }
+
+  function rebuildLocations() {
+    const rec = document.getElementById('filterRecruiter').value;
+    const sel = document.getElementById('filterLocation');
+    const prev = sel.value;
+    const subset = rec ? allPositions.filter(p => p.leadRecruiter === rec) : allPositions;
+    const locs = uniqSorted(subset.map(p => p.location));
+    sel.innerHTML = '';
+    sel.appendChild(new Option(rec ? 'All locations (this recruiter)' : 'All locations', ''));
+    locs.forEach(l => sel.appendChild(new Option(l, l)));
+    sel.value = locs.includes(prev) ? prev : '';
+  }
+
+  function rebuildPositions() {
+    const rec = document.getElementById('filterRecruiter').value;
+    const loc = document.getElementById('filterLocation').value;
+    const sel = document.getElementById('pos');
+    const prev = sel.value;
+    sel.innerHTML = '';
+    sel.appendChild(new Option('Select a position…', ''));
+    const filtered = allPositions
+      .filter(p => (!rec || p.leadRecruiter === rec) && (!loc || p.location === loc))
+      .sort((a, b) => (a.name + a.uid).localeCompare(b.name + b.uid));
+    filtered.forEach(p => sel.appendChild(new Option(p.name || p.uid, p.uid)));
+    sel.value = filtered.find(p => p.uid === prev) ? prev : '';
+  }
+
+  function populateRecruiters() {
+    const sel = document.getElementById('filterRecruiter');
+    const recruiters = uniqSorted(allPositions.map(p => p.leadRecruiter));
+    sel.innerHTML = '';
+    sel.appendChild(new Option('All recruiters', ''));
+    recruiters.forEach(r => sel.appendChild(new Option(r, r)));
+  }
+
+  // ─── Class dropdown ─────────────────────────────────────────────────────
+  function populateClasses() {
+    const sel = document.getElementById('posClass');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— select class —</option>';
+    allClasses.forEach(c => {
+      const o = new Option(c.name, c.id);
+      o.dataset.levels = JSON.stringify(c.levels || []);
+      sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+    updateLevels();
+  }
+
+  function updateLevels() {
+    const opt = document.getElementById('posClass').selectedOptions[0];
+    const levels = opt ? JSON.parse(opt.dataset.levels || '[]') : [];
+    const wrap = document.getElementById('levelWrap');
+    const sel = document.getElementById('posLevel');
+    if (levels.length) {
+      sel.innerHTML = '<option value="">Any level</option>';
+      levels.forEach(l => sel.appendChild(new Option(l, l)));
+      wrap.style.display = '';
+    } else {
+      wrap.style.display = 'none';
+    }
+  }
+
+  // ─── Loaders ────────────────────────────────────────────────────────────
+  async function loadAll() {
+    setErr('');
+    document.getElementById('filterRecruiter').innerHTML = '<option>Loading…</option>';
+    document.getElementById('pos').innerHTML = '<option>Loading…</option>';
+    try {
+      const [positions, classes] = await Promise.all([
+        api('/api/positions'),
+        api('/api/position-classes'),
+      ]);
+      allPositions = positions || [];
+      allClasses = classes || [];
+      populateRecruiters();
+      rebuildLocations();
+      rebuildPositions();
+      populateClasses();
+    } catch (err) {
+      setErr(err.message);
+    }
+  }
+
+  // ─── Position selection: pre-load saved class ───────────────────────────
+  document.getElementById('pos').addEventListener('change', async () => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return;
+    try {
+      const cls = await api('/api/position-class/' + encodeURIComponent(uid));
+      if (cls && cls.classId) {
+        document.getElementById('posClass').value = cls.classId;
+        updateLevels();
+        if (cls.level) document.getElementById('posLevel').value = cls.level;
+      }
+    } catch (err) { /* non-fatal */ }
+  });
+
+  document.getElementById('posClass').addEventListener('change', updateLevels);
+
+  document.getElementById('clearFilters').addEventListener('click', () => {
+    document.getElementById('filterRecruiter').value = '';
+    rebuildLocations(); rebuildPositions();
+  });
+
+  document.getElementById('filterRecruiter').addEventListener('change', () => { rebuildLocations(); rebuildPositions(); });
+  document.getElementById('filterLocation').addEventListener('change', rebuildPositions);
+
+  // ─── Scan ───────────────────────────────────────────────────────────────
+  document.getElementById('scan').addEventListener('click', () => runScan(true));
+
+  async function runScan(fresh) {
+    const uid = document.getElementById('pos').value;
+    const classId = document.getElementById('posClass').value;
+    const level = document.getElementById('posLevel').value || '';
+    if (!uid) return setErr('Choose a position.');
+    if (!classId) return setErr('Pick a position class first.');
+    setErr('');
+
+    if (fresh) seenUids = [];
+
+    document.getElementById('meta').textContent = 'Starting batch…';
+    document.getElementById('resultsPanel').style.display = 'none';
+    document.getElementById('tbody').innerHTML = '';
+    lastResults = [];
+
+    try {
+      const begin = await api('/api/scan/begin', {
+        position_uid: uid,
+        seen_uids: seenUids,
+        class_id: classId,
+        class_level: level,
+      });
+      if (begin.empty) {
+        setErr(begin.message || 'No candidates to score.');
+        document.getElementById('meta').textContent = '';
+        return;
+      }
+      currentPositionName = begin.positionName || '';
+      document.getElementById('resultsPanel').style.display = 'block';
+      document.getElementById('batchNav').textContent =
+        begin.remainingNewCount > 0
+          ? `${begin.remainingNewCount} more after this batch`
+          : '';
+
+      seenUids.push(...begin.uids);
+
+      // Score candidates one at a time, append rows as they arrive.
+      const tb = document.getElementById('tbody');
+      for (let i = 0; i < begin.uids.length; i++) {
+        document.getElementById('meta').textContent = `Scoring ${i + 1} of ${begin.uids.length}…`;
+        let summary;
+        try {
+          const out = await api('/api/scan/score', {
+            session_id: begin.sessionId,
+            candidate_uid: begin.uids[i],
+          });
+          summary = out.summary;
+        } catch (err) {
+          summary = { candidateUid: begin.uids[i], error: err.message };
+        }
+        lastResults.push(summary);
+        tb.appendChild(buildRow(summary, uid));
+      }
+
+      // Commit the scan session (drops it from cache).
+      try {
+        await api('/api/scan/finish', {
+          session_id: begin.sessionId,
+          processed_uids: begin.uids,
+        });
+      } catch (err) { /* non-fatal */ }
+      document.getElementById('meta').textContent = `Scored ${lastResults.length}`;
+    } catch (err) {
+      setErr(err.message);
+      document.getElementById('meta').textContent = '';
+    }
+  }
+
+  // ─── Row rendering ──────────────────────────────────────────────────────
+  function buildRow(s, positionUid) {
+    const tr = document.createElement('tr');
+    if (s.error) tr.className = 'row-error';
+
+    const nameCell = document.createElement('td');
+    const nameMain = document.createElement('div');
+    nameMain.innerHTML = '<strong>' + escHtml(s.name || s.candidateUid || '?') + '</strong>'
+      + '<span class="small"> ' + escHtml(s.candidateUid || '') + '</span>';
+    nameCell.appendChild(nameMain);
+    if (s.profileUrl) {
+      const link = document.createElement('div');
+      link.innerHTML = '<a class="link" href="' + escHtml(s.profileUrl) + '" target="_blank" rel="noopener">Comeet ↗</a>';
+      if (s.linkedinUrl) link.innerHTML += ' · <a class="link" href="' + escHtml(s.linkedinUrl) + '" target="_blank" rel="noopener">LinkedIn ↗</a>';
+      if (s.cvUrl)       link.innerHTML += ' · <a class="link" href="' + escHtml(s.cvUrl) + '" target="_blank" rel="noopener">CV ↗</a>';
+      nameCell.appendChild(link);
+    }
+    if (s.tagApplied) {
+      const tag = document.createElement('div');
+      tag.className = 'small';
+      tag.style.color = 'var(--ok)';
+      tag.textContent = '✓ tagged: ' + s.tagApplied;
+      nameCell.appendChild(tag);
+    }
+    tr.appendChild(nameCell);
+
+    const appliedCell = document.createElement('td');
+    appliedCell.innerHTML = '<span class="small">' + escHtml((s.timeCreated || '').slice(0, 10)) + '</span>';
+    tr.appendChild(appliedCell);
+
+    const ratingCell = document.createElement('td');
+    if (s.error) {
+      ratingCell.innerHTML = '<span class="small">' + escHtml(s.error) + '</span>';
+    } else if (s.rating) {
+      ratingCell.innerHTML = '<span class="pill r' + s.rating + '">' + s.rating + ' · '
+        + escHtml(s.ratingLabel || '') + '</span>'
+        + (s.confidence != null ? '<div class="small">' + Math.round(s.confidence * 100) + '% conf.</div>' : '');
+    }
+    tr.appendChild(ratingCell);
+
+    const sumCell = document.createElement('td');
+    if (s.summary) sumCell.innerHTML = '<p style="margin:0">' + escHtml(s.summary) + '</p>';
+    if ((s.strengths && s.strengths.length) || (s.gaps && s.gaps.length)) {
+      let html = '<div class="reasons">';
+      if (s.strengths && s.strengths.length) {
+        html += '<div class="col yes"><div class="label">Why yes</div><ul>'
+          + s.strengths.map(t => '<li>' + escHtml(t) + '</li>').join('')
+          + '</ul></div>';
+      }
+      if (s.gaps && s.gaps.length) {
+        html += '<div class="col no"><div class="label">Why not</div><ul>'
+          + s.gaps.map(t => '<li>' + escHtml(t) + '</li>').join('')
+          + '</ul></div>';
+      }
+      html += '</div>';
+      sumCell.innerHTML += html;
+    }
+    tr.appendChild(sumCell);
+
+    const fbCell = document.createElement('td');
+    if (!s.error && s.candidateUid) fbCell.appendChild(buildFeedbackForm(s, positionUid));
+    tr.appendChild(fbCell);
+
+    return tr;
+  }
+
+  function buildFeedbackForm(s, positionUid) {
+    const wrap = document.createElement('div');
+    wrap.className = 'feedback';
+    wrap.innerHTML = `
+      <div class="verdict-row">
+        <button data-v="5">5</button>
+        <button data-v="4">4</button>
+        <button data-v="3">3</button>
+        <button data-v="2">2</button>
+        <button data-v="1">1</button>
+      </div>
+      <input type="text" placeholder="Note (optional)" />
+      <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
+        <button class="primary save" disabled>Save</button>
+        <span class="small status"></span>
+      </div>
+    `;
+    let selected = null;
+    wrap.querySelectorAll('.verdict-row button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        wrap.querySelectorAll('.verdict-row button').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selected = btn.getAttribute('data-v');
+        wrap.querySelector('.save').disabled = false;
+      });
+    });
+    wrap.querySelector('.save').addEventListener('click', async () => {
+      if (!selected) return;
+      const note = wrap.querySelector('input').value || '';
+      const status = wrap.querySelector('.status');
+      const saveBtn = wrap.querySelector('.save');
+      saveBtn.disabled = true; status.textContent = 'Saving…';
+      try {
+        await api('/api/feedback', {
+          candidate_uid: s.candidateUid,
+          candidate_name: s.name || '',
+          position_uid: positionUid,
+          position_name: currentPositionName,
+          ai_rating: s.rating,
+          recruiter_rating: Number(selected),
+          note: note,
+        });
+        status.textContent = '✓ saved';
+        status.style.color = 'var(--ok)';
+      } catch (err) {
+        status.textContent = err.message;
+        status.style.color = 'var(--bad)';
+        saveBtn.disabled = false;
+      }
+    });
+    return wrap;
+  }
+
+  loadAll();
+</script>
+</body>
+</html>
