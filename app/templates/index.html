@@ -91,6 +91,30 @@
     .feedback input[type="text"] { font-size: 0.8rem; }
     a.link { color: var(--accent-link); text-decoration: none; }
     a.link:hover { color: var(--accent-link-hover); }
+
+    .mode-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .mode-card:hover { border-color: rgba(var(--accent-rgb), 0.55); }
+    .mode-card.active { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.06); }
+    .mode-card .mode-title { font-weight: 700; font-size: 0.95rem; color: var(--text); }
+    .mode-card .mode-body { font-size: 0.8rem; color: var(--muted); margin: 0; line-height: 1.45; flex: 1 1 auto; }
+    .mode-card .mode-cta { width: 100%; padding: 0.55rem 0.75rem; font-size: 0.85rem; }
+    .mode-card .mode-cta.scheduled-on {
+      background: rgba(34, 197, 94, 0.18);
+      border-color: rgba(34, 197, 94, 0.7);
+      color: #4ade80;
+    }
+    @media (max-width: 760px) {
+      .modes { grid-template-columns: 1fr !important; }
+    }
     .row-error td { background: rgba(239,68,68,0.07); color: #fca5a5; }
     .row-skipped td { background: rgba(234,179,8,0.05); color: #facc15; }
   </style>
@@ -124,13 +148,6 @@
         <label for="posLevel">Level</label>
         <select id="posLevel"><option value="">Any level</option></select>
       </div>
-      <div class="filter-field" id="autoScreenWrap" style="flex:0 0 auto">
-        <label>Auto-screen</label>
-        <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; padding:0.45rem 0; color:var(--text)">
-          <input type="checkbox" id="autoScreenToggle" disabled style="width:1.05rem; height:1.05rem; cursor:pointer" />
-          <span id="autoScreenStatus" class="small">— pick a class first —</span>
-        </label>
-      </div>
       <div class="filter-field" style="flex:0 0 auto; align-self:flex-end">
         <button class="ghost" id="btnNewClass" style="font-size:0.78rem">+ New class</button>
       </div>
@@ -143,11 +160,35 @@
       <span id="newClassStatus" class="small" style="color:var(--muted)"></span>
     </div>
 
-    <div class="row">
-      <div style="flex: 0 0 auto; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-        <button class="primary" id="scan">Scan &amp; rate</button>
-        <button class="ghost" id="clearFilters">Clear filters</button>
+    <!-- Three modes the recruiter can choose from on a position. -->
+    <div class="modes" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem">
+      <div class="mode-card" id="modeTrain">
+        <div class="mode-title">🏋️ Train</div>
+        <p class="mode-body">
+          Score a small batch of candidates and give feedback. The model
+          learns from your ratings — feeds the rubric &amp; anchors next time.
+        </p>
+        <button class="primary mode-cta" id="btnTrain">Start training</button>
       </div>
+      <div class="mode-card" id="modeScanNow">
+        <div class="mode-title">⚡ Scan now</div>
+        <p class="mode-body">
+          Score every eligible candidate on this position right now and apply
+          the matching rating tag in Comeet. Idempotent — no double-scoring.
+        </p>
+        <button class="primary mode-cta" id="btnScanNow">Run one-shot scan</button>
+      </div>
+      <div class="mode-card" id="modeSchedule">
+        <div class="mode-title">⏰ Schedule</div>
+        <p class="mode-body">
+          Auto-screen every hour. New candidates get scored &amp; tagged in the
+          background; you only get pinged when one needs attention.
+        </p>
+        <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:0.75rem">
+      <button class="ghost" id="clearFilters" style="flex:0 0 auto">Clear filters</button>
     </div>
 
     <div id="err" class="err" style="display:none"></div>
@@ -295,10 +336,12 @@
     }
   }
 
-  // ─── Position selection: pre-load saved class + auto-screen state ───────
+  // ─── Position selection: pre-load saved class + schedule state ──────────
+  let scheduleEnabled = false;
+
   document.getElementById('pos').addEventListener('change', async () => {
     const uid = document.getElementById('pos').value;
-    setAutoScreenUI(false, !uid);  // disable while loading
+    setScheduleUI(false, !uid);
     if (!uid) return;
     try {
       const cls = await api('/api/position-class/' + encodeURIComponent(uid));
@@ -306,25 +349,26 @@
         document.getElementById('posClass').value = cls.classId;
         updateLevels();
         if (cls.level) document.getElementById('posLevel').value = cls.level;
-        setAutoScreenUI(!!cls.autoScreenEnabled, false);
+        setScheduleUI(!!cls.autoScreenEnabled, false);
       }
     } catch (err) { /* non-fatal */ }
   });
 
-  function setAutoScreenUI(enabled, disabled) {
-    const cb = document.getElementById('autoScreenToggle');
-    const status = document.getElementById('autoScreenStatus');
-    cb.checked = !!enabled;
-    cb.disabled = !!disabled;
+  function setScheduleUI(enabled, disabled) {
+    const btn = document.getElementById('btnSchedule');
+    const card = document.getElementById('modeSchedule');
+    scheduleEnabled = !!enabled;
+    btn.disabled = !!disabled;
+    btn.classList.toggle('scheduled-on', enabled && !disabled);
     if (disabled) {
-      status.textContent = '— pick a class first —';
-      status.style.color = 'var(--muted)';
+      btn.textContent = 'Pick a class first';
+      card.classList.remove('active');
     } else if (enabled) {
-      status.textContent = 'ON — cron will scan every hour';
-      status.style.color = 'var(--ok)';
+      btn.textContent = '✓ Scheduled — click to turn off';
+      card.classList.add('active');
     } else {
-      status.textContent = 'off (training only)';
-      status.style.color = 'var(--muted)';
+      btn.textContent = 'Turn schedule on';
+      card.classList.remove('active');
     }
   }
 
@@ -362,19 +406,18 @@
     }
   });
 
-  document.getElementById('autoScreenToggle').addEventListener('change', async (e) => {
+  document.getElementById('btnSchedule').addEventListener('click', async () => {
     const uid = document.getElementById('pos').value;
-    if (!uid) return;
-    const enabled = e.target.checked;
-    e.target.disabled = true;
+    if (!uid) return setErr('Choose a position.');
+    if (!document.getElementById('posClass').value) return setErr('Pick a position class first.');
+    const next = !scheduleEnabled;
+    setScheduleUI(next, true);
     try {
-      await api('/api/position-class/auto-screen', { position_uid: uid, enabled: enabled });
-      setAutoScreenUI(enabled, false);
+      await api('/api/position-class/auto-screen', { position_uid: uid, enabled: next });
+      setScheduleUI(next, false);
     } catch (err) {
       setErr(err.message);
-      // Revert checkbox state
-      e.target.checked = !enabled;
-      e.target.disabled = false;
+      setScheduleUI(scheduleEnabled, false);
     }
   });
 
@@ -389,7 +432,42 @@
   document.getElementById('filterLocation').addEventListener('change', rebuildPositions);
 
   // ─── Scan ───────────────────────────────────────────────────────────────
-  document.getElementById('scan').addEventListener('click', () => runScan(true));
+  // Train mode: existing batch-and-feedback flow (was the old "Scan & rate" button).
+  document.getElementById('btnTrain').addEventListener('click', () => runScan(true));
+
+  // Scan now: synchronous one-shot autoscan for this position (uncapped).
+  document.getElementById('btnScanNow').addEventListener('click', async () => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return setErr('Choose a position.');
+    if (!document.getElementById('posClass').value) return setErr('Pick a position class first.');
+    setErr('');
+    const btn = document.getElementById('btnScanNow');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Scanning… (this can take several minutes)';
+    document.getElementById('meta').textContent = 'Running one-shot scan…';
+    try {
+      const r = await api('/api/scan/now', { position_uid: uid });
+      const tagsLine = r.tagsApplied
+        ? ` · ${r.tagsApplied} tag${r.tagsApplied === 1 ? '' : 's'} applied`
+        : '';
+      const errLine = r.errors && r.errors.length
+        ? ` · ${r.errors.length} error${r.errors.length === 1 ? '' : 's'}`
+        : '';
+      document.getElementById('meta').textContent =
+        `Scan complete: ${r.scored} scored · ${r.skipped} skipped${tagsLine}${errLine}`
+        + (r.note ? ` (${r.note})` : '');
+      if (r.errors && r.errors.length) {
+        setErr('Errors: ' + r.errors.slice(0, 3).join('; ') + (r.errors.length > 3 ? `; +${r.errors.length - 3} more` : ''));
+      }
+    } catch (err) {
+      setErr(err.message);
+      document.getElementById('meta').textContent = '';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
 
   async function runScan(fresh) {
     const uid = document.getElementById('pos').value;

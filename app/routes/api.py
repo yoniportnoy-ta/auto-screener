@@ -158,6 +158,32 @@ def scan_finish(body: FinishScanBody) -> dict[str, Any]:
     return finish_scan_batch(body.session_id, body.processed_uids)
 
 
+class ScanNowBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+
+
+@router.post("/scan/now")
+def scan_now(body: ScanNowBody) -> dict[str, Any]:
+    """Run the autoscan pipeline immediately on one position. Synchronous —
+    can take a few minutes for positions with many candidates."""
+    from ..automation import scan_one_position_now
+
+    try:
+        result = scan_one_position_now(body.position_uid)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {
+        "positionUid": result.position_uid,
+        "positionName": result.position_name,
+        "classId": result.class_id,
+        "scored": result.scored,
+        "skipped": result.skipped,
+        "tagsApplied": result.tags_applied,
+        "errors": result.errors,
+        "note": result.note,
+    }
+
+
 # ─── Feedback ────────────────────────────────────────────────────────────────
 class FeedbackBody(BaseModel):
     candidate_uid: str = Field(min_length=1)

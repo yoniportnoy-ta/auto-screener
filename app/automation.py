@@ -323,10 +323,38 @@ def _serialise(result: AutoscanResult) -> dict:
     return out
 
 
+def scan_one_position_now(
+    position_uid: str, *, time_budget_s: float = 600.0,
+) -> PositionRunResult:
+    """Public wrapper around _scan_one_position for the "Scan now" button.
+
+    Calls the same eligibility + score-and-tag pipeline the cron uses, on a
+    single position, synchronously. Time-bounded; partial completion is safe
+    because the score-done lock means re-clicking continues from the next
+    unscored candidate.
+    """
+    from .comeet_client import ComeetClient
+
+    with ComeetClient() as client:
+        position = client.get_position(position_uid)
+    if not position:
+        raise ValueError(f"Position not found: {position_uid}")
+    cls = get_position_class(position_uid)
+    if not cls:
+        raise ValueError("No class assigned to this position")
+    return _scan_one_position(
+        position_uid=position_uid,
+        position_name=str(position.get("name") or position_uid),
+        class_id=cls["classId"],
+        time_remaining=time_budget_s,
+    )
+
+
 __all__ = [
     "AutoscanResult",
     "PositionRunResult",
     "run_autoscan",
+    "scan_one_position_now",
     "get_last_run_log",
     "reset_cursor",
 ]
