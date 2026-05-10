@@ -28,3 +28,7 @@ htmlcov/
 # Local SQLite (only used in dev fallback)
 *.db
 *.sqlite3
+
+# One-shot migration data exported from the legacy Apps Script. Do NOT commit;
+# contains internal position UIDs and recruiter assignments.
+/migration/

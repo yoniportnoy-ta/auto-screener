@@ -176,7 +176,9 @@ def import_position_classes(json_path: Path) -> ImportSummary:
         summary.errors.append("expected JSON object keyed by position_uid")
         return summary
 
+    catalogue_ids = {c["id"] for c in list_all_classes()}
     name_lookup = {c["id"]: c["name"] for c in list_all_classes()}
+    custom_seen: set[str] = set()  # avoid duplicate custom-class inserts in one run
 
     for position_uid, payload in data.items():
         summary.rows_seen += 1
@@ -191,6 +193,13 @@ def import_position_classes(json_path: Path) -> ImportSummary:
         if not class_id or not class_name:
             summary.bump_skip("missing class_id or class_name")
             continue
+
+        # Auto-register classes that aren't in the default catalogue (e.g. legacy
+        # values like "it", "nlp", "talent_acquisition" that the recruiter created
+        # in the Apps Script version). Otherwise the UI dropdown wouldn't show them.
+        if class_id not in catalogue_ids and class_id not in custom_seen:
+            _ensure_custom_class(class_id, class_name)
+            custom_seen.add(class_id)
 
         with db_session() as ses:
             stmt = pg_insert(PositionClass).values(
@@ -211,6 +220,25 @@ def import_position_classes(json_path: Path) -> ImportSummary:
         summary.rows_imported += 1
 
     return summary
+
+
+def _ensure_custom_class(class_id: str, class_name: str) -> None:
+    """Insert a custom class row if not already present. Used by the position-class
+    importer to register classes that exist in legacy data but not in the catalogue."""
+    from .models import CustomPositionClass
+
+    with db_session() as ses:
+        existing = ses.scalar(
+            select(CustomPositionClass).where(CustomPositionClass.class_id == class_id)
+        )
+        if existing:
+            return
+        stmt = pg_insert(CustomPositionClass).values(
+            class_id=class_id, class_name=class_name, levels_json=[],
+        )
+        stmt = stmt.on_conflict_do_nothing(index_elements=[CustomPositionClass.class_id])
+        ses.execute(stmt)
+    log.info("auto-registered custom class: id=%s name=%s", class_id, class_name)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
