@@ -10,8 +10,8 @@ databases:
   - name: auto-screener-db
     databaseName: auto_screener
     user: auto_screener
-    plan: basic_256mb    # $6/mo. Cheapest paid Postgres after Render retired "starter".
-                         # Upgrade to basic_1gb / pro_4gb later if needed.
+    plan: free           # 1 GB, 256 MB RAM. Auto-deleted after 90 days unless upgraded
+                         # via the dashboard. Fine for the initial smoke test.
 
 services:
   - type: web
