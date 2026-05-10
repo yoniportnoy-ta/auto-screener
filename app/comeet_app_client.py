@@ -401,27 +401,33 @@ class ComeetAppClient:
 def _extract_person_id(payload: Any) -> int | None:
     """Best-effort search for a numeric person identifier in a candidate payload.
 
-    Comeet's web-app candidate response wraps a `person` object with a numeric `id`.
-    We also accept `person_id` / `person_uid` if either is purely numeric.
+    Observed Comeet shape (api/v1/candidates/{id}):
+        { ..., "person": 57144261, "person_uid": "C3.F7635", ... }
+
+    where `person` is the numeric ID we need for /persons/{id}/tags. We also
+    handle older shapes: `person` as a nested object containing `.id`, plus
+    top-level `person_id`. `person_uid` is alphanumeric and not what tagging
+    expects, so we never use it for the numeric ID.
     """
     if not isinstance(payload, dict):
         return None
 
-    person = payload.get("person")
-    if isinstance(person, dict):
-        for key in ("id", "person_id", "uid"):
-            value = person.get(key)
-            converted = _coerce_int(value)
-            if converted is not None:
-                return converted
-
-    for key in ("person_id", "person_uid"):
-        value = payload.get(key)
-        converted = _coerce_int(value)
+    # Modern shape: top-level numeric "person" field.
+    person_value = payload.get("person")
+    if person_value is not None and not isinstance(person_value, dict):
+        converted = _coerce_int(person_value)
         if converted is not None:
             return converted
 
-    return None
+    # Older shape: nested {"person": {"id": N, ...}}.
+    if isinstance(person_value, dict):
+        for key in ("id", "person_id", "uid"):
+            converted = _coerce_int(person_value.get(key))
+            if converted is not None:
+                return converted
+
+    # Direct top-level person_id (rare).
+    return _coerce_int(payload.get("person_id"))
 
 
 def _coerce_int(value: Any) -> int | None:

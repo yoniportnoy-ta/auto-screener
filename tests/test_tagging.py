@@ -30,6 +30,12 @@ def test_rating_tag_suffix_covers_full_range() -> None:
     assert set(RATING_TAG_SUFFIX.keys()) == {1, 2, 3, 4, 5}
 
 
+def test_extract_person_id_from_modern_top_level_person_field() -> None:
+    """The modern Comeet shape: `person` is a top-level numeric field."""
+    payload = {"id": 57511356, "person": 57144261, "person_uid": "C3.F7635"}
+    assert _extract_person_id(payload) == 57144261
+
+
 def test_extract_person_id_from_nested_person_object() -> None:
     payload = {"id": 9999, "person": {"id": 57144261, "name": "Ada"}}
     assert _extract_person_id(payload) == 57144261
@@ -38,6 +44,12 @@ def test_extract_person_id_from_nested_person_object() -> None:
 def test_extract_person_id_falls_back_to_top_level_field() -> None:
     payload = {"person_id": 57144261}
     assert _extract_person_id(payload) == 57144261
+
+
+def test_extract_person_id_ignores_alphanumeric_person_uid() -> None:
+    """`person_uid` is alphanumeric (e.g. 'C3.F7635') and unusable for tagging — never accept it."""
+    payload = {"person_uid": "C3.F7635"}
+    assert _extract_person_id(payload) is None
 
 
 def test_extract_person_id_returns_none_when_absent() -> None:
