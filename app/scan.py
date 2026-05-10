@@ -313,7 +313,10 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
 
     # Best-effort tag — apply_rating_tag is a no-op when AUTO_TAG_ENABLED=0.
     try:
-        applied = apply_rating_tag(summary.candidate_uid, summary.rating)
+        applied = apply_rating_tag(
+            summary.candidate_uid, summary.rating,
+            position_uid=sess.position_uid, position_name=sess.position_name,
+        )
         if applied:
             summary.tag_applied = applied
     except Exception as exc:  # noqa: BLE001

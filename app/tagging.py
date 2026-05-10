@@ -78,10 +78,21 @@ def _cache_tag_id(name: str, comeet_tag_id: int) -> None:
         session.execute(stmt)
 
 
-def _record_applied_tag(candidate_uid: str, tag_name: str, person_id: int | None) -> None:
+def _record_applied_tag(
+    candidate_uid: str,
+    tag_name: str,
+    person_id: int | None,
+    *,
+    position_uid: str | None = None,
+    position_name: str | None = None,
+) -> None:
     with db_session() as session:
         stmt = pg_insert(AppliedTag).values(
-            candidate_uid=candidate_uid, tag_name=tag_name, person_id=person_id,
+            candidate_uid=candidate_uid,
+            tag_name=tag_name,
+            person_id=person_id,
+            position_uid=position_uid,
+            position_name=position_name,
         )
         stmt = stmt.on_conflict_do_nothing(
             index_elements=[AppliedTag.candidate_uid, AppliedTag.tag_name],
@@ -121,6 +132,8 @@ def apply_rating_tag(
     *,
     client: ComeetAppClient | None = None,
     person_id: int | None = None,
+    position_uid: str | None = None,
+    position_name: str | None = None,
     force: bool = False,
 ) -> str | None:
     """Apply the `AI: <verdict>` tag for the given rating to the candidate.
@@ -158,7 +171,10 @@ def apply_rating_tag(
         log.warning("apply_rating_tag: assign failed for %s tag=%s: %s", candidate_uid, tag_name, exc)
         return None
 
-    _record_applied_tag(candidate_uid, tag_name, person_id)
+    _record_applied_tag(
+        candidate_uid, tag_name, person_id,
+        position_uid=position_uid, position_name=position_name,
+    )
     log.info("tagged candidate=%s person_id=%s with %s", candidate_uid, person_id, tag_name)
     return tag_name
 

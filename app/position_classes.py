@@ -85,7 +85,36 @@ def get_position_class(position_uid: str) -> dict | None:
             "classId": row.class_id,
             "className": row.class_name,
             "level": row.level,
+            "autoScreenEnabled": bool(row.auto_screen_enabled),
         }
+
+
+def set_auto_screen_enabled(position_uid: str, enabled: bool) -> dict:
+    """Toggle the auto-screen flag for a position. The position must already
+    have a class assigned; we don't auto-create one here."""
+    uid = (position_uid or "").strip()
+    if not uid:
+        raise ValueError("position_uid required")
+    with db_session() as session:
+        row = session.scalar(select(PositionClass).where(PositionClass.position_uid == uid))
+        if not row:
+            raise ValueError(
+                "Position has no class assigned yet — pick a class before enabling auto-screen."
+            )
+        row.auto_screen_enabled = bool(enabled)
+    return {
+        "positionUid": uid,
+        "autoScreenEnabled": bool(enabled),
+    }
+
+
+def list_auto_screen_positions() -> list[str]:
+    """Position UIDs the cron should walk. Order is stable (alpha by class then uid)."""
+    with db_session() as session:
+        rows = session.scalars(
+            select(PositionClass).where(PositionClass.auto_screen_enabled.is_(True))
+        ).all()
+        return [row.position_uid for row in rows]
 
 
 def assign_position_class(position_uid: str, class_id: str, level: str = "") -> dict:
@@ -127,4 +156,6 @@ __all__ = [
     "create_custom_class",
     "get_position_class",
     "assign_position_class",
+    "set_auto_screen_enabled",
+    "list_auto_screen_positions",
 ]

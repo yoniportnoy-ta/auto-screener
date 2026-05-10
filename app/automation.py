@@ -25,7 +25,7 @@ from .comeet_client import ComeetClient
 from .config import settings
 from .db import db_session
 from .models import CandidateLock
-from .position_classes import get_position_class
+from .position_classes import get_position_class, list_auto_screen_positions
 from .scan import begin_scan_batch, score_candidate_in_session, finish_scan_batch
 
 log = logging.getLogger(__name__)
@@ -48,16 +48,13 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return default
 
 
-def get_max_positions_per_run() -> int:
-    return _env_int("AUTOSCAN_MAX_POSITIONS_PER_RUN", 6, 1, 50)
-
-
-def get_max_candidates_per_pos() -> int:
-    return _env_int("AUTOSCAN_MAX_CANDIDATES_PER_POS", 10, 1, 50)
-
-
 def get_time_budget_seconds() -> int:
-    return _env_int("AUTOSCAN_TIME_BUDGET_S", 270, 30, 320)
+    """Wall-clock cap for one cron invocation. Render cron jobs run in their
+    own container with a generous limit, but we still cap so the tail end of
+    a job doesn't run into the next scheduled tick. Score-done locks make
+    partial completion safe — we just resume next hour.
+    """
+    return _env_int("AUTOSCAN_TIME_BUDGET_S", 1500, 60, 3000)
 
 
 # ─── Cursor + run log persistence ────────────────────────────────────────────
@@ -160,8 +157,6 @@ def run_autoscan() -> AutoscanResult:
         _write_runlog(_serialise(result))
         return result
 
-    max_positions = get_max_positions_per_run()
-    max_per_pos = get_max_candidates_per_pos()
     time_budget = get_time_budget_seconds()
 
     try:
@@ -180,21 +175,36 @@ def run_autoscan() -> AutoscanResult:
         _write_runlog(_serialise(result))
         return result
 
+    # Only walk positions the recruiter has explicitly opted in via the UI.
+    enabled_uids = set(list_auto_screen_positions())
+    if not enabled_uids:
+        result.note = "no positions have auto-screen enabled"
+        result.finished_at = datetime.now(timezone.utc).isoformat()
+        _write_runlog(_serialise(result))
+        return result
+
+    enabled_positions = [p for p in positions if str(p.get("uid") or "") in enabled_uids]
+    if not enabled_positions:
+        result.note = (
+            f"{len(enabled_uids)} positions have auto-screen enabled but none are currently open"
+        )
+        result.finished_at = datetime.now(timezone.utc).isoformat()
+        _write_runlog(_serialise(result))
+        return result
+
     cursor = _read_cursor()
-    if cursor >= len(positions):
+    if cursor >= len(enabled_positions):
         cursor = 0
     result.cursor_before = cursor
-    result.total_positions = len(positions)
+    result.total_positions = len(enabled_positions)
 
-    for offset in range(len(positions)):
-        if result.positions_scanned >= max_positions:
-            break
+    for offset in range(len(enabled_positions)):
         if (time.monotonic() - start) > time_budget:
             result.ran_out_of_time = True
             break
 
-        idx = (cursor + offset) % len(positions)
-        pos = positions[idx]
+        idx = (cursor + offset) % len(enabled_positions)
+        pos = enabled_positions[idx]
         position_uid = str(pos.get("uid") or "")
         position_name = str(pos.get("name") or position_uid)
         if not position_uid:
@@ -202,14 +212,14 @@ def run_autoscan() -> AutoscanResult:
 
         cls = get_position_class(position_uid)
         if not cls:
-            log.info("autoscan: position %s has no class assigned; skipping", position_uid)
+            # Shouldn't happen — auto_screen_enabled requires a class — but be defensive.
+            log.warning("autoscan: position %s opted in without class; skipping", position_uid)
             continue
 
         per = _scan_one_position(
             position_uid=position_uid,
             position_name=position_name,
             class_id=cls["classId"],
-            max_candidates=max_per_pos,
             time_remaining=max(5.0, time_budget - (time.monotonic() - start)),
         )
         result.per_position.append(per)
@@ -220,7 +230,7 @@ def run_autoscan() -> AutoscanResult:
             result.ran_out_of_time = True
             break
 
-    new_cursor = (cursor + max(1, result.positions_scanned)) % len(positions)
+    new_cursor = (cursor + max(1, result.positions_scanned)) % max(1, len(enabled_positions))
     _write_cursor(new_cursor)
     result.cursor_after = new_cursor
     result.finished_at = datetime.now(timezone.utc).isoformat()
@@ -239,50 +249,70 @@ def _scan_one_position(
     position_uid: str,
     position_name: str,
     class_id: str,
-    max_candidates: int,
     time_remaining: float,
 ) -> PositionRunResult:
-    """Run begin/score/finish for one position. Wraps existing scan flow so the
-    same eligibility + score-and-tag pipeline the UI uses applies here."""
+    """Drain every eligible candidate for one position.
+
+    Calls begin_scan_batch repeatedly: each batch returns up to SCREENER_MAX_PER_RUN
+    candidates and the score-done lock prevents re-queueing on the next iteration.
+    Stops when begin reports `empty` or the time budget is exhausted.
+    """
     out = PositionRunResult(position_uid=position_uid, position_name=position_name, class_id=class_id)
     start = time.monotonic()
+    consecutive_empty_batches = 0
 
-    try:
-        begin = begin_scan_batch(position_uid)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("autoscan: begin_scan_batch failed for %s: %s", position_uid, exc)
-        out.errors.append(f"begin: {exc}")
-        return out
-
-    if begin.empty:
-        out.note = begin.message or "no candidates"
-        return out
-
-    uids = list(begin.uids[:max_candidates])
-    processed: list[str] = []
-
-    for uid in uids:
+    while True:
         if (time.monotonic() - start) > time_remaining - 5:
-            log.info("autoscan: time budget low on %s; stopping after %d/%d", position_uid, out.scored, len(uids))
+            log.info("autoscan: time budget low on %s; stopping after %d scored", position_uid, out.scored)
             break
-        try:
-            summary = score_candidate_in_session(begin.session_id, uid)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("autoscan: score failed for %s/%s: %s", position_uid, uid, exc)
-            out.errors.append(f"{uid}: {exc}")
-            continue
-        processed.append(uid)
-        if summary.error:
-            out.skipped += 1
-            continue
-        out.scored += 1
-        if summary.tag_applied:
-            out.tags_applied += 1
 
-    try:
-        finish_scan_batch(begin.session_id, processed)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("autoscan: finish failed for %s: %s", position_uid, exc)
+        try:
+            begin = begin_scan_batch(position_uid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autoscan: begin_scan_batch failed for %s: %s", position_uid, exc)
+            out.errors.append(f"begin: {exc}")
+            return out
+
+        if begin.empty:
+            if not out.note:
+                out.note = begin.message or "no candidates"
+            break
+
+        # Defensive: if begin returns the same UIDs again (e.g. score_done lock not
+        # being written for some reason), avoid an infinite loop.
+        if not begin.uids:
+            consecutive_empty_batches += 1
+            if consecutive_empty_batches >= 2:
+                break
+            continue
+        consecutive_empty_batches = 0
+
+        processed: list[str] = []
+        for uid in begin.uids:
+            if (time.monotonic() - start) > time_remaining - 5:
+                break
+            try:
+                summary = score_candidate_in_session(begin.session_id, uid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("autoscan: score failed for %s/%s: %s", position_uid, uid, exc)
+                out.errors.append(f"{uid}: {exc}")
+                continue
+            processed.append(uid)
+            if summary.error:
+                out.skipped += 1
+                continue
+            out.scored += 1
+            if summary.tag_applied:
+                out.tags_applied += 1
+
+        try:
+            finish_scan_batch(begin.session_id, processed)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autoscan: finish failed for %s: %s", position_uid, exc)
+
+        # If we processed fewer than the queue (time-bounded), don't keep looping.
+        if len(processed) < len(begin.uids):
+            break
 
     return out
 

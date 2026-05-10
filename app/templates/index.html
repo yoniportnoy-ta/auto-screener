@@ -124,6 +124,13 @@
         <label for="posLevel">Level</label>
         <select id="posLevel"><option value="">Any level</option></select>
       </div>
+      <div class="filter-field" id="autoScreenWrap" style="flex:0 0 auto">
+        <label>Auto-screen</label>
+        <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; padding:0.45rem 0; color:var(--text)">
+          <input type="checkbox" id="autoScreenToggle" disabled style="width:1.05rem; height:1.05rem; cursor:pointer" />
+          <span id="autoScreenStatus" class="small">— pick a class first —</span>
+        </label>
+      </div>
     </div>
 
     <div class="row">
@@ -278,9 +285,10 @@
     }
   }
 
-  // ─── Position selection: pre-load saved class ───────────────────────────
+  // ─── Position selection: pre-load saved class + auto-screen state ───────
   document.getElementById('pos').addEventListener('change', async () => {
     const uid = document.getElementById('pos').value;
+    setAutoScreenUI(false, !uid);  // disable while loading
     if (!uid) return;
     try {
       const cls = await api('/api/position-class/' + encodeURIComponent(uid));
@@ -288,8 +296,42 @@
         document.getElementById('posClass').value = cls.classId;
         updateLevels();
         if (cls.level) document.getElementById('posLevel').value = cls.level;
+        setAutoScreenUI(!!cls.autoScreenEnabled, false);
       }
     } catch (err) { /* non-fatal */ }
+  });
+
+  function setAutoScreenUI(enabled, disabled) {
+    const cb = document.getElementById('autoScreenToggle');
+    const status = document.getElementById('autoScreenStatus');
+    cb.checked = !!enabled;
+    cb.disabled = !!disabled;
+    if (disabled) {
+      status.textContent = '— pick a class first —';
+      status.style.color = 'var(--muted)';
+    } else if (enabled) {
+      status.textContent = 'ON — cron will scan every hour';
+      status.style.color = 'var(--ok)';
+    } else {
+      status.textContent = 'off (training only)';
+      status.style.color = 'var(--muted)';
+    }
+  }
+
+  document.getElementById('autoScreenToggle').addEventListener('change', async (e) => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return;
+    const enabled = e.target.checked;
+    e.target.disabled = true;
+    try {
+      await api('/api/position-class/auto-screen', { position_uid: uid, enabled: enabled });
+      setAutoScreenUI(enabled, false);
+    } catch (err) {
+      setErr(err.message);
+      // Revert checkbox state
+      e.target.checked = !enabled;
+      e.target.disabled = false;
+    }
   });
 
   document.getElementById('posClass').addEventListener('change', updateLevels);

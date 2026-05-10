@@ -61,10 +61,24 @@ async def cmd_refresh_comeet_session() -> int:
     return 0
 
 
+async def cmd_poll_feedback() -> int:
+    """Sweep applied_tags rows; record auto-feedback when recruiter swapped our tag."""
+    from .feedback_polling import poll_tag_changes
+
+    result = poll_tag_changes()
+    log.info(
+        "poll-feedback done: checked=%d feedback=%d dropped=%d errors=%d",
+        result.candidates_checked, result.feedback_recorded,
+        result.tags_dropped, len(result.errors),
+    )
+    return 0
+
+
 COMMANDS = {
     "scan-all": cmd_scan_all,
     "refresh-rubrics": cmd_refresh_rubrics,
     "refresh-comeet-session": cmd_refresh_comeet_session,
+    "poll-feedback": cmd_poll_feedback,
 }
 
 

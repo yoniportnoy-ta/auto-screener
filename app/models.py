@@ -25,6 +25,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -53,6 +54,8 @@ class PositionClass(Base):
     """Per-position class assignment (Backend / PM / etc.).
 
     Replaces SCREENER_POS_CLASS_<position_uid> script properties.
+    `auto_screen_enabled` opts the position into the hourly background cron;
+    when False (default), the position is training-only.
     """
 
     __tablename__ = "position_classes"
@@ -61,6 +64,9 @@ class PositionClass(Base):
     class_id: Mapped[str] = mapped_column(String(64))
     class_name: Mapped[str] = mapped_column(String(120))
     level: Mapped[str | None] = mapped_column(String(60))
+    auto_screen_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -190,7 +196,9 @@ class TagCatalog(Base):
 class AppliedTag(Base):
     """Idempotency record: which (candidate, tag) pairs we've already applied.
 
-    Lets the scheduled scan be safely re-runnable; we won't double-tag.
+    `position_uid` / `position_name` capture the position context at apply time
+    so the tag-change feedback poller can attribute auto-feedback to the right
+    position class.
     """
 
     __tablename__ = "applied_tags"
@@ -198,6 +206,8 @@ class AppliedTag(Base):
     candidate_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
     tag_name: Mapped[str] = mapped_column(String(120), primary_key=True)
     person_id: Mapped[int | None] = mapped_column(Integer)
+    position_uid: Mapped[str | None] = mapped_column(String(64))
+    position_name: Mapped[str | None] = mapped_column(String(200))
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

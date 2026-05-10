@@ -23,6 +23,8 @@ from ..position_classes import (
     create_custom_class,
     get_position_class,
     list_all_classes,
+    list_auto_screen_positions,
+    set_auto_screen_enabled,
 )
 from ..scan import (
     begin_scan_batch,
@@ -89,6 +91,25 @@ def create_class(body: CreateClassBody) -> dict[str, Any]:
         return create_custom_class(body.name, body.levels)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+class AutoScreenBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    enabled: bool
+
+
+@router.post("/position-class/auto-screen")
+def toggle_auto_screen(body: AutoScreenBody) -> dict[str, Any]:
+    try:
+        return set_auto_screen_enabled(body.position_uid, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/auto-screen/positions")
+def list_auto_screen() -> list[str]:
+    """Position UIDs the cron currently scans (debug helper)."""
+    return list_auto_screen_positions()
 
 
 # ─── Scan flow ───────────────────────────────────────────────────────────────
