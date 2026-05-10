@@ -8,7 +8,21 @@ from __future__ import annotations
 import pytest
 
 from app.comeet_app_client import _coerce_int, _extract_person_id
-from app.tagging import RATING_TAG_NAMES, rating_tag_color, rating_tag_name
+from app.tagging import (
+    RATING_TAG_NAMES,
+    numeric_candidate_id_from_url,
+    rating_tag_color,
+    rating_tag_name,
+)
+
+
+def test_numeric_candidate_id_from_url() -> None:
+    assert numeric_candidate_id_from_url("https://app.comeet.co/app/req/423848/can/57511356") == "57511356"
+    assert numeric_candidate_id_from_url("https://app.comeet.co/app/req/423848/can/57511356?reqStatus=1") == "57511356"
+    assert numeric_candidate_id_from_url("https://app.comeet.co/app/req/423848/can/57511356/") == "57511356"
+    assert numeric_candidate_id_from_url(None) is None
+    assert numeric_candidate_id_from_url("") is None
+    assert numeric_candidate_id_from_url("https://example.com") is None
 
 
 def test_rating_tag_name_matches_comeet_tags() -> None:

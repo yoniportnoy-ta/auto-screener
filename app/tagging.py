@@ -12,6 +12,7 @@ Entry points used by the rest of the app:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,43 @@ from .comeet_app_client import ComeetAppClient, ComeetAppError
 from .config import settings
 from .db import db_session
 from .models import AppliedTag, TagCatalog
+
+
+# Public API candidate.URL looks like:
+#   https://app.comeet.co/app/req/{numericPos}/can/{numericCand}
+# We extract numericCand because the internal API only accepts numeric candidate IDs.
+_NUMERIC_CAND_RE = re.compile(r"/can/(\d+)(?:[/?#]|$)")
+
+
+def numeric_candidate_id_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    m = _NUMERIC_CAND_RE.search(url)
+    return m.group(1) if m else None
+
+
+def resolve_person_id_via_public_api(candidate_uid: str) -> int | None:
+    """Fallback resolver when we don't have the candidate URL handy.
+
+    Fetches the candidate via the PUBLIC api.comeet.co (alphanumeric UID works
+    there), reads `URL` to get the numeric internal ID, then queries the
+    INTERNAL api at /api/v1/candidates/{numeric_id} to get `person`.
+    """
+    from .comeet_client import ComeetClient
+
+    try:
+        with ComeetClient() as pub_client:
+            cand = pub_client.get_candidate(candidate_uid)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("resolve_person_id_via_public_api: public fetch failed for %s: %s", candidate_uid, exc)
+        return None
+    if not cand:
+        return None
+    numeric_id = numeric_candidate_id_from_url(cand.get("URL"))
+    if not numeric_id:
+        log.warning("resolve_person_id_via_public_api: no numeric id in URL for %s", candidate_uid)
+        return None
+    return ComeetAppClient().resolve_person_id(numeric_id)
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +170,7 @@ def apply_rating_tag(
     *,
     client: ComeetAppClient | None = None,
     person_id: int | None = None,
+    candidate_url: str | None = None,
     position_uid: str | None = None,
     position_name: str | None = None,
     force: bool = False,
@@ -158,7 +197,18 @@ def apply_rating_tag(
 
     owner_client = client or ComeetAppClient()
     if person_id is None:
-        person_id = owner_client.resolve_person_id(candidate_uid)
+        # Path 1: caller supplied the candidate URL — extract numeric candidate id
+        # and look up person via internal api at /api/v1/candidates/{numeric_id}.
+        numeric_id = numeric_candidate_id_from_url(candidate_url)
+        if numeric_id:
+            person_id = owner_client.resolve_person_id(numeric_id)
+        # Path 2: alphanumeric uid (rarely works against the internal API, but
+        # cheap to try in case Comeet ever accepts it).
+        if person_id is None:
+            person_id = owner_client.resolve_person_id(candidate_uid)
+        # Path 3: fall back to a fresh public-API fetch to recover the URL.
+        if person_id is None:
+            person_id = resolve_person_id_via_public_api(candidate_uid)
         if person_id is None:
             log.warning("apply_rating_tag: cannot resolve person_id for %s", candidate_uid)
             return None

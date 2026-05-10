@@ -315,6 +315,7 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
     try:
         applied = apply_rating_tag(
             summary.candidate_uid, summary.rating,
+            candidate_url=summary.profile_url,  # numeric ID extracted from this for internal API
             position_uid=sess.position_uid, position_name=sess.position_name,
         )
         if applied:
