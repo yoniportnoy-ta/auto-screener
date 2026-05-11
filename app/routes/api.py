@@ -332,13 +332,25 @@ def position_breakdown(position_uid: str) -> dict[str, Any]:
     recruiter_by_uid: dict[str, dict[str, Any]] = {}
     for f in feedback_rows:
         if f.candidate_uid in recruiter_by_uid:
-            continue  # already kept the newest
+            continue
         recruiter_by_uid[f.candidate_uid] = {
             "rating": f.recruiter_rating,
             "note": (f.note or "").strip()[:240],
         }
 
-    # Build columns
+    # One Comeet call to grab profile URLs for every candidate in the position.
+    # Lets us render each breakdown row as a clickable link straight to Comeet.
+    url_by_uid: dict[str, str] = {}
+    try:
+        with ComeetClient() as client:
+            for c in client.list_candidates_for_position(pos_uid):
+                uid = str(c.get("uid") or "")
+                u = c.get("URL") or ""
+                if uid and isinstance(u, str) and u:
+                    url_by_uid[uid] = u
+    except Exception as exc:  # noqa: BLE001
+        log.info("breakdown: profile URL fetch failed: %s", exc)
+
     columns: list[dict[str, Any]] = []
     seen_uids: set[str] = set()
     for ai in range(1, 6):
@@ -352,6 +364,7 @@ def position_breakdown(position_uid: str) -> dict[str, Any]:
             item = {
                 "candidateUid": uid,
                 "candidateName": r.candidate_name or "",
+                "profileUrl": url_by_uid.get(uid, ""),
                 "aiRating": ai,
                 "scoredAt": r.timestamp.isoformat() if r.timestamp else None,
                 "summary": (r.summary or "")[:160],

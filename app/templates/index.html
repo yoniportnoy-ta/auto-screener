@@ -41,6 +41,10 @@
     .filters-row { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; margin-bottom: 0.75rem; }
     .filter-field { flex: 1 1 160px; min-width: 140px; }
     .filter-field.grow { flex: 2 1 260px; }
+    /* Stacked filters: each picker on its own full-width row so nothing
+       resizes when the next one is revealed. */
+    .filters-row.stacked { margin-bottom: 0.55rem; }
+    .filters-row.stacked .filter-field { flex: 1 1 100%; min-width: 0; }
     /* Chrome extension status card — compact when installed, expands on demand. */
     .ext-card {
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -203,6 +207,14 @@
       border: 1px solid var(--border);
       line-height: 1.3;
       display: flex; align-items: flex-start; gap: 0.4rem;
+      color: var(--text);
+      text-decoration: none;
+      transition: border-color 0.1s, background 0.1s;
+    }
+    a.score-item:hover {
+      border-color: rgba(var(--accent-rgb), 0.5);
+      background: rgba(var(--accent-rgb), 0.06);
+      cursor: pointer;
     }
     .score-item .name {
       flex: 1 1 auto; min-width: 0; overflow: hidden;
@@ -378,16 +390,20 @@
   </div>
 
   <div class="panel">
-    <div class="filters-row">
+    <div class="filters-row stacked">
       <div class="filter-field" id="fieldRecruiter">
         <label for="filterRecruiter">Lead recruiter</label>
         <select id="filterRecruiter"></select>
       </div>
-      <div class="filter-field" id="fieldLocation" style="display:none">
+    </div>
+    <div class="filters-row stacked" id="fieldLocation" style="display:none">
+      <div class="filter-field">
         <label for="filterLocation">Location</label>
         <select id="filterLocation"></select>
       </div>
-      <div class="filter-field grow" id="fieldPosition" style="display:none">
+    </div>
+    <div class="filters-row stacked" id="fieldPosition" style="display:none">
+      <div class="filter-field">
         <label for="pos">Open position</label>
         <select id="pos"></select>
       </div>
@@ -766,18 +782,22 @@
 
   function itemRow(it, hasFb) {
     const name = it.candidateName || it.candidateUid || '—';
+    const href = it.profileUrl ? escapeHtml(it.profileUrl) : '';
+    const tag = href ? `a href="${href}" target="_blank" rel="noopener"` : 'div';
+    const open  = '<' + tag;
+    const close = href ? '</a>' : '</div>';
     if (!hasFb) {
-      return `<div class="score-item"><span class="name" title="${escapeHtml(it.summary || '')}">${escapeHtml(name)}</span></div>`;
+      const tip = it.summary || '';
+      return `${open} class="score-item" title="${escapeHtml(tip)}"><span class="name">${escapeHtml(name)}</span>${close}`;
     }
     const r = Number(it.recruiterRating) || 0;
     const diff = Math.abs((Number(it.aiRating) || 0) - r);
     const cls = diff === 0 ? 'agree' : (diff === 1 ? 'near' : 'far');
     const tip = it.recruiterNote ? `${name} — recruiter rated ${r}/5: ${it.recruiterNote}` : `${name} — recruiter rated ${r}/5`;
-    return `
-      <div class="score-item ${cls}" title="${escapeHtml(tip)}">
+    return `${open} class="score-item ${cls}" title="${escapeHtml(tip)}">
         <span class="name">${escapeHtml(name)}</span>
         <span class="rec">${r}/5</span>
-      </div>`;
+      ${close}`;
   }
 
   // ─── Bulk actions: Re-score / Clear ────────────────────────────────────
