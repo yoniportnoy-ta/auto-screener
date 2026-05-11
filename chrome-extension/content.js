@@ -24,11 +24,10 @@
   // ─── Settings loader ────────────────────────────────────────────────────
   function loadSettings() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(["backendUrl", "apiToken", "recruiterEmail"], (data) => {
+      chrome.storage.local.get(["backendUrl", "apiToken"], (data) => {
         resolve({
           backendUrl: (data.backendUrl || "https://auto-screener-2va5.onrender.com").replace(/\/+$/, ""),
           apiToken: data.apiToken || "",
-          recruiterEmail: data.recruiterEmail || "",
         });
       });
     });
@@ -278,7 +277,6 @@
       statusEl.className = "as-status";
 
       try {
-        const { recruiterEmail } = await loadSettings();
         const candidateUid = (currentScore && currentScore.candidateUid) || "";
         const positionUid = (currentScore && currentScore.positionUid) || (extractIdsFromUrl()?.positionUid ?? "");
         const positionName = (currentScore && currentScore.positionName) || extractPositionNameFromDom();
@@ -299,7 +297,6 @@
           ai_rating: aiRating,
           recruiter_rating: selectedRating,
           note: (noteEl.value || "").trim(),
-          recruiter_email: recruiterEmail || "",
         });
 
         statusEl.textContent = `Saved (#${resp.id ?? "?"})`;

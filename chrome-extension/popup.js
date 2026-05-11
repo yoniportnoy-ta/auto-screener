@@ -14,18 +14,16 @@ function setStatus(msg, kind) {
 }
 
 function load() {
-  chrome.storage.local.get(["backendUrl", "apiToken", "recruiterEmail"], (data) => {
+  chrome.storage.local.get(["backendUrl", "apiToken"], (data) => {
     $("backend").value = data.backendUrl || DEFAULT_BACKEND;
     $("token").value = data.apiToken || "";
-    $("email").value = data.recruiterEmail || "";
   });
 }
 
 function save() {
   const backendUrl = ($("backend").value || DEFAULT_BACKEND).trim().replace(/\/+$/, "");
   const apiToken = ($("token").value || "").trim();
-  const recruiterEmail = ($("email").value || "").trim();
-  chrome.storage.local.set({ backendUrl, apiToken, recruiterEmail }, () => {
+  chrome.storage.local.set({ backendUrl, apiToken }, () => {
     setStatus("Saved.", "ok");
     setTimeout(() => setStatus(""), 1500);
   });
@@ -40,9 +38,9 @@ async function test() {
   }
   setStatus("Testing…");
   try {
-    // Calling /api/extension/score with a bogus numeric id is a safe
-    // round-trip: 404 = backend reachable + token accepted.
-    const resp = await fetch(`${backendUrl}/api/extension/score?numeric_id=__ping__`, {
+    // /api/extension/ping is a cheap token-gated round-trip. It never touches
+    // Comeet, so it returns fast regardless of backend load.
+    const resp = await fetch(`${backendUrl}/api/extension/ping`, {
       method: "GET",
       headers: { "X-Screener-Token": apiToken },
     });
@@ -54,12 +52,8 @@ async function test() {
       setStatus("Server has no token configured (503).", "err");
       return;
     }
-    if (resp.status === 404) {
-      setStatus("Connected — token accepted.", "ok");
-      return;
-    }
     if (resp.ok) {
-      setStatus("Connected.", "ok");
+      setStatus("Connected — token accepted.", "ok");
       return;
     }
     setStatus(`Backend returned ${resp.status}.`, "err");

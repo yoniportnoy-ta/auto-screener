@@ -131,6 +131,16 @@ def list_auto_screen() -> list[str]:
 
 
 # ─── Chrome extension endpoints ──────────────────────────────────────────────
+@router.get("/extension/ping", dependencies=[Depends(_require_extension_token)])
+def extension_ping() -> dict[str, Any]:
+    """Cheap connectivity + token check for the popup's 'Test connection' button.
+
+    Returning early here means the popup doesn't accidentally trigger the
+    expensive numeric→alphanumeric search inside /score.
+    """
+    return {"ok": True}
+
+
 @router.get("/extension/score", dependencies=[Depends(_require_extension_token)])
 def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
     """Used by the in-Comeet Chrome extension.
@@ -147,6 +157,12 @@ def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
 
     alphanumeric_uid = (uid or "").strip()
     n_id = (numeric_id or "").strip()
+
+    # Fast-fail if the caller gave us a numeric_id that obviously isn't a
+    # Comeet candidate id (only digits). Keeps the popup's "Test connection"
+    # ping from triggering the multi-minute candidate scan below.
+    if n_id and not n_id.isdigit():
+        raise HTTPException(404, "numeric_id must be all digits")
 
     # If the extension only gave us a numeric id, look up the public uid via
     # the public Comeet API (it has a `URL` field with the numeric id embedded).
