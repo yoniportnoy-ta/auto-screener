@@ -1,6 +1,10 @@
 /**
- * Popup script — small settings panel for the Auto Screener extension.
- * Persists backend URL + API token + recruiter email to chrome.storage.local.
+ * Popup script — minimal settings UI.
+ *
+ * Backend URL and API token are auto-injected by the server at zip-download
+ * time (see _token.js), so the popup normally just shows a Test connection
+ * button. Advanced section is hidden behind a toggle for the cases where a
+ * recruiter needs to point at a different backend.
  */
 
 const EMBEDDED_BACKEND = (typeof window !== "undefined" && window.AS_EMBEDDED_BACKEND) || "";
@@ -17,14 +21,12 @@ function setStatus(msg, kind) {
 
 function load() {
   chrome.storage.local.get(["backendUrl", "apiToken"], (data) => {
-    $("backend").value = data.backendUrl || DEFAULT_BACKEND;
-    $("token").value   = data.apiToken   || EMBEDDED_TOKEN || "";
-    // Persist the embedded token on first launch so subsequent fetches in
-    // content.js can read it without re-reading the bundled script.
+    const backend = data.backendUrl || DEFAULT_BACKEND;
+    const token   = data.apiToken   || EMBEDDED_TOKEN || "";
+    $("backend").value = backend;
+    $("token").value   = token;
     if (!data.apiToken && EMBEDDED_TOKEN) {
-      chrome.storage.local.set({ apiToken: EMBEDDED_TOKEN, backendUrl: DEFAULT_BACKEND });
-      setStatus("Token auto-loaded from server.", "ok");
-      setTimeout(() => setStatus(""), 2500);
+      chrome.storage.local.set({ apiToken: EMBEDDED_TOKEN, backendUrl: backend });
     }
   });
 }
@@ -40,39 +42,34 @@ function save() {
 
 async function test() {
   const backendUrl = ($("backend").value || DEFAULT_BACKEND).trim().replace(/\/+$/, "");
-  const apiToken = ($("token").value || "").trim();
+  const apiToken   = ($("token").value || "").trim();
   if (!apiToken) {
-    setStatus("Enter a token first.", "err");
+    setStatus("Not configured.", "err");
     return;
   }
   setStatus("Testing…");
   try {
-    // /api/extension/ping is a cheap token-gated round-trip. It never touches
-    // Comeet, so it returns fast regardless of backend load.
     const resp = await fetch(`${backendUrl}/api/extension/ping`, {
       method: "GET",
       headers: { "X-Screener-Token": apiToken },
     });
-    if (resp.status === 401) {
-      setStatus("Token rejected (401).", "err");
-      return;
-    }
-    if (resp.status === 503) {
-      setStatus("Server has no token configured (503).", "err");
-      return;
-    }
-    if (resp.ok) {
-      setStatus("Connected — token accepted.", "ok");
-      return;
-    }
-    setStatus(`Backend returned ${resp.status}.`, "err");
+    if (resp.status === 401) return setStatus("Token rejected.", "err");
+    if (resp.status === 503) return setStatus("Backend misconfigured.", "err");
+    if (resp.ok)             return setStatus("Connected ✓", "ok");
+    setStatus(`Error ${resp.status}.`, "err");
   } catch (e) {
-    setStatus(`Network error: ${e.message || e}`, "err");
+    setStatus(`Network error.`, "err");
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   load();
-  $("save").addEventListener("click", save);
   $("test").addEventListener("click", test);
+  $("save").addEventListener("click", save);
+  $("btnAdvanced").addEventListener("click", () => {
+    const adv = $("advanced");
+    const show = adv.style.display === "none";
+    adv.style.display = show ? "block" : "none";
+    $("btnAdvanced").textContent = show ? "Advanced ▴" : "Advanced ▾";
+  });
 });

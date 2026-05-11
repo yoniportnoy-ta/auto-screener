@@ -64,6 +64,7 @@
     .ext-card-text { flex: 1 1 auto; min-width: 0; }
     .ext-card-title { font-size: 0.95rem; font-weight: 600; }
     .ext-card-sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.05rem; }
+    .ext-card-sub:empty { display: none; }
     .ext-card-actions {
       flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem;
     }
@@ -181,11 +182,9 @@
     </div>
     <div id="extPanelBody" class="ext-card-body" hidden>
       <ol class="ext-steps">
-        <li>Click <strong>Download v{{ extensionVersion }}</strong> above to grab <code>auto-screener-extension-{{ extensionVersion }}.zip</code>. The API token is already baked in — no paste needed.</li>
-        <li>Unzip it somewhere stable, e.g. <code>~/Documents/auto-screener-extension/</code>. Don't move the folder after, Chrome points at it directly.</li>
-        <li>Open <code>chrome://extensions/</code> — <button class="ghost" id="btnCopyExtUrl" type="button">Copy URL</button> — and paste in the address bar (Chrome blocks clickable <code>chrome://</code> links).</li>
-        <li>Turn on <strong>Developer mode</strong> (top-right toggle), then click <strong>Load unpacked</strong> and pick the unzipped folder.</li>
-        <li>Done — open any Comeet candidate page. To update later, re-download here and click the refresh icon next to the extension in <code>chrome://extensions/</code>.</li>
+        <li>Click <strong>Download</strong>, then unzip the file.</li>
+        <li>Open <code>chrome://extensions/</code> — <button class="ghost" id="btnCopyExtUrl" type="button">Copy</button>.</li>
+        <li>Turn on <strong>Developer mode</strong>, click <strong>Load unpacked</strong>, pick the unzipped folder.</li>
       </ol>
     </div>
   </div>
@@ -777,8 +776,8 @@
         setState('missing', {
           icon: '✗',
           title: 'Chrome extension not installed',
-          sub: 'Download v' + SERVER_VERSION + '. Token + backend are pre-configured.',
-          cta: 'Download v' + SERVER_VERSION,
+          sub: '',
+          cta: 'Download',
         });
         // Auto-expand the install steps when nothing is installed yet.
         body.hidden = false;
@@ -790,15 +789,15 @@
         setState('installed', {
           icon: '✓',
           title: 'Extension installed (v' + installed + ')',
-          sub: 'Open any Comeet candidate page to see the panel.',
-          cta: 'Re-download v' + SERVER_VERSION,
+          sub: '',
+          cta: 'Re-download',
         });
       } else {
         setState('outdated', {
           icon: '!',
           title: 'Update available (v' + installed + ' → v' + SERVER_VERSION + ')',
-          sub: 'Download the new zip, then click the refresh icon on the Auto Screener tile in chrome://extensions/.',
-          cta: 'Download v' + SERVER_VERSION,
+          sub: 'After download, hit refresh on the extension tile in chrome://extensions/.',
+          cta: 'Download',
         });
       }
     }

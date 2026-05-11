@@ -90,26 +90,36 @@
     }
     .footer a { color: #c9b8ff; text-decoration: none; }
     .footer a:hover { text-decoration: underline; }
+    .linklike {
+      background: transparent; border: none; color: var(--muted);
+      padding: 0; font: inherit; font-size: 11px; cursor: pointer;
+    }
+    .linklike:hover { color: var(--text); }
   </style>
 </head>
 <body>
   <h1>Auto Screener</h1>
-  <div class="hint">Settings are saved to this browser only. The token gates the backend's <code>/api/extension/*</code> endpoints.</div>
+  <div class="hint" id="hint">Open any Comeet candidate page to see the panel.</div>
 
-  <label for="backend">Backend URL</label>
-  <input id="backend" type="text" placeholder="https://auto-screener-2va5.onrender.com" autocomplete="off" />
-
-  <label for="token">API token</label>
-  <input id="token" type="password" placeholder="SCREENER_API_TOKEN value" autocomplete="off" />
-
-  <div class="row">
-    <button id="save" type="button">Save</button>
-    <button id="test" type="button" class="ghost">Test connection</button>
+  <div class="row" style="margin-top:0.4rem;">
+    <button id="test" type="button">Test connection</button>
     <span id="status" class="status"></span>
   </div>
 
   <div class="footer">
-    Open any candidate page on <code>app.comeet.co</code> to see the panel.
+    <button id="btnAdvanced" type="button" class="linklike">Advanced ▾</button>
+  </div>
+
+  <div id="advanced" style="display:none; margin-top:0.5rem; padding-top:0.5rem; border-top:1px solid var(--border);">
+    <label for="backend">Backend URL</label>
+    <input id="backend" type="text" autocomplete="off" />
+
+    <label for="token">API token</label>
+    <input id="token" type="password" autocomplete="off" />
+
+    <div class="row">
+      <button id="save" type="button">Save</button>
+    </div>
   </div>
 
   <script src="_token.js"></script>
