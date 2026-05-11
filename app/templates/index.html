@@ -85,6 +85,27 @@
     .ext-steps button.ghost {
       padding: 0.1rem 0.45rem; font-size: 0.72rem; margin-left: 0.25rem;
     }
+    /* Position dashboard */
+    .dash-stats {
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+    }
+    .dash-stat {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.6rem 0.75rem;
+    }
+    .dash-stat-val {
+      font-size: 1.25rem; font-weight: 700; color: var(--text); line-height: 1;
+    }
+    .dash-stat-label {
+      font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .dash-stat.good .dash-stat-val { color: var(--ok); }
+    .dash-stat.warn .dash-stat-val { color: var(--warn); }
+    .dash-stat.bad  .dash-stat-val { color: var(--bad); }
+    #dashRecentTbl td .pill { font-size: 0.75rem; padding: 0.25rem 0.55rem; }
+    #dashRecentTbl td { vertical-align: middle; }
     button.primary {
       background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
       padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
@@ -229,26 +250,26 @@
     <!-- Three modes the recruiter can choose from on a position. -->
     <div class="modes" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem">
       <div class="mode-card" id="modeTrain">
-        <div class="mode-title">🏋️ Train</div>
+        <div class="mode-title">Score a batch</div>
         <p class="mode-body">
-          Score a small batch of candidates and give feedback. The model
-          learns from your ratings — feeds the rubric &amp; anchors next time.
+          Score the next 20 unrated candidates and rate them yourself. The model
+          uses your ratings to refine its rubric for this position class.
         </p>
-        <button class="primary mode-cta" id="btnTrain">Start training</button>
+        <button class="primary mode-cta" id="btnTrain">Start</button>
       </div>
       <div class="mode-card" id="modeScanNow">
-        <div class="mode-title">⚡ Scan now</div>
+        <div class="mode-title">Score all unscored</div>
         <p class="mode-body">
-          Score every eligible candidate on this position right now and apply
-          the matching rating tag in Comeet. Idempotent — no double-scoring.
+          Score every eligible candidate on this position now and tag them in
+          Comeet. Idempotent — won't re-score anyone already scored.
         </p>
-        <button class="primary mode-cta" id="btnScanNow">Run one-shot scan</button>
+        <button class="primary mode-cta" id="btnScanNow">Run</button>
       </div>
       <div class="mode-card" id="modeSchedule">
-        <div class="mode-title">⏰ Schedule</div>
+        <div class="mode-title">Auto-screen new candidates</div>
         <p class="mode-body">
-          Auto-screen every hour. New candidates get scored &amp; tagged in the
-          background; you only get pinged when one needs attention.
+          Every hour, any newly-applied candidate on this position gets scored
+          and tagged automatically — no manual action required.
         </p>
         <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
       </div>
@@ -259,6 +280,25 @@
 
     <div id="err" class="err" style="display:none"></div>
     <div id="meta" class="meta"></div>
+  </div>
+
+  <!-- Position dashboard — appears once a position is selected -->
+  <div class="panel" id="dashPanel" style="display:none">
+    <div class="dash-stats" id="dashStats">
+      <div class="dash-stat"><div class="dash-stat-val" id="dashRated">—</div><div class="dash-stat-label">Scored</div></div>
+      <div class="dash-stat"><div class="dash-stat-val" id="dashFeedback">—</div><div class="dash-stat-label">With feedback</div></div>
+      <div class="dash-stat"><div class="dash-stat-val" id="dashAgreement">—</div><div class="dash-stat-label">Agreement</div></div>
+      <div class="dash-stat"><div class="dash-stat-val" id="dashLastScan">—</div><div class="dash-stat-label">Last scan</div></div>
+    </div>
+    <div id="dashRecentWrap" style="margin-top:0.75rem; display:none;">
+      <div class="small" style="color:var(--muted); margin-bottom:0.4rem;">Recent scores</div>
+      <div style="overflow-x:auto">
+        <table id="dashRecentTbl">
+          <thead><tr><th>Candidate</th><th>Rating</th><th>Summary</th><th>Scored</th></tr></thead>
+          <tbody id="dashRecentBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <div class="panel" id="resultsPanel" style="display:none">
@@ -423,6 +463,7 @@
   document.getElementById('pos').addEventListener('change', async () => {
     const uid = document.getElementById('pos').value;
     setScheduleUI(false, !uid);
+    document.getElementById('dashPanel').style.display = uid ? 'block' : 'none';
     if (!uid) return;
     try {
       const cls = await api('/api/position-class/' + encodeURIComponent(uid));
@@ -433,7 +474,74 @@
         setScheduleUI(!!cls.autoScreenEnabled, false);
       }
     } catch (err) { /* non-fatal */ }
+    loadDashboard(uid);
   });
+
+  // ─── Position dashboard loader ─────────────────────────────────────────
+  async function loadDashboard(uid) {
+    if (!uid) return;
+    try {
+      const d = await api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid));
+      const ratedEl = document.getElementById('dashRated');
+      const fbEl    = document.getElementById('dashFeedback');
+      const agEl    = document.getElementById('dashAgreement');
+      const lastEl  = document.getElementById('dashLastScan');
+      ratedEl.textContent = (d.stats.totalScored || 0).toString();
+      fbEl.textContent    = (d.stats.feedbackCount || 0).toString();
+      // Agreement coloring
+      const ag = d.stats.agreement;
+      const agStat = agEl.parentElement;
+      agStat.classList.remove('good', 'warn', 'bad');
+      if (ag == null) {
+        agEl.textContent = '—';
+      } else {
+        const pct = Math.round(ag * 100);
+        agEl.textContent = pct + '%';
+        if (pct >= 75) agStat.classList.add('good');
+        else if (pct >= 50) agStat.classList.add('warn');
+        else agStat.classList.add('bad');
+      }
+      lastEl.textContent = d.stats.lastScanAt
+        ? relTime(new Date(d.stats.lastScanAt))
+        : 'never';
+
+      // Recent rows
+      const tbody = document.getElementById('dashRecentBody');
+      const wrap  = document.getElementById('dashRecentWrap');
+      const rows  = Array.isArray(d.recent) ? d.recent : [];
+      wrap.style.display = rows.length ? 'block' : 'none';
+      tbody.innerHTML = rows.map(r => {
+        const r5 = Number(r.rating) || 0;
+        const label = ratingLabel(r5);
+        const ts = r.scoredAt ? relTime(new Date(r.scoredAt)) : '';
+        const summary = (r.summary || '').slice(0, 180);
+        return `
+          <tr>
+            <td>${escapeHtml(r.candidateName || r.candidateUid || '')}</td>
+            <td>${r5 ? `<span class="pill r${r5}">${r5}/5 · ${escapeHtml(label)}</span>` : '<span class="small">—</span>'}</td>
+            <td class="small">${escapeHtml(summary)}</td>
+            <td class="small">${escapeHtml(ts)}</td>
+          </tr>`;
+      }).join('');
+    } catch (err) {
+      console.warn('dashboard load failed', err);
+    }
+  }
+
+  function ratingLabel(r) {
+    return ({1:'Way off',2:'Not a fit',3:'OK',4:'Great',5:'Superstar'})[r] || '';
+  }
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function relTime(d) {
+    const sec = Math.round((Date.now() - d.getTime()) / 1000);
+    if (sec < 60) return 'just now';
+    if (sec < 3600) return Math.round(sec / 60) + 'm ago';
+    if (sec < 86400) return Math.round(sec / 3600) + 'h ago';
+    if (sec < 30 * 86400) return Math.round(sec / 86400) + 'd ago';
+    return d.toLocaleDateString();
+  }
 
   function setScheduleUI(enabled, disabled) {
     const btn = document.getElementById('btnSchedule');
@@ -445,10 +553,10 @@
       btn.textContent = 'Pick a class first';
       card.classList.remove('active');
     } else if (enabled) {
-      btn.textContent = '✓ Scheduled — click to turn off';
+      btn.textContent = '✓ On — click to turn off';
       card.classList.add('active');
     } else {
-      btn.textContent = 'Turn schedule on';
+      btn.textContent = 'Turn on';
       card.classList.remove('active');
     }
   }

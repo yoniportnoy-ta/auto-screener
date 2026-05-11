@@ -17,6 +17,7 @@
 
   // ─── State ──────────────────────────────────────────────────────────────
   let currentNumericId = null;
+  let currentPositionUid = null;
   let currentScore = null;        // last response from /api/extension/score
   let selectedRating = 0;         // recruiter rating in the feedback widget
   let submitting = false;
@@ -68,6 +69,43 @@
     return resp.json();
   }
 
+  async function suggestClass(positionUid) {
+    const { backendUrl, apiToken } = await loadSettings();
+    const resp = await fetch(`${backendUrl}/api/extension/suggest-class?position_uid=${encodeURIComponent(positionUid)}`, {
+      headers: { "X-Screener-Token": apiToken },
+    });
+    if (!resp.ok) throw new Error(`suggest-class failed (${resp.status})`);
+    return resp.json();
+  }
+
+  async function assignClass(positionUid, classId, level) {
+    const { backendUrl, apiToken } = await loadSettings();
+    const resp = await fetch(`${backendUrl}/api/extension/assign-class`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Screener-Token": apiToken },
+      body: JSON.stringify({ position_uid: positionUid, class_id: classId, level: level || "" }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      throw new Error(`assign-class failed (${resp.status}): ${t}`);
+    }
+    return resp.json();
+  }
+
+  async function createClass(name) {
+    const { backendUrl, apiToken } = await loadSettings();
+    const resp = await fetch(`${backendUrl}/api/extension/create-class`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Screener-Token": apiToken },
+      body: JSON.stringify({ name }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      throw new Error(`create-class failed (${resp.status}): ${t}`);
+    }
+    return resp.json();
+  }
+
   async function scoreNow(positionUid, numericId) {
     const { backendUrl, apiToken } = await loadSettings();
     if (!apiToken) {
@@ -111,10 +149,14 @@
 
   // ─── URL helpers ────────────────────────────────────────────────────────
   function extractIdsFromUrl() {
-    // Pattern: /app/req/<positionUid>/can/<numericId>(/...)?
-    const m = location.pathname.match(/\/app\/req\/([^/]+)\/can\/(\d+)/);
-    if (!m) return null;
-    return { positionUid: m[1], numericId: m[2] };
+    // Two SPA states we render against:
+    //   /app/req/<positionUid>/can/<numericId>  → candidate view
+    //   /app/req/<positionUid>(/...)?           → position view
+    const cand = location.pathname.match(/\/app\/req\/([^/]+)\/can\/(\d+)/);
+    if (cand) return { mode: "candidate", positionUid: cand[1], numericId: cand[2] };
+    const pos = location.pathname.match(/\/app\/req\/([^/]+)/);
+    if (pos) return { mode: "position", positionUid: pos[1] };
+    return null;
   }
 
   function _looksLikeName(s) {
@@ -443,20 +485,17 @@
       if (!body) return;
 
       const msg = e.message || String(e);
-      const isMissingClass = /no position class selected/i.test(msg);
-
-      // Build a backend-UI deeplink so the recruiter can fix common config
-      // issues (e.g. unassigned position class) without leaving Comeet.
-      const { backendUrl } = await loadSettings();
-      const deeplink = `${backendUrl}/?position=${encodeURIComponent(ids.positionUid)}`;
+      // Special-case the "no class" error — show an inline class picker
+      // right in the panel instead of bouncing the user to the home page.
+      if (/no position class selected/i.test(msg)) {
+        await renderClassPicker(ids.positionUid);
+        return;
+      }
 
       body.innerHTML = `
         <div class="as-status as-err">${escapeHtml(msg)}</div>
         <div class="as-actions" style="margin-top:0.6rem;">
-          ${isMissingClass
-            ? `<a class="as-btn" id="as-open-settings" href="${escapeHtml(deeplink)}" target="_blank" rel="noopener">Open class settings</a>`
-            : ``}
-          <button type="button" class="as-btn ${isMissingClass ? 'as-ghost' : ''}" id="as-scan-retry">Try again</button>
+          <button type="button" class="as-btn" id="as-scan-retry">Try again</button>
         </div>
       `;
       const btn = document.getElementById("as-scan-retry");
@@ -464,15 +503,218 @@
     }
   }
 
+  async function renderClassPicker(positionUid) {
+    const body = document.getElementById("as-body");
+    if (!body) return;
+    body.innerHTML = `<div class="as-empty">Loading classes…</div>`;
+    let data;
+    try {
+      data = await suggestClass(positionUid);
+    } catch (e) {
+      body.innerHTML = `
+        <div class="as-status as-err">${escapeHtml(e.message || String(e))}</div>
+        <div class="as-actions" style="margin-top:0.6rem;">
+          <button type="button" class="as-btn" id="as-class-retry">Try again</button>
+        </div>
+      `;
+      document.getElementById("as-class-retry")?.addEventListener("click", () => renderClassPicker(positionUid));
+      return;
+    }
+
+    const classes = Array.isArray(data.classes) ? data.classes : [];
+    const suggestion = data.suggestion;
+    const positionName = data.positionName || "this position";
+
+    const optionsHtml = classes
+      .map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`)
+      .join("");
+
+    body.innerHTML = `
+      <div class="as-summary" style="margin-bottom:0.6rem;">
+        No class assigned to <strong>${escapeHtml(positionName)}</strong>. Pick one so the AI knows what rubric to use.
+      </div>
+
+      ${suggestion ? `
+        <div class="as-section">
+          <div class="as-label">Suggested</div>
+          <div class="as-actions" style="margin-top:0.3rem;">
+            <button type="button" class="as-btn" id="as-class-use-suggested" data-id="${escapeHtml(suggestion.id)}">
+              Use "${escapeHtml(suggestion.name)}"
+            </button>
+          </div>
+        </div>
+      ` : ""}
+
+      <div class="as-section" style="margin-top:0.7rem;">
+        <div class="as-label">Or pick another</div>
+        <select id="as-class-select" style="width:100%; margin-top:0.3rem; padding:0.45rem 0.55rem; background:#0f1419; color:#e7ecf3; border:1px solid #2d3a4d; border-radius:6px;">
+          <option value="">— choose a class —</option>
+          ${optionsHtml}
+        </select>
+        <div class="as-actions" style="margin-top:0.4rem;">
+          <button type="button" class="as-btn as-ghost" id="as-class-assign" disabled>Assign</button>
+          <span class="as-status" id="as-class-status"></span>
+        </div>
+      </div>
+
+      <div class="as-section" style="margin-top:0.7rem; padding-top:0.6rem; border-top:1px solid #2d3a4d;">
+        <button type="button" class="as-btn as-ghost" id="as-class-new-toggle" style="font-size:11px;">+ New class</button>
+        <div id="as-class-new-form" style="display:none; margin-top:0.4rem; gap:0.3rem; flex-direction:column;">
+          <input id="as-class-new-name" type="text" placeholder="e.g. Solutions Engineer"
+            style="width:100%; padding:0.4rem 0.5rem; background:#0f1419; color:#e7ecf3; border:1px solid #2d3a4d; border-radius:6px; font-size:12px;" />
+          <div class="as-actions" style="margin-top:0.3rem;">
+            <button type="button" class="as-btn" id="as-class-new-create">Create + assign</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Suggested-class button: one click assigns + rescans.
+    const sugBtn = document.getElementById("as-class-use-suggested");
+    if (sugBtn) {
+      sugBtn.addEventListener("click", () => doAssign(positionUid, sugBtn.dataset.id));
+    }
+
+    // Dropdown + Assign.
+    const sel = document.getElementById("as-class-select");
+    const assignBtn = document.getElementById("as-class-assign");
+    sel.addEventListener("change", () => {
+      assignBtn.disabled = !sel.value;
+    });
+    assignBtn.addEventListener("click", () => doAssign(positionUid, sel.value));
+
+    // + New class.
+    const newToggle = document.getElementById("as-class-new-toggle");
+    const newForm   = document.getElementById("as-class-new-form");
+    newToggle.addEventListener("click", () => {
+      newForm.style.display = newForm.style.display === "none" ? "flex" : "none";
+    });
+    document.getElementById("as-class-new-create").addEventListener("click", async () => {
+      const name = (document.getElementById("as-class-new-name").value || "").trim();
+      if (!name) return;
+      const statusEl = document.getElementById("as-class-status");
+      try {
+        statusEl.textContent = "Creating…";
+        statusEl.className = "as-status";
+        const created = await createClass(name);
+        await doAssign(positionUid, created.id);
+      } catch (e) {
+        statusEl.textContent = e.message || String(e);
+        statusEl.className = "as-status as-err";
+      }
+    });
+  }
+
+  async function doAssign(positionUid, classId) {
+    const statusEl = document.getElementById("as-class-status");
+    if (statusEl) {
+      statusEl.textContent = "Assigning…";
+      statusEl.className = "as-status";
+    }
+    try {
+      await assignClass(positionUid, classId);
+      // Success — kick off the scan we originally wanted to run.
+      await runScanForCurrent();
+    } catch (e) {
+      if (statusEl) {
+        statusEl.textContent = e.message || String(e);
+        statusEl.className = "as-status as-err";
+      }
+    }
+  }
+
+  async function fetchPositionDashboard(positionUid) {
+    const { backendUrl, apiToken } = await loadSettings();
+    const resp = await fetch(`${backendUrl}/api/position/dashboard?position_uid=${encodeURIComponent(positionUid)}`, {
+      headers: { "X-Screener-Token": apiToken },
+    });
+    if (!resp.ok) throw new Error(`dashboard fetch failed (${resp.status})`);
+    return resp.json();
+  }
+
+  function renderPositionSummary(data, positionUid) {
+    const body = document.getElementById("as-body");
+    if (!body) return;
+    const stats = data.stats || {};
+    const cls   = data.class || null;
+    const className = cls ? cls.className : "no class assigned";
+    const total = stats.totalScored || 0;
+    const fb    = stats.feedbackCount || 0;
+    const ag    = stats.agreement;
+    const lastScan = stats.lastScanAt ? new Date(stats.lastScanAt) : null;
+
+    function relTime(d) {
+      const sec = Math.round((Date.now() - d.getTime()) / 1000);
+      if (sec < 60) return "just now";
+      if (sec < 3600) return Math.round(sec / 60) + "m ago";
+      if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+      return Math.round(sec / 86400) + "d ago";
+    }
+    const agText = (ag == null) ? "—" : Math.round(ag * 100) + "%";
+    const lastText = lastScan ? relTime(lastScan) : "never";
+
+    // Auto-screen badge
+    const autoOn = cls && cls.autoScreenEnabled;
+    const autoBadge = cls
+      ? `<span class="as-pill r${autoOn ? '5' : '3'}" style="font-size:10px; padding:0.2rem 0.45rem;">${autoOn ? "Auto-screen ON" : "Manual"}</span>`
+      : "";
+
+    body.innerHTML = `
+      <div class="as-section" style="margin-bottom:0.5rem;">
+        <div class="as-label">Class</div>
+        <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.2rem;">
+          <span style="font-size:13px;">${escapeHtml(className)}</span>
+          ${autoBadge}
+        </div>
+      </div>
+      <div class="as-section" style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+        <div><div class="as-label">Scored</div><div style="font-size:18px; font-weight:700;">${total}</div></div>
+        <div><div class="as-label">Feedback</div><div style="font-size:18px; font-weight:700;">${fb}</div></div>
+        <div><div class="as-label">Agreement</div><div style="font-size:18px; font-weight:700;">${escapeHtml(agText)}</div></div>
+        <div><div class="as-label">Last scan</div><div style="font-size:13px; font-weight:600; padding-top:0.15rem;">${escapeHtml(lastText)}</div></div>
+      </div>
+      <div class="as-actions" style="margin-top:0.7rem;">
+        <a class="as-btn" id="as-pos-open-dash" target="_blank" rel="noopener">Open dashboard ↗</a>
+      </div>
+    `;
+    loadSettings().then(({ backendUrl }) => {
+      const a = document.getElementById("as-pos-open-dash");
+      if (a) a.href = `${backendUrl}/?position=${encodeURIComponent(positionUid)}`;
+    });
+  }
+
   // ─── Main refresh ───────────────────────────────────────────────────────
   async function refresh() {
     const ids = extractIdsFromUrl();
     if (!ids) {
-      // Not on a candidate page — remove panel if present.
+      // Not on a recognised page — remove panel if present.
       const existing = document.getElementById(PANEL_ID);
       if (existing) existing.remove();
       currentNumericId = null;
+      currentPositionUid = null;
       currentScore = null;
+      return;
+    }
+
+    // Position-summary mode: /app/req/<uid>, no /can/.
+    if (ids.mode === "position") {
+      if (ids.positionUid === currentPositionUid && currentNumericId == null) return;
+      currentPositionUid = ids.positionUid;
+      currentNumericId = null;
+      currentScore = null;
+      ensurePanel();
+      setHeaderSubtitle("", extractPositionNameFromDom());
+      renderLoading();
+      try {
+        const d = await fetchPositionDashboard(ids.positionUid);
+        // Drop result if user navigated since.
+        const now = extractIdsFromUrl();
+        if (!now || now.mode !== "position" || now.positionUid !== ids.positionUid) return;
+        setHeaderSubtitle("", (d.class && d.class.className) || extractPositionNameFromDom());
+        renderPositionSummary(d, ids.positionUid);
+      } catch (e) {
+        renderError(e.message || String(e));
+      }
       return;
     }
 
@@ -480,6 +722,7 @@
       // Already rendered for this candidate. Nothing to do.
       return;
     }
+    currentPositionUid = ids.positionUid;
     currentNumericId = ids.numericId;
     currentScore = null;
 

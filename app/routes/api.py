@@ -74,6 +74,81 @@ def list_open_positions() -> list[dict[str, Any]]:
     ]
 
 
+# ─── Position dashboard ──────────────────────────────────────────────────────
+@router.get("/position/dashboard")
+def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, Any]:
+    """Aggregate everything a recruiter wants to know about a single position:
+    class assignment, scan stats, agreement rate, recent scored candidates.
+
+    Designed for the home-page "position dashboard" view so the recruiter
+    sees one screen per position instead of three parallel mode cards.
+    """
+    from sqlalchemy import select, func, desc
+    from ..db import db_session
+    from ..models import DebugScoring, Feedback
+
+    pos_uid = (position_uid or "").strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    cls = get_position_class(pos_uid)
+
+    with db_session() as ses:
+        # Stats
+        total_scored = int(ses.scalar(
+            select(func.count()).select_from(DebugScoring).where(DebugScoring.position_uid == pos_uid)
+        ) or 0)
+        last_scan_at = ses.scalar(
+            select(func.max(DebugScoring.timestamp)).where(DebugScoring.position_uid == pos_uid)
+        )
+
+        # Agreement = count(rows where recruiter_rating == ai_rating) / count(rows where both present)
+        feedback_rows = ses.scalars(
+            select(Feedback).where(Feedback.position_uid == pos_uid)
+        ).all()
+        feedback_count = len(feedback_rows)
+        with_both = [f for f in feedback_rows if f.ai_rating is not None and f.recruiter_rating is not None]
+        agreed = sum(1 for f in with_both if f.ai_rating == f.recruiter_rating)
+        agreement = (agreed / len(with_both)) if with_both else None
+
+        # Recent scored candidates — newest first
+        recent_rows = ses.scalars(
+            select(DebugScoring)
+            .where(DebugScoring.position_uid == pos_uid)
+            .order_by(desc(DebugScoring.timestamp))
+            .limit(max(1, min(100, recent_limit)))
+        ).all()
+        recent = [
+            {
+                "candidateUid": r.candidate_uid,
+                "candidateName": r.candidate_name or "",
+                "rating": r.final_rating,
+                "confidence": r.confidence,
+                "summary": r.summary or "",
+                "scoredAt": r.timestamp.isoformat() if r.timestamp else None,
+            }
+            for r in recent_rows
+        ]
+
+    return {
+        "positionUid": pos_uid,
+        "positionName": cls["className"] if cls else None,  # best-effort; ideally fetch from Comeet
+        "class": cls,  # {classId, className, level, autoScreenEnabled} or null
+        "stats": {
+            "totalScored": total_scored,
+            "feedbackCount": feedback_count,
+            "agreement": agreement,
+            "lastScanAt": last_scan_at.isoformat() if last_scan_at else None,
+        },
+        "recent": recent,
+    }
+
+
 # ─── Position class management ───────────────────────────────────────────────
 @router.get("/position-classes")
 def get_classes() -> list[dict[str, Any]]:
@@ -133,6 +208,51 @@ def list_auto_screen() -> list[str]:
 
 
 # ─── Chrome extension endpoints ──────────────────────────────────────────────
+def _suggest_class_for(position_name: str, classes: list[dict[str, Any]]) -> str | None:
+    """Crude name-matcher: best class whose name shares tokens with the
+    position name. Returns class_id or None if no good match.
+    """
+    import re
+    if not position_name:
+        return None
+    pname_tokens = {t.lower() for t in re.findall(r"[A-Za-z]+", position_name) if len(t) > 1}
+    if not pname_tokens:
+        return None
+    # Hand-curated alias hints — boost certain class matches even when the
+    # position name doesn't share a token directly.
+    aliases: dict[str, set[str]] = {
+        "it": {"it", "helpdesk", "sysadmin", "support"},
+        "qa": {"qa", "test", "tester", "quality"},
+        "backend": {"backend", "server", "api"},
+        "frontend_fullstack": {"frontend", "fullstack", "ui", "client", "react"},
+        "devops_security": {"devops", "sre", "security", "infrastructure"},
+        "nlp": {"nlp", "ml", "research", "scientist"},
+        "talent_acquisition": {"recruiter", "talent", "sourcer", "hr"},
+        "product_management": {"product", "pm"},
+        "customer_success": {"customer", "success", "csm"},
+        "business_development": {"business", "bd", "partnerships"},
+        "engineering_leadership": {"engineering", "manager", "director", "head", "lead"},
+        "analytical_engineering": {"analytics", "data", "analyst"},
+        "controller": {"controller", "finance", "accounting"},
+        "account_executive": {"account", "ae", "sales"},
+        "knowledge_base_writer": {"knowledge", "writer", "content"},
+        "revenue_operations": {"revops", "revenue", "ops"},
+    }
+    best_id: str | None = None
+    best_score = 0
+    for c in classes:
+        cid, cname = c["id"], c["name"]
+        cname_tokens = {t.lower() for t in re.findall(r"[A-Za-z]+", cname) if len(t) > 1}
+        # Score: token overlap + alias bonus.
+        score = len(pname_tokens & cname_tokens) * 2
+        alias_hits = pname_tokens & aliases.get(cid, set())
+        score += len(alias_hits) * 3
+        if score > best_score:
+            best_score = score
+            best_id = cid
+    return best_id if best_score >= 2 else None
+
+
 @router.get("/extension/ping", dependencies=[Depends(_require_extension_token)])
 def extension_ping() -> dict[str, Any]:
     """Cheap connectivity + token check for the popup's 'Test connection' button.
@@ -336,6 +456,77 @@ def extension_post_feedback(body: ExtensionFeedbackBody) -> dict[str, Any]:
         recruiter_email=body.recruiter_email or "ext:unknown",
     )
     return {"ok": True, "id": fb_id}
+
+
+# ─── Extension class-management endpoints ───────────────────────────────────
+@router.get("/extension/suggest-class", dependencies=[Depends(_require_extension_token)])
+def extension_suggest_class(position_uid: str) -> dict[str, Any]:
+    """Inline class picker for the extension. Given a Comeet position uid
+    (numeric URL form OR alphanumeric), return:
+      - The position's name (so the extension can show it),
+      - A best-guess class suggestion from existing classes (or null),
+      - The full list of classes so the extension can render a dropdown.
+    """
+    pos_uid = (position_uid or "").strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    position_name = ""
+    try:
+        with ComeetClient() as pub:
+            pos = pub.get_position(pos_uid)
+            if pos:
+                position_name = str(pos.get("name") or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    classes = list_all_classes()
+    suggestion_id = _suggest_class_for(position_name, classes)
+    suggestion = next((c for c in classes if c["id"] == suggestion_id), None)
+    return {
+        "positionUid": pos_uid,
+        "positionName": position_name,
+        "suggestion": suggestion,
+        "classes": classes,
+    }
+
+
+class ExtensionAssignClassBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    class_id: str = Field(min_length=1)
+    level: str = ""
+
+
+@router.post("/extension/assign-class", dependencies=[Depends(_require_extension_token)])
+def extension_assign_class(body: ExtensionAssignClassBody) -> dict[str, Any]:
+    pos_uid = body.position_uid.strip()
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+    try:
+        return assign_position_class(pos_uid, body.class_id, body.level)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class ExtensionCreateClassBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    levels: list[str] = Field(default_factory=list)
+
+
+@router.post("/extension/create-class", dependencies=[Depends(_require_extension_token)])
+def extension_create_class(body: ExtensionCreateClassBody) -> dict[str, Any]:
+    try:
+        return create_custom_class(body.name, body.levels)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 # ─── Scan flow ───────────────────────────────────────────────────────────────

@@ -291,6 +291,20 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
                 process_ctx = (process_ctx + "\n\n" + enrich).strip()
         except Exception as exc:  # noqa: BLE001
             log.info("internal-profile enrichment failed: %s", exc)
+    else:
+        try:
+            comments = _fetch_internal_comments_text(candidate)
+            if comments:
+                process_ctx = (process_ctx + "\n\n" + comments).strip()
+        except Exception as exc:  # noqa: BLE001
+            log.info("internal-comments fetch failed: %s", exc)
+
+    try:
+        fb_ctx = _feedback_context(candidate_uid, sess.class_id, sess.class_name)
+        if fb_ctx:
+            process_ctx = (process_ctx + "\n\n" + fb_ctx).strip()
+    except Exception as exc:  # noqa: BLE001
+        log.info("feedback-context injection failed: %s", exc)
 
     inputs = ScoreInputs(
         candidate=candidate,
@@ -439,6 +453,20 @@ def score_one_candidate_now(
                 process_ctx = (process_ctx + "\n\n" + enrich).strip()
         except Exception as exc:  # noqa: BLE001
             log.info("internal-profile enrichment failed: %s", exc)
+    else:
+        try:
+            comments = _fetch_internal_comments_text(candidate)
+            if comments:
+                process_ctx = (process_ctx + "\n\n" + comments).strip()
+        except Exception as exc:  # noqa: BLE001
+            log.info("internal-comments fetch failed: %s", exc)
+
+    try:
+        fb_ctx = _feedback_context(candidate_uid, cls["classId"], cls["className"])
+        if fb_ctx:
+            process_ctx = (process_ctx + "\n\n" + fb_ctx).strip()
+    except Exception as exc:  # noqa: BLE001
+        log.info("feedback-context injection failed: %s", exc)
 
     inputs = ScoreInputs(
         candidate=candidate,
@@ -560,6 +588,66 @@ def _build_process_context(candidate: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _feedback_context(candidate_uid: str, class_id: str, class_name: str) -> str:
+    """Build a recruiter-feedback summary to inject into the scoring prompt.
+
+    Two sections:
+      1. Past feedback on THIS candidate (newest first). Critical when the
+         recruiter has already rated this person — the AI shouldn't ignore
+         the prior verdict on Re-grade.
+      2. Recent ratings on OTHER candidates in the same position class
+         (newest 8 rows with notes). Gives the AI a feel for how the
+         recruiter has been calibrating recently, beyond what the learned
+         rubric captures.
+
+    Returns "" if there's nothing useful to add.
+    """
+    from .feedback import list_feedback_for_candidate, list_feedback_for_class
+    parts: list[str] = []
+
+    try:
+        own = list_feedback_for_candidate(candidate_uid)
+    except Exception as exc:  # noqa: BLE001
+        log.info("feedback_context: own-feedback lookup failed for %s: %s", candidate_uid, exc)
+        own = []
+    if own:
+        parts.append("[Prior feedback on THIS candidate — recruiter has weighed in before]")
+        # Newest first; cap at 5.
+        for fb in own[:5]:
+            ts = fb.timestamp.strftime("%Y-%m-%d") if fb.timestamp else ""
+            note = (fb.note or "").strip().replace("\n", " ")
+            line = f" - {ts}: recruiter rated {fb.recruiter_rating}/5"
+            if fb.ai_rating is not None:
+                line += f" (AI had said {fb.ai_rating}/5)"
+            if note:
+                line += f" — {note[:300]}"
+            parts.append(line)
+
+    try:
+        cls_recent = list_feedback_for_class(class_id, limit=20) if class_id else []
+    except Exception as exc:  # noqa: BLE001
+        log.info("feedback_context: class-feedback lookup failed: %s", exc)
+        cls_recent = []
+    # Drop rows for the current candidate (already in section 1) and rows with no note.
+    cls_recent = [
+        fb for fb in cls_recent
+        if fb.candidate_uid != candidate_uid and (fb.note or "").strip()
+    ][:8]
+    if cls_recent:
+        parts.append(f"\n[Recent recruiter feedback for class '{class_name or class_id}' — last {len(cls_recent)} rated candidates]")
+        for fb in cls_recent:
+            note = (fb.note or "").strip().replace("\n", " ")
+            line = f" - rated {fb.recruiter_rating}/5"
+            if fb.ai_rating is not None:
+                line += f" (AI: {fb.ai_rating}/5)"
+            if fb.candidate_name:
+                line += f" — {fb.candidate_name}"
+            line += f": {note[:240]}"
+            parts.append(line)
+
+    return "\n".join(parts) if parts else ""
+
+
 def _resolve_numeric_position_uid(numeric_id: str) -> str | None:
     """Map Comeet's numeric position id (e.g. '437204' from the app URL) to the
     alphanumeric position uid (e.g. 'DB.A64') used by the public API + our DB.
@@ -595,6 +683,52 @@ def _resolve_numeric_position_uid(numeric_id: str) -> str | None:
                 if uid:
                     return uid
     return None
+
+
+def _fetch_internal_comments_text(candidate: dict[str, Any]) -> str:
+    """Fetch ONLY the recruiter comments from Comeet's internal API. Cheap,
+    always-call companion to `_fetch_internal_profile_text` (which does a
+    full profile dump only when the CV is missing).
+
+    Returns "" when no comments are present or the call fails.
+    """
+    from .tagging import numeric_candidate_id_from_url
+    numeric_id = numeric_candidate_id_from_url(candidate.get("URL"))
+    candidate_uid = str(candidate.get("uid") or "")
+    if not numeric_id and not candidate_uid:
+        return ""
+    try:
+        ic = ComeetAppClient()
+        data: dict[str, Any] = {}
+        for fetcher_name in ("get_candidate_v2", "get_candidate"):
+            fetcher = getattr(ic, fetcher_name, None)
+            if not fetcher:
+                continue
+            try:
+                data = fetcher(numeric_id or candidate_uid) or {}
+                if data:
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if not data:
+            return ""
+    except Exception as exc:  # noqa: BLE001
+        log.info("comments fetch failed: %s", exc)
+        return ""
+
+    comments = data.get("comments") or data.get("notes") or []
+    if not isinstance(comments, list) or not comments:
+        return ""
+    lines: list[str] = ["[Recruiter notes on the Comeet profile]"]
+    for c in comments[:10]:
+        if not isinstance(c, dict):
+            continue
+        txt = c.get("text") or c.get("body") or c.get("content") or ""
+        who = c.get("author") or c.get("created_by") or ""
+        when = c.get("created_at") or c.get("time") or ""
+        if isinstance(txt, str) and txt.strip():
+            lines.append(f" - {who} {when}: {txt.strip()[:600]}".strip())
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:
