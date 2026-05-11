@@ -85,70 +85,26 @@
     .ext-steps button.ghost {
       padding: 0.1rem 0.45rem; font-size: 0.72rem; margin-left: 0.25rem;
     }
-    /* Visual install steps */
-    .install-steps {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 0.55rem;
+    /* Compact install steps */
+    .install-steps-compact {
+      margin: 0; padding-left: 1.4rem;
+      font-size: 0.82rem; line-height: 1.7; color: var(--text);
     }
-    .install-step {
-      display: grid;
-      grid-template-columns: 2.2rem 1fr;
-      gap: 0.85rem;
-      align-items: flex-start;
-      padding: 0.7rem 0.85rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
+    .install-steps-compact li::marker {
+      color: #c9b8ff; font-weight: 700;
     }
-    .install-step-num {
-      width: 2.2rem; height: 2.2rem;
-      border-radius: 50%;
-      background: rgba(150, 113, 255, 0.18);
-      border: 1px solid rgba(150, 113, 255, 0.55);
-      color: #c9b8ff;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 700; font-size: 1rem;
-    }
-    .install-step:last-child .install-step-num {
-      background: rgba(34, 197, 94, 0.18);
-      border-color: rgba(34, 197, 94, 0.55);
-      color: #4ade80;
-    }
-    .install-step-body { min-width: 0; }
-    .install-step-title {
-      font-weight: 600;
-      font-size: 0.9rem;
-      margin-bottom: 0.2rem;
-      color: var(--text);
-    }
-    .install-step-desc {
-      font-size: 0.82rem;
-      color: var(--text);
-      line-height: 1.5;
-      margin-top: 0.2rem;
-    }
-    .install-step-note {
-      font-size: 0.75rem;
-      color: var(--muted);
-      margin-top: 0.3rem;
-      font-style: italic;
-    }
-    .install-step code {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    .install-steps-compact code {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
       padding: 0.02rem 0.32rem; font-size: 0.88em;
     }
-    .install-step button.ghost {
-      padding: 0.15rem 0.5rem; font-size: 0.72rem;
+    .install-steps-compact button.ghost {
+      padding: 0.05rem 0.4rem; font-size: 0.7rem;
+      margin-left: 0.25rem; vertical-align: baseline;
     }
     .install-update-note {
-      margin-top: 0.75rem;
-      padding: 0.55rem 0.75rem;
-      background: rgba(150, 113, 255, 0.06);
-      border: 1px solid rgba(150, 113, 255, 0.18);
-      border-radius: 6px;
-      font-size: 0.78rem;
-      color: var(--text);
+      margin-top: 0.6rem;
+      font-size: 0.75rem;
+      color: var(--muted);
     }
     .install-update-note code {
       background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
@@ -213,7 +169,31 @@
       text-transform: uppercase; letter-spacing: 0.05em;
       margin: 0.5rem 0 0.25rem;
     }
-    .score-sub-label:first-child { margin-top: 0; }
+    .score-section { margin-top: 0.4rem; }
+    .score-section:first-of-type { margin-top: 0; }
+    .score-section > summary.score-sub-label {
+      cursor: pointer;
+      list-style: none;
+      padding: 0.2rem 0;
+      display: flex; align-items: center; gap: 0.3rem;
+      margin: 0;
+      user-select: none;
+    }
+    .score-section > summary.score-sub-label::-webkit-details-marker { display: none; }
+    .score-section > summary.score-sub-label::before {
+      content: "▸";
+      display: inline-block;
+      width: 0.7rem;
+      color: var(--muted);
+      font-size: 0.7rem;
+      transition: transform 0.15s ease;
+    }
+    .score-section[open] > summary.score-sub-label::before {
+      transform: rotate(90deg);
+    }
+    .score-section > summary.score-sub-label:hover { color: var(--text); }
+    .score-section[open] > summary.score-sub-label { margin-bottom: 0.3rem; }
+    .score-section-body { display: contents; }
     .score-item {
       padding: 0.35rem 0.45rem;
       border-radius: 5px;
@@ -236,6 +216,24 @@
     .score-item.near .rec  { background: rgba(234,179,8,0.18); color: #fbbf24; }
     .score-item.far .rec   { background: rgba(239,68,68,0.18); color: #fca5a5; }
     .score-empty { font-size: 0.72rem; color: var(--muted); font-style: italic; padding: 0.2rem 0; }
+    .score-more { margin-top: 0.1rem; }
+    .score-more summary {
+      list-style: none;
+      cursor: pointer;
+      font-size: 0.72rem;
+      color: var(--accent-link);
+      padding: 0.25rem 0.45rem;
+      border-radius: 5px;
+      border: 1px dashed var(--border);
+      text-align: center;
+      transition: color 0.1s, border-color 0.1s;
+    }
+    .score-more summary::-webkit-details-marker { display: none; }
+    .score-more summary:hover {
+      color: var(--accent-link-hover);
+      border-color: var(--accent);
+    }
+    .score-more[open] summary { margin-bottom: 0.2rem; }
     /* AI × Recruiter agreement matrix */
     .agree-matrix {
       display: inline-grid;
@@ -320,28 +318,6 @@
     .pill.r2 { border-color: rgba(249,115,22,0.7);  background: rgba(249,115,22,0.12); color: #fb923c; }
     .pill.r1 { border-color: rgba(239,68,68,0.75);  background: rgba(239,68,68,0.10); color: #fca5a5; }
     .small { font-size: 0.78rem; color: var(--muted); }
-    .reasons { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
-    .reasons .col { flex: 1 1 45%; min-width: 180px; }
-    .reasons .label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.2rem; }
-    .reasons ul { margin: 0; padding-left: 1.05rem; font-size: 0.82rem; }
-    .reasons .yes .label { color: #4ade80; }
-    .reasons .no  .label { color: #f87171; }
-    .feedback {
-      margin-top: 0.45rem; padding: 0.55rem 0.65rem;
-      background: rgba(var(--accent-rgb), 0.06); border: 1px solid var(--border);
-      border-radius: 8px;
-    }
-    .feedback .verdict-row { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
-    .feedback .verdict-row button {
-      padding: 0.25rem 0.6rem; border-radius: 6px; border: 1px solid var(--border);
-      background: transparent; color: var(--muted); cursor: pointer;
-      font: inherit; font-size: 0.78rem; font-weight: 600;
-    }
-    .feedback .verdict-row button.selected { color: var(--text); background: rgba(var(--accent-rgb), 0.18); border-color: var(--accent); }
-    .feedback input[type="text"] { font-size: 0.8rem; }
-    a.link { color: var(--accent-link); text-decoration: none; }
-    a.link:hover { color: var(--accent-link-hover); }
-
     .mode-card {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -387,51 +363,16 @@
       </div>
     </div>
     <div id="extPanelBody" class="ext-card-body" hidden>
-      <div class="install-steps">
-        <div class="install-step">
-          <div class="install-step-num">1</div>
-          <div class="install-step-body">
-            <div class="install-step-title">Download the extension</div>
-            <div class="install-step-desc">Click the <strong>Download</strong> button above. You'll get a file like <code>auto-screener-extension-{{ extensionVersion }}.zip</code>.</div>
-            <div class="install-step-desc">Find it in your Downloads folder and <strong>double-click to unzip it</strong>. Keep the unzipped folder somewhere stable — Chrome will read from it directly, so don't move it after.</div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">2</div>
-          <div class="install-step-body">
-            <div class="install-step-title">Open Chrome's extensions page</div>
-            <div class="install-step-desc">In Chrome's address bar, type <code>chrome://extensions/</code> and press Enter.
-              <button class="ghost" id="btnCopyExtUrl" type="button" style="margin-left:0.3rem;">Copy</button>
-            </div>
-            <div class="install-step-note">(Browsers block clickable <code>chrome://</code> links for security, so you have to paste it yourself.)</div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">3</div>
-          <div class="install-step-body">
-            <div class="install-step-title">Turn on Developer mode</div>
-            <div class="install-step-desc">In the top-right of that page, flip the <strong>Developer mode</strong> toggle on. Three new buttons appear (Load unpacked, Pack extension, Update).</div>
-            <div class="install-step-note">If you don't see the toggle, your Chrome is managed by IT (the toggle is hidden). Use Chrome Canary or ask IT to allow developer mode.</div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">4</div>
-          <div class="install-step-body">
-            <div class="install-step-title">Load the unpacked extension</div>
-            <div class="install-step-desc">Click <strong>Load unpacked</strong>, then select the folder you unzipped in step 1. The Auto Screener tile should now appear in the list.</div>
-            <div class="install-step-desc">Click the puzzle-piece icon in Chrome's toolbar (top-right) → click the pin next to Auto Screener so it stays visible.</div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">✓</div>
-          <div class="install-step-body">
-            <div class="install-step-title">You're done</div>
-            <div class="install-step-desc">Open any candidate on <code>app.comeet.co</code> — the AI Screener panel appears on the right. The API token is already baked in; no settings to configure.</div>
-          </div>
-        </div>
-      </div>
+      <ol class="install-steps-compact">
+        <li><strong>Download</strong> and unzip the file.</li>
+        <li>Paste <code>chrome://extensions/</code> in the address bar
+            <button class="ghost" id="btnCopyExtUrl" type="button">Copy</button>.</li>
+        <li>Turn on <strong>Developer mode</strong> (top-right).</li>
+        <li>Click <strong>Load unpacked</strong> and pick the unzipped folder.</li>
+        <li>Open any candidate on <code>app.comeet.co</code>.</li>
+      </ol>
       <div class="install-update-note">
-        <strong>Updating later?</strong> Re-download the latest zip, replace your unzipped folder with the new contents, then click the circular refresh icon next to Auto Screener on <code>chrome://extensions/</code>.
+        <strong>Updating?</strong> Re-download, replace the unzipped folder, click the refresh icon next to Auto Screener on <code>chrome://extensions/</code>.
       </div>
     </div>
   </div>
@@ -559,16 +500,9 @@
     el.style.display = 'block'; el.textContent = msg;
   }
 
-  function escHtml(s) {
-    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
   // ─── State ──────────────────────────────────────────────────────────────
   let allPositions = [];
   let allClasses = [];
-  let lastResults = [];
-  let currentPositionName = '';
-  let seenUids = [];
 
   // ─── Position dropdowns ─────────────────────────────────────────────────
   function uniqSorted(values) {
@@ -766,22 +700,26 @@
     }
     wrap.style.display = 'block';
 
+    function subList(items, hasFb, label) {
+      if (!items.length) return '';
+      // The "With feedback (3)" / "Not rated (50)" label itself is the click
+      // target — clicking it expands the candidate list. Collapsed by default.
+      return `
+        <details class="score-section">
+          <summary class="score-sub-label">${label} (${items.length})</summary>
+          <div class="score-section-body">${items.map(it => itemRow(it, hasFb)).join('')}</div>
+        </details>`;
+    }
     const colHtml = brk.columns.map(col => {
       const cnt = col.withFeedback.length + col.withoutFeedback.length;
-      const fbItems = col.withFeedback.map(it => itemRow(it, /*hasFb*/ true)).join('');
-      const noItems = col.withoutFeedback.map(it => itemRow(it, /*hasFb*/ false)).join('');
       return `
         <div class="score-col">
           <div class="score-col-head">
             <span class="pill r${col.aiRating}">${col.aiRating}/5 · ${escapeHtml(col.label)}</span>
             <span class="count">${cnt}</span>
           </div>
-          ${col.withFeedback.length ? `
-            <div class="score-sub-label">With feedback (${col.withFeedback.length})</div>
-            ${fbItems}` : ''}
-          ${col.withoutFeedback.length ? `
-            <div class="score-sub-label">Not rated by recruiter (${col.withoutFeedback.length})</div>
-            ${noItems}` : ''}
+          ${subList(col.withFeedback, true, 'With feedback')}
+          ${subList(col.withoutFeedback, false, 'Not rated by recruiter')}
           ${(!col.withFeedback.length && !col.withoutFeedback.length) ? `<div class="score-empty">no candidates</div>` : ''}
         </div>`;
     }).join('');
@@ -967,193 +905,6 @@
       btn.textContent = original;
     }
   });
-
-  async function runScan(fresh) {
-    const uid = document.getElementById('pos').value;
-    const classId = document.getElementById('posClass').value;
-    const level = document.getElementById('posLevel').value || '';
-    if (!uid) return setErr('Choose a position.');
-    if (!classId) return setErr('Pick a position class first.');
-    setErr('');
-
-    if (fresh) seenUids = [];
-
-    document.getElementById('meta').textContent = 'Starting batch…';
-    document.getElementById('resultsPanel').style.display = 'none';
-    document.getElementById('tbody').innerHTML = '';
-    lastResults = [];
-
-    try {
-      const begin = await api('/api/scan/begin', {
-        position_uid: uid,
-        seen_uids: seenUids,
-        class_id: classId,
-        class_level: level,
-      });
-      if (begin.empty) {
-        setErr(begin.message || 'No candidates to score.');
-        document.getElementById('meta').textContent = '';
-        return;
-      }
-      currentPositionName = begin.positionName || '';
-      document.getElementById('resultsPanel').style.display = 'block';
-      document.getElementById('batchNav').textContent =
-        begin.remainingNewCount > 0
-          ? `${begin.remainingNewCount} more after this batch`
-          : '';
-
-      seenUids.push(...begin.uids);
-
-      // Score candidates one at a time, append rows as they arrive.
-      const tb = document.getElementById('tbody');
-      for (let i = 0; i < begin.uids.length; i++) {
-        document.getElementById('meta').textContent = `Scoring ${i + 1} of ${begin.uids.length}…`;
-        let summary;
-        try {
-          const out = await api('/api/scan/score', {
-            session_id: begin.sessionId,
-            candidate_uid: begin.uids[i],
-          });
-          summary = out.summary;
-        } catch (err) {
-          summary = { candidateUid: begin.uids[i], error: err.message };
-        }
-        lastResults.push(summary);
-        tb.appendChild(buildRow(summary, uid));
-      }
-
-      // Commit the scan session (drops it from cache).
-      try {
-        await api('/api/scan/finish', {
-          session_id: begin.sessionId,
-          processed_uids: begin.uids,
-        });
-      } catch (err) { /* non-fatal */ }
-      document.getElementById('meta').textContent = `Scored ${lastResults.length}`;
-    } catch (err) {
-      setErr(err.message);
-      document.getElementById('meta').textContent = '';
-    }
-  }
-
-  // ─── Row rendering ──────────────────────────────────────────────────────
-  function buildRow(s, positionUid) {
-    const tr = document.createElement('tr');
-    if (s.error) tr.className = 'row-error';
-
-    const nameCell = document.createElement('td');
-    const nameMain = document.createElement('div');
-    nameMain.innerHTML = '<strong>' + escHtml(s.name || s.candidateUid || '?') + '</strong>'
-      + '<span class="small"> ' + escHtml(s.candidateUid || '') + '</span>';
-    nameCell.appendChild(nameMain);
-    if (s.profileUrl) {
-      const link = document.createElement('div');
-      link.innerHTML = '<a class="link" href="' + escHtml(s.profileUrl) + '" target="_blank" rel="noopener">Comeet ↗</a>';
-      if (s.linkedinUrl) link.innerHTML += ' · <a class="link" href="' + escHtml(s.linkedinUrl) + '" target="_blank" rel="noopener">LinkedIn ↗</a>';
-      if (s.cvUrl)       link.innerHTML += ' · <a class="link" href="' + escHtml(s.cvUrl) + '" target="_blank" rel="noopener">CV ↗</a>';
-      nameCell.appendChild(link);
-    }
-    if (s.tagApplied) {
-      const tag = document.createElement('div');
-      tag.className = 'small';
-      tag.style.color = 'var(--ok)';
-      tag.textContent = '✓ tagged: ' + s.tagApplied;
-      nameCell.appendChild(tag);
-    }
-    tr.appendChild(nameCell);
-
-    const appliedCell = document.createElement('td');
-    appliedCell.innerHTML = '<span class="small">' + escHtml((s.timeCreated || '').slice(0, 10)) + '</span>';
-    tr.appendChild(appliedCell);
-
-    const ratingCell = document.createElement('td');
-    if (s.error) {
-      ratingCell.innerHTML = '<span class="small">' + escHtml(s.error) + '</span>';
-    } else if (s.rating) {
-      ratingCell.innerHTML = '<span class="pill r' + s.rating + '">' + s.rating + ' · '
-        + escHtml(s.ratingLabel || '') + '</span>'
-        + (s.confidence != null ? '<div class="small">' + Math.round(s.confidence * 100) + '% conf.</div>' : '');
-    }
-    tr.appendChild(ratingCell);
-
-    const sumCell = document.createElement('td');
-    if (s.summary) sumCell.innerHTML = '<p style="margin:0">' + escHtml(s.summary) + '</p>';
-    if ((s.strengths && s.strengths.length) || (s.gaps && s.gaps.length)) {
-      let html = '<div class="reasons">';
-      if (s.strengths && s.strengths.length) {
-        html += '<div class="col yes"><div class="label">Why yes</div><ul>'
-          + s.strengths.map(t => '<li>' + escHtml(t) + '</li>').join('')
-          + '</ul></div>';
-      }
-      if (s.gaps && s.gaps.length) {
-        html += '<div class="col no"><div class="label">Why not</div><ul>'
-          + s.gaps.map(t => '<li>' + escHtml(t) + '</li>').join('')
-          + '</ul></div>';
-      }
-      html += '</div>';
-      sumCell.innerHTML += html;
-    }
-    tr.appendChild(sumCell);
-
-    const fbCell = document.createElement('td');
-    if (!s.error && s.candidateUid) fbCell.appendChild(buildFeedbackForm(s, positionUid));
-    tr.appendChild(fbCell);
-
-    return tr;
-  }
-
-  function buildFeedbackForm(s, positionUid) {
-    const wrap = document.createElement('div');
-    wrap.className = 'feedback';
-    wrap.innerHTML = `
-      <div class="verdict-row">
-        <button data-v="5">5</button>
-        <button data-v="4">4</button>
-        <button data-v="3">3</button>
-        <button data-v="2">2</button>
-        <button data-v="1">1</button>
-      </div>
-      <input type="text" placeholder="Note (optional)" />
-      <div style="display:flex; gap:0.4rem; margin-top:0.4rem">
-        <button class="primary save" disabled>Save</button>
-        <span class="small status"></span>
-      </div>
-    `;
-    let selected = null;
-    wrap.querySelectorAll('.verdict-row button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        wrap.querySelectorAll('.verdict-row button').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        selected = btn.getAttribute('data-v');
-        wrap.querySelector('.save').disabled = false;
-      });
-    });
-    wrap.querySelector('.save').addEventListener('click', async () => {
-      if (!selected) return;
-      const note = wrap.querySelector('input').value || '';
-      const status = wrap.querySelector('.status');
-      const saveBtn = wrap.querySelector('.save');
-      saveBtn.disabled = true; status.textContent = 'Saving…';
-      try {
-        await api('/api/feedback', {
-          candidate_uid: s.candidateUid,
-          candidate_name: s.name || '',
-          position_uid: positionUid,
-          position_name: currentPositionName,
-          ai_rating: s.rating,
-          recruiter_rating: Number(selected),
-          note: note,
-        });
-        status.textContent = '✓ saved';
-        status.style.color = 'var(--ok)';
-      } catch (err) {
-        status.textContent = err.message;
-        status.style.color = 'var(--bad)';
-        saveBtn.disabled = false;
-      }
-    });
-    return wrap;
-  }
 
   loadAll();
 
