@@ -335,16 +335,33 @@
       ${scoredAt ? `<div class="as-meta">Scored ${escapeHtml(scoredAt)}</div>` : ""}
       ${renderFeedbackHtml(r)}
     `;
-    wireFeedbackHandlers();
+    wireFeedbackHandlers(score);
   }
 
-  function wireFeedbackHandlers() {
+  function wireFeedbackHandlers(score) {
+    // Snapshot identity at wire-time. Even if the user navigates away and the
+    // module-level currentScore changes, this closure remembers who we were
+    // collecting feedback for.
+    const snapshot = {
+      candidateUid: (score && score.candidateUid) || "",
+      candidateName: (score && score.candidateName) || extractCandidateNameFromDom(),
+      positionUid: (score && score.positionUid) || (extractIdsFromUrl()?.positionUid ?? ""),
+      positionName: (score && score.positionName) || extractPositionNameFromDom(),
+      aiRating: score ? (Number(score.rating) || null) : null,
+      numericId: (extractIdsFromUrl()?.numericId ?? ""),
+    };
+
     selectedRating = 0;
     const starsWrap = document.getElementById("as-stars");
     const submitBtn = document.getElementById("as-submit");
     const noteEl = document.getElementById("as-note");
     const statusEl = document.getElementById("as-fb-status");
-    if (!starsWrap || !submitBtn) return;
+    if (!starsWrap || !submitBtn || !noteEl || !statusEl) return;
+
+    const setStatus = (msg, kind) => {
+      statusEl.textContent = msg || "";
+      statusEl.className = "as-status" + (kind ? " " + kind : "");
+    };
 
     const stars = Array.from(starsWrap.querySelectorAll(".as-star"));
     const paint = (val) => {
@@ -360,47 +377,36 @@
         selectedRating = Number(s.dataset.val);
         paint(selectedRating);
         submitBtn.disabled = false;
-        statusEl.textContent = "";
-        statusEl.className = "as-status";
+        setStatus("");
       });
     });
 
     submitBtn.addEventListener("click", async () => {
-      if (submitting || !selectedRating || !currentNumericId) return;
+      if (submitting || !selectedRating) return;
+      // Refuse to post for a candidate we don't have a uid for — the backend
+      // wouldn't know what to key the row by.
+      if (!snapshot.candidateUid) {
+        setStatus("Wait for the scan to finish before submitting.", "as-err");
+        return;
+      }
       submitting = true;
       submitBtn.disabled = true;
-      statusEl.textContent = "Saving…";
-      statusEl.className = "as-status";
+      setStatus("Saving…");
 
       try {
-        const candidateUid = (currentScore && currentScore.candidateUid) || "";
-        const positionUid = (currentScore && currentScore.positionUid) || (extractIdsFromUrl()?.positionUid ?? "");
-        const positionName = (currentScore && currentScore.positionName) || extractPositionNameFromDom();
-        const aiRating = currentScore ? Number(currentScore.rating) || null : null;
-
-        if (!candidateUid) {
-          // No score on file → we can't post feedback yet because the backend
-          // keys feedback by alphanumeric candidate uid (matches the Comeet
-          // public API). Surface a clear message.
-          throw new Error("Feedback needs the candidate to have been scored at least once. Run a scan first.");
-        }
-
         const resp = await postFeedback({
-          candidate_uid: candidateUid,
-          candidate_name: extractCandidateNameFromDom(),
-          position_uid: positionUid,
-          position_name: positionName,
-          ai_rating: aiRating,
+          candidate_uid: snapshot.candidateUid,
+          candidate_name: snapshot.candidateName,
+          position_uid: snapshot.positionUid,
+          position_name: snapshot.positionName,
+          ai_rating: snapshot.aiRating,
           recruiter_rating: selectedRating,
           note: (noteEl.value || "").trim(),
         });
-
-        statusEl.textContent = `Saved (#${resp.id ?? "?"})`;
-        statusEl.className = "as-status as-ok";
+        setStatus(`Saved (#${resp.id ?? "?"})`, "as-ok");
         noteEl.value = "";
       } catch (e) {
-        statusEl.textContent = e.message || String(e);
-        statusEl.className = "as-status as-err";
+        setStatus(e.message || String(e), "as-err");
         submitBtn.disabled = false;
       } finally {
         submitting = false;

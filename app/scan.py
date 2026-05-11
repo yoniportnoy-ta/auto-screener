@@ -280,6 +280,17 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
     # Build process context (name/email/source/links) — enough for prompt anchoring.
     process_ctx = _build_process_context(candidate)
     resume_pdf_b64, resume_failed = _maybe_fetch_resume(resume.get("url"))
+    # If we couldn't get a PDF, fall back to Comeet's internal API for a
+    # rich profile dump (work history, education, recruiter comments).
+    # This gives Claude something to score against instead of returning
+    # "no resume content available".
+    if not resume_pdf_b64:
+        try:
+            enrich = _fetch_internal_profile_text(candidate)
+            if enrich:
+                process_ctx = (process_ctx + "\n\n" + enrich).strip()
+        except Exception as exc:  # noqa: BLE001
+            log.info("internal-profile enrichment failed: %s", exc)
 
     inputs = ScoreInputs(
         candidate=candidate,
@@ -406,6 +417,17 @@ def score_one_candidate_now(
 
     process_ctx = _build_process_context(candidate)
     resume_pdf_b64, resume_failed = _maybe_fetch_resume(resume.get("url"))
+    # If we couldn't get a PDF, fall back to Comeet's internal API for a
+    # rich profile dump (work history, education, recruiter comments).
+    # This gives Claude something to score against instead of returning
+    # "no resume content available".
+    if not resume_pdf_b64:
+        try:
+            enrich = _fetch_internal_profile_text(candidate)
+            if enrich:
+                process_ctx = (process_ctx + "\n\n" + enrich).strip()
+        except Exception as exc:  # noqa: BLE001
+            log.info("internal-profile enrichment failed: %s", exc)
 
     inputs = ScoreInputs(
         candidate=candidate,
@@ -525,6 +547,124 @@ def _build_process_context(candidate: dict[str, Any]) -> str:
     if (candidate.get("disposition_reason") or {}).get("reason"):
         lines.append(f"Disposition: {candidate['disposition_reason']['reason']}")
     return "\n".join(lines)
+
+
+def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:
+    """Fall back to Comeet's internal API for a richer profile when the
+    resume PDF isn't fetchable. Returns a plain-text dump suitable for the
+    scoring prompt, or "" if we can't get anything useful.
+
+    Called only when `_maybe_fetch_resume` returned no PDF. The internal API
+    requires the recruiter cookie + CSRF dance we already do for tagging.
+    """
+    from .tagging import numeric_candidate_id_from_url
+    numeric_id = numeric_candidate_id_from_url(candidate.get("URL"))
+    candidate_uid = str(candidate.get("uid") or "")
+    if not numeric_id and not candidate_uid:
+        return ""
+
+    try:
+        with ComeetAppClient() as ic:
+            data: dict[str, Any] = {}
+            # Try v2 first — richer payload.
+            for fetcher_name in ("get_candidate_v2", "get_candidate"):
+                fetcher = getattr(ic, fetcher_name, None)
+                if not fetcher:
+                    continue
+                try:
+                    data = fetcher(numeric_id or candidate_uid) or {}
+                    if data:
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    log.info("internal-API %s failed: %s", fetcher_name, exc)
+                    continue
+            if not data:
+                return ""
+    except Exception as exc:  # noqa: BLE001
+        log.info("internal API auth failed, skipping enrichment: %s", exc)
+        return ""
+
+    parts: list[str] = ["", "[INTERNAL PROFILE — fallback because no fetchable CV]"]
+
+    # Headline / summary / about
+    for key in ("headline", "summary", "about", "title"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(f"{key.title()}: {val.strip()}")
+
+    # Person fields (sometimes nested)
+    person = data.get("person") if isinstance(data.get("person"), dict) else {}
+    for key in ("first_name", "last_name", "email", "phone", "location", "city", "country"):
+        val = (data.get(key) if data.get(key) else person.get(key)) if person else data.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(f"{key.replace('_', ' ').title()}: {val.strip()}")
+
+    # Work experience
+    work = data.get("work_experience") or data.get("workExperience") or data.get("experience") or []
+    if isinstance(work, list) and work:
+        parts.append("\nWork experience:")
+        for w in work[:15]:
+            if not isinstance(w, dict):
+                continue
+            company = w.get("company") or w.get("company_name") or ""
+            title = w.get("title") or w.get("role") or w.get("position") or ""
+            start = w.get("start_date") or w.get("from") or ""
+            end = w.get("end_date") or w.get("to") or ("present" if w.get("current") else "")
+            desc = w.get("description") or w.get("summary") or ""
+            line = f" - {title} at {company} ({start} → {end})".rstrip()
+            parts.append(line)
+            if desc and isinstance(desc, str):
+                parts.append(f"   {desc.strip()[:600]}")
+
+    # Education
+    edu = data.get("education") or data.get("education_history") or []
+    if isinstance(edu, list) and edu:
+        parts.append("\nEducation:")
+        for e in edu[:10]:
+            if not isinstance(e, dict):
+                continue
+            school = e.get("school") or e.get("institution") or ""
+            degree = e.get("degree") or ""
+            field = e.get("field_of_study") or e.get("field") or ""
+            start = e.get("start_date") or e.get("from") or ""
+            end = e.get("end_date") or e.get("to") or ""
+            parts.append(f" - {degree} {field} at {school} ({start} → {end})".strip())
+
+    # Skills
+    skills = data.get("skills") or []
+    if isinstance(skills, list) and skills:
+        flat = [s.get("name") if isinstance(s, dict) else str(s) for s in skills]
+        flat = [x for x in flat if x]
+        if flat:
+            parts.append("\nSkills: " + ", ".join(flat[:40]))
+
+    # Links / socials
+    links = data.get("links") or data.get("social_links") or []
+    if isinstance(links, list) and links:
+        for ln in links[:10]:
+            if isinstance(ln, dict):
+                url = ln.get("url") or ln.get("href")
+                kind = ln.get("type") or ln.get("name")
+                if url:
+                    parts.append(f"Link: {kind or ''} {url}".strip())
+            elif isinstance(ln, str):
+                parts.append(f"Link: {ln}")
+
+    # Recruiter comments / notes
+    comments = data.get("comments") or data.get("notes") or []
+    if isinstance(comments, list) and comments:
+        parts.append("\nRecruiter notes:")
+        for c in comments[:10]:
+            if not isinstance(c, dict):
+                continue
+            txt = c.get("text") or c.get("body") or c.get("content") or ""
+            who = c.get("author") or c.get("created_by") or ""
+            when = c.get("created_at") or c.get("time") or ""
+            if isinstance(txt, str) and txt.strip():
+                parts.append(f" - {who} {when}: {txt.strip()[:600]}".strip())
+
+    text = "\n".join(p for p in parts if p is not None)
+    return text if len(text) > 50 else ""  # only return when we actually got something
 
 
 def _maybe_fetch_resume(url: str | None) -> tuple[str | None, bool]:
