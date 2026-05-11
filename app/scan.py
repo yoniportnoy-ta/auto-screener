@@ -612,22 +612,22 @@ def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:
         return ""
 
     try:
-        with ComeetAppClient() as ic:
-            data: dict[str, Any] = {}
-            # Try v2 first — richer payload.
-            for fetcher_name in ("get_candidate_v2", "get_candidate"):
-                fetcher = getattr(ic, fetcher_name, None)
-                if not fetcher:
-                    continue
-                try:
-                    data = fetcher(numeric_id or candidate_uid) or {}
-                    if data:
-                        break
-                except Exception as exc:  # noqa: BLE001
-                    log.info("internal-API %s failed: %s", fetcher_name, exc)
-                    continue
-            if not data:
-                return ""
+        ic = ComeetAppClient()
+        data: dict[str, Any] = {}
+        # Try v2 first — richer payload.
+        for fetcher_name in ("get_candidate_v2", "get_candidate"):
+            fetcher = getattr(ic, fetcher_name, None)
+            if not fetcher:
+                continue
+            try:
+                data = fetcher(numeric_id or candidate_uid) or {}
+                if data:
+                    break
+            except Exception as exc:  # noqa: BLE001
+                log.info("internal-API %s failed: %s", fetcher_name, exc)
+                continue
+        if not data:
+            return ""
     except Exception as exc:  # noqa: BLE001
         log.info("internal API auth failed, skipping enrichment: %s", exc)
         return ""
