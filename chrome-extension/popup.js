@@ -72,4 +72,8 @@ document.addEventListener("DOMContentLoaded", () => {
     adv.style.display = show ? "block" : "none";
     $("btnAdvanced").textContent = show ? "Advanced ▴" : "Advanced ▾";
   });
+  // Auto-test connection on open so the recruiter immediately sees whether
+  // the extension is wired up correctly. Small delay so chrome.storage.local
+  // has finished hydrating the token from embedded-config.js.
+  setTimeout(() => { test(); }, 150);
 });

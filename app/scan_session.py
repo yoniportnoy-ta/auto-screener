@@ -47,6 +47,8 @@ class ScanSession:
     batch_size: int = 0
     jd_text: str = ""
     feedback_context: str = ""
+    position_notes: str = ""
+    recruiter_notes: str = ""
     created_at: float = field(default_factory=lambda: time.time())
 
     def to_json(self) -> str:

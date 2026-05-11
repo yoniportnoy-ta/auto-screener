@@ -350,8 +350,32 @@ def _expand_country_display(raw: str) -> str:
     return s
 
 
+_RECRUITER_NOTE_TOKENS = ("note", "internal", "recruiter", "comment", "memo", "extra")
+
+
+def _looks_like_recruiter_note_block(name: str) -> bool:
+    """Heuristic: does this details[] block hold recruiter-added notes
+    rather than formal JD prose (description, requirements, etc.)?"""
+    if not name:
+        return False
+    n = name.lower()
+    return any(tok in n for tok in _RECRUITER_NOTE_TOKENS)
+
+
+def _strip_html(value: str) -> str:
+    import re
+    # Strip HTML tags — same as Code.gs's `replace(/<[^>]+>/g, ' ')`.
+    return re.sub(r"<[^>]+>", " ", value).strip()
+
+
 def position_jd_text(position: dict[str, Any]) -> str:
-    """Equivalent of `buildPositionJdText_` — prose JD passed to Claude."""
+    """Equivalent of `buildPositionJdText_` — prose JD passed to Claude.
+
+    Returns only the "formal JD" pieces: name/department/location/level + any
+    details[] block whose name doesn't look like a recruiter note. The recruiter
+    notes are surfaced separately via `position_recruiter_notes()` so the prompt
+    can weight them distinctly.
+    """
     lines: list[str] = []
     lines.append(f"Position: {position.get('name') or ''}")
     if position.get("department"):
@@ -365,15 +389,44 @@ def position_jd_text(position: dict[str, Any]) -> str:
     for block in position.get("details") or []:
         if not block or not block.get("name"):
             continue
+        if _looks_like_recruiter_note_block(block["name"]):
+            continue  # surfaced separately via position_recruiter_notes
+        value = _strip_html(block.get("value") or "")
+        if not value:
+            continue
         lines.append("")
         lines.append(f"--- {block['name']} ---")
-        value = (block.get("value") or "").strip()
-        if value:
-            # Strip HTML tags — same as Code.gs's `replace(/<[^>]+>/g, ' ')`.
-            import re
-            lines.append(re.sub(r"<[^>]+>", " ", value))
+        lines.append(value)
     text = "\n".join(lines).strip()
     return text or "No description provided; infer from title and department only."
+
+
+def position_recruiter_notes(position: dict[str, Any]) -> str:
+    """Pull out the recruiter-added 'Notes/Internal/etc' blocks from
+    position.details[]. Returned as a single labeled text section so the
+    scoring prompt can call them out distinctly from the formal JD.
+
+    Returns "" when no such blocks exist.
+    """
+    parts: list[str] = []
+    for block in position.get("details") or []:
+        if not block or not block.get("name"):
+            continue
+        if not _looks_like_recruiter_note_block(block["name"]):
+            continue
+        value = _strip_html(block.get("value") or "")
+        if not value:
+            continue
+        parts.append(f"--- {block['name']} ---")
+        parts.append(value)
+    if not parts:
+        return ""
+    return (
+        "[POSITION-LEVEL RECRUITER NOTES — the hiring manager / recruiter added "
+        "these to the role itself. Treat them as overrides on the formal JD when "
+        "they conflict.]\n"
+        + "\n".join(parts)
+    )
 
 
 __all__ = [

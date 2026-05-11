@@ -67,6 +67,12 @@ class PositionClass(Base):
     auto_screen_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    # Recruiter-managed free-form notes for this position. Injected into the
+    # scoring prompt context for every scan (single, bulk, scheduled). Recruiter
+    # uses this to tell the AI things they can't easily encode in the rubric
+    # or the JD itself — "agency hires count as a no, regardless of resume",
+    # "we want EU candidates only", etc.
+    recruiter_notes: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

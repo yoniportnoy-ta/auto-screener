@@ -30,6 +30,7 @@ from .comeet_client import (
     candidate_in_allowed_step,
     candidate_max_activity_iso,
     position_jd_text,
+    position_recruiter_notes,
 )
 from .config import settings
 from .db import db_session
@@ -169,6 +170,7 @@ def begin_scan_batch(
             raise ValueError(f"Position not found: {position_uid}")
         position_name = position.get("name") or position_uid
         jd_text = position_jd_text(position)
+        position_notes = position_recruiter_notes(position)
 
         candidates = client.list_candidates_for_position(position_uid)
 
@@ -220,6 +222,8 @@ def begin_scan_batch(
         remaining_new_count=remaining,
         batch_size=max_run,
         jd_text=jd_text,
+        position_notes=position_notes,
+        recruiter_notes=cls.get("recruiterNotes") or "",
     )
     save_session(sess)
 
@@ -298,6 +302,19 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
                 process_ctx = (process_ctx + "\n\n" + comments).strip()
         except Exception as exc:  # noqa: BLE001
             log.info("internal-comments fetch failed: %s", exc)
+
+    # Per-position recruiter notes from Comeet's details[] blocks named
+    # like "Notes", "Internal", etc.
+    if getattr(sess, "position_notes", ""):
+        process_ctx = (process_ctx + "\n\n" + sess.position_notes).strip()
+    # Persistent recruiter-typed notes from our own DB (textarea on the
+    # home page). Applied to every candidate in this batch.
+    if getattr(sess, "recruiter_notes", ""):
+        process_ctx = (
+            process_ctx
+            + "\n\n[RECRUITER NOTES on this position — persistent guidance for all candidates]\n"
+            + sess.recruiter_notes
+        ).strip()
 
     try:
         fb_ctx = _feedback_context(candidate_uid, sess.class_id, sess.class_name)
@@ -399,6 +416,7 @@ def score_one_candidate_now(
             raise ValueError(f"Position not found: {position_uid}")
         position_name = position.get("name") or position_uid
         jd_text = position_jd_text(position)
+        position_notes = position_recruiter_notes(position)
 
         # Resolve numeric_id → alphanumeric uid by scanning only THIS position's
         # candidates (cheap — one paginated call). Falls back to direct fetch
@@ -460,6 +478,19 @@ def score_one_candidate_now(
                 process_ctx = (process_ctx + "\n\n" + comments).strip()
         except Exception as exc:  # noqa: BLE001
             log.info("internal-comments fetch failed: %s", exc)
+
+    # Per-position recruiter notes from Comeet's details[] blocks named
+    # like "Notes", "Internal", etc.
+    if position_notes:
+        process_ctx = (process_ctx + "\n\n" + position_notes).strip()
+    # Persistent recruiter-typed notes from our own DB (the textarea on the
+    # home page). Applied to every scan of this position.
+    if cls.get("recruiterNotes"):
+        process_ctx = (
+            process_ctx
+            + "\n\n[RECRUITER NOTES on this position — persistent guidance for all candidates]\n"
+            + cls["recruiterNotes"]
+        ).strip()
 
     try:
         fb_ctx = _feedback_context(candidate_uid, cls["classId"], cls["className"])

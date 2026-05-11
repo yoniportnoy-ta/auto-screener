@@ -25,6 +25,35 @@
       margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5;
     }
     .wrap { max-width: 1480px; margin: 0 auto; padding: 1.5rem clamp(1rem, 2vw, 2rem); }
+    /* Two-column workspace: filters on the left grow/shrink without moving
+       the dashboard on the right. */
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+    .workspace > .panel { margin-bottom: 0; }
+    .dash-placeholder {
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      text-align: left;
+      border-style: dashed;
+    }
+    .dash-placeholder-inner {
+      display: flex; gap: 1rem; align-items: center;
+      max-width: 420px;
+    }
+    .dash-placeholder-icon {
+      font-size: 2rem; color: var(--accent-link);
+    }
+    @media (max-width: 980px) {
+      .workspace { grid-template-columns: 1fr; }
+      .dash-placeholder { display: none; }
+    }
     h1 { font-size: 1.4rem; margin: 0 0 1rem; font-weight: 600; }
     .panel {
       background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -389,7 +418,8 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="workspace">
+  <div class="panel filter-panel">
     <div class="filters-row stacked">
       <div class="filter-field" id="fieldRecruiter">
         <label for="filterRecruiter">Lead recruiter</label>
@@ -420,6 +450,18 @@
       </div>
       <div class="filter-field" style="flex:0 0 auto; align-self:flex-end">
         <button class="ghost" id="btnNewClass" style="font-size:0.78rem">+ New class</button>
+      </div>
+    </div>
+
+    <div class="filters-row stacked" id="notesRow" style="display:none">
+      <div class="filter-field">
+        <label for="recruiterNotes">Notes for AI (applies to every scan on this position)</label>
+        <textarea id="recruiterNotes" rows="4" placeholder="e.g. agency hires count as a 2/5 regardless of resume; we want EU candidates only; ignore the 'fluency in Spanish' requirement"
+          style="width:100%; padding:0.5rem 0.6rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; font:inherit; font-size:0.85rem; resize:vertical;"></textarea>
+        <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.35rem;">
+          <button type="button" class="ghost" id="btnSaveNotes" style="font-size:0.78rem">Save notes</button>
+          <span id="notesStatus" class="small" style="color:var(--muted);"></span>
+        </div>
       </div>
     </div>
 
@@ -458,6 +500,17 @@
     <div id="meta" class="meta"></div>
   </div>
 
+  <!-- Empty state shown until a position is picked -->
+  <div class="panel dash-placeholder" id="dashPlaceholder">
+    <div class="dash-placeholder-inner">
+      <div class="dash-placeholder-icon">→</div>
+      <div>
+        <div style="font-weight:600; margin-bottom:0.25rem;">Pick a position to see its dashboard</div>
+        <div class="small">Status, agreement matrix, recent scores, and bulk actions appear here once you choose one on the left.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Position dashboard — appears once a position is selected -->
   <div class="panel" id="dashPanel" style="display:none">
     <div class="dash-stats" id="dashStats">
@@ -490,6 +543,7 @@
       </div>
     </details>
   </div>
+  </div><!-- /workspace -->
 
 </div>
 
@@ -635,9 +689,11 @@
       document.getElementById('classRow').style.display = 'none';
       document.getElementById('modesRow').style.display = 'none';
       document.getElementById('dashPanel').style.display = 'none';
+      document.getElementById('dashPlaceholder').style.display = '';
       return;
     }
     document.getElementById('dashPanel').style.display = 'block';
+    document.getElementById('dashPlaceholder').style.display = 'none';
     // Reveal the class row only if no class is assigned yet. If one IS
     // assigned, hide the picker and skip straight to the action cards.
     let hasClass = false;
@@ -648,12 +704,35 @@
         updateLevels();
         if (cls.level) document.getElementById('posLevel').value = cls.level;
         setScheduleUI(!!cls.autoScreenEnabled, false);
+        document.getElementById('recruiterNotes').value = cls.recruiterNotes || '';
         hasClass = true;
+      } else {
+        document.getElementById('recruiterNotes').value = '';
       }
     } catch (err) { /* non-fatal */ }
     document.getElementById('classRow').style.display = hasClass ? 'none' : 'flex';
     document.getElementById('modesRow').style.display = hasClass ? 'grid' : 'none';
+    document.getElementById('notesRow').style.display = hasClass ? 'block' : 'none';
     loadDashboard(uid);
+  });
+
+  // ─── Save recruiter notes ─────────────────────────────────────────────
+  document.getElementById('btnSaveNotes').addEventListener('click', async () => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return;
+    const notes = document.getElementById('recruiterNotes').value;
+    const statusEl = document.getElementById('notesStatus');
+    statusEl.textContent = 'Saving…';
+    statusEl.style.color = 'var(--muted)';
+    try {
+      await api('/api/position-class/notes', { position_uid: uid, notes });
+      statusEl.textContent = '✓ saved';
+      statusEl.style.color = 'var(--ok)';
+      setTimeout(() => { statusEl.textContent = ''; }, 2000);
+    } catch (e) {
+      statusEl.textContent = e.message || 'failed';
+      statusEl.style.color = 'var(--bad)';
+    }
   });
 
   // ─── Progressive reveal: only show each filter once the previous is touched.
@@ -674,10 +753,11 @@
     refresh();
   })();
 
-  // When the class picker is set manually, reveal the action cards.
+  // When the class picker is set manually, reveal the action cards + notes.
   document.getElementById('posClass').addEventListener('change', () => {
     if (document.getElementById('posClass').value) {
       document.getElementById('modesRow').style.display = 'grid';
+      document.getElementById('notesRow').style.display = 'block';
     }
   });
 
@@ -933,7 +1013,10 @@
     document.getElementById('fieldPosition').style.display = 'none';
     document.getElementById('classRow').style.display = 'none';
     document.getElementById('modesRow').style.display = 'none';
+    document.getElementById('notesRow').style.display = 'none';
+    document.getElementById('recruiterNotes').value = '';
     document.getElementById('dashPanel').style.display = 'none';
+    document.getElementById('dashPlaceholder').style.display = '';
   });
 
   document.getElementById('filterRecruiter').addEventListener('change', () => { rebuildLocations(); rebuildPositions(); });

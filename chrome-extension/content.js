@@ -149,11 +149,15 @@
 
   // ─── URL helpers ────────────────────────────────────────────────────────
   function extractIdsFromUrl() {
-    // Two SPA states we render against:
-    //   /app/req/<positionUid>/can/<numericId>  → candidate view
+    // Three SPA states we render against:
+    //   /app/req/<positionUid>/can/<numericId>  → candidate (full context)
+    //   /app/can/<numericId>                    → candidate (no position context;
+    //                                              we'll discover it from /score)
     //   /app/req/<positionUid>(/...)?           → position view
-    const cand = location.pathname.match(/\/app\/req\/([^/]+)\/can\/(\d+)/);
-    if (cand) return { mode: "candidate", positionUid: cand[1], numericId: cand[2] };
+    const candFull = location.pathname.match(/\/app\/req\/([^/]+)\/can\/(\d+)/);
+    if (candFull) return { mode: "candidate", positionUid: candFull[1], numericId: candFull[2] };
+    const candAlone = location.pathname.match(/\/app\/can\/(\d+)/);
+    if (candAlone) return { mode: "candidate", positionUid: "", numericId: candAlone[1] };
     const pos = location.pathname.match(/\/app\/req\/([^/]+)/);
     if (pos) return { mode: "position", positionUid: pos[1] };
     return null;
@@ -474,9 +478,15 @@
   async function runScanForCurrent() {
     const ids = extractIdsFromUrl();
     if (!ids) return;
+    // If URL didn't carry the position, fall back to whatever /score told us.
+    const positionUid = ids.positionUid || currentPositionUid || "";
+    if (!positionUid) {
+      renderUnscanableNoPosition();
+      return;
+    }
     renderScanning();
     try {
-      const score = await scoreNow(ids.positionUid, ids.numericId);
+      const score = await scoreNow(positionUid, ids.numericId);
       currentScore = score;
       renderScore(score);
     } catch (e) {
@@ -488,7 +498,7 @@
       // Special-case the "no class" error — show an inline class picker
       // right in the panel instead of bouncing the user to the home page.
       if (/no position class selected/i.test(msg)) {
-        await renderClassPicker(ids.positionUid);
+        await renderClassPicker(positionUid);
         return;
       }
 
@@ -741,8 +751,20 @@
       const score = await fetchScore(ids.numericId, ids.positionUid);
       if (loadingFor !== currentNumericId) return; // user moved on
       if (!score) {
+        // Not scored yet. If we have position context from the URL, auto-scan.
+        // If we're on /app/can/<id> with no position, we can't pick a class
+        // to score against — show a helpful message instead.
+        if (!ids.positionUid) {
+          renderUnscanableNoPosition();
+          return;
+        }
         await runScanForCurrent();
         return;
+      }
+      // If the URL didn't include position context, capture it from /score
+      // so Re-grade + Submit feedback have what they need.
+      if (!ids.positionUid && score.positionUid) {
+        currentPositionUid = score.positionUid;
       }
       currentScore = score;
       renderScore(score);
@@ -751,6 +773,19 @@
       console.warn("[auto-screener]", e);
       renderError(e.message || String(e));
     }
+  }
+
+  function renderUnscanableNoPosition() {
+    const body = document.getElementById("as-body");
+    if (!body) return;
+    body.innerHTML = `
+      <div class="as-empty">
+        <strong>Not scored yet.</strong><br>
+        Open this candidate from a position page (URL like
+        <code style="background:#0f1419; padding:0.05rem 0.3rem; border-radius:3px;">/app/req/&lt;pos&gt;/can/&lt;id&gt;</code>)
+        so we know which role to score them for.
+      </div>
+    `;
   }
 
   // ─── SPA navigation watcher ─────────────────────────────────────────────

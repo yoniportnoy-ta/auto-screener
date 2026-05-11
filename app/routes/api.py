@@ -26,6 +26,7 @@ from ..position_classes import (
     list_all_classes,
     list_auto_screen_positions,
     set_auto_screen_enabled,
+    set_recruiter_notes,
 )
 from ..scan import score_one_candidate_now
 
@@ -493,6 +494,21 @@ class AutoScreenBody(BaseModel):
 def toggle_auto_screen(body: AutoScreenBody) -> dict[str, Any]:
     try:
         return set_auto_screen_enabled(body.position_uid, body.enabled)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class RecruiterNotesBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    notes: str = ""
+
+
+@router.post("/position-class/notes")
+def post_recruiter_notes(body: RecruiterNotesBody) -> dict[str, Any]:
+    """Save free-form recruiter notes for a position. Injected into the
+    scoring prompt on every future scan for this position."""
+    try:
+        return set_recruiter_notes(body.position_uid, body.notes)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

@@ -86,6 +86,7 @@ def get_position_class(position_uid: str) -> dict | None:
             "className": row.class_name,
             "level": row.level,
             "autoScreenEnabled": bool(row.auto_screen_enabled),
+            "recruiterNotes": row.recruiter_notes or "",
         }
 
 
@@ -106,6 +107,22 @@ def set_auto_screen_enabled(position_uid: str, enabled: bool) -> dict:
         "positionUid": uid,
         "autoScreenEnabled": bool(enabled),
     }
+
+
+def set_recruiter_notes(position_uid: str, notes: str) -> dict:
+    """Persist free-form recruiter notes for a position. Empty string clears."""
+    uid = (position_uid or "").strip()
+    if not uid:
+        raise ValueError("position_uid required")
+    n = (notes or "").strip()
+    with db_session() as session:
+        row = session.scalar(select(PositionClass).where(PositionClass.position_uid == uid))
+        if not row:
+            raise ValueError(
+                "Position has no class assigned yet — pick a class before saving notes."
+            )
+        row.recruiter_notes = n or None
+    return {"positionUid": uid, "recruiterNotes": n}
 
 
 def list_auto_screen_positions() -> list[str]:
