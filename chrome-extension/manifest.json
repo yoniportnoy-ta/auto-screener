@@ -26,7 +26,7 @@
   "content_scripts": [
     {
       "matches": ["https://app.comeet.co/app/req/*"],
-      "js": ["_token.js", "content.js"],
+      "js": ["embedded-config.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
     },
@@ -35,7 +35,7 @@
         "https://auto-screener-2va5.onrender.com/*",
         "http://localhost:8000/*"
       ],
-      "js": ["_token.js", "screener-bridge.js"],
+      "js": ["embedded-config.js", "screener-bridge.js"],
       "run_at": "document_idle"
     }
   ]
