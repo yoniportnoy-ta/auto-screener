@@ -85,6 +85,75 @@
     .ext-steps button.ghost {
       padding: 0.1rem 0.45rem; font-size: 0.72rem; margin-left: 0.25rem;
     }
+    /* Visual install steps */
+    .install-steps {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.55rem;
+    }
+    .install-step {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0.85rem;
+      align-items: flex-start;
+      padding: 0.7rem 0.85rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .install-step-num {
+      width: 2.2rem; height: 2.2rem;
+      border-radius: 50%;
+      background: rgba(150, 113, 255, 0.18);
+      border: 1px solid rgba(150, 113, 255, 0.55);
+      color: #c9b8ff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 1rem;
+    }
+    .install-step:last-child .install-step-num {
+      background: rgba(34, 197, 94, 0.18);
+      border-color: rgba(34, 197, 94, 0.55);
+      color: #4ade80;
+    }
+    .install-step-body { min-width: 0; }
+    .install-step-title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 0.2rem;
+      color: var(--text);
+    }
+    .install-step-desc {
+      font-size: 0.82rem;
+      color: var(--text);
+      line-height: 1.5;
+      margin-top: 0.2rem;
+    }
+    .install-step-note {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
+    .install-step code {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.02rem 0.32rem; font-size: 0.88em;
+    }
+    .install-step button.ghost {
+      padding: 0.15rem 0.5rem; font-size: 0.72rem;
+    }
+    .install-update-note {
+      margin-top: 0.75rem;
+      padding: 0.55rem 0.75rem;
+      background: rgba(150, 113, 255, 0.06);
+      border: 1px solid rgba(150, 113, 255, 0.18);
+      border-radius: 6px;
+      font-size: 0.78rem;
+      color: var(--text);
+    }
+    .install-update-note code {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      padding: 0.02rem 0.32rem; font-size: 0.88em;
+    }
     /* Position dashboard */
     .dash-stats {
       display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -106,6 +175,67 @@
     .dash-stat.bad  .dash-stat-val { color: var(--bad); }
     #dashRecentTbl td .pill { font-size: 0.75rem; padding: 0.25rem 0.55rem; }
     #dashRecentTbl td { vertical-align: middle; }
+    /* Bulk actions row */
+    .dash-actions {
+      display: flex; align-items: center; gap: 0.6rem;
+      margin-top: 0.85rem; flex-wrap: wrap;
+    }
+    button.ghost.danger {
+      color: #fca5a5; border-color: rgba(239,68,68,0.45);
+    }
+    button.ghost.danger:hover {
+      background: rgba(239,68,68,0.10);
+    }
+    /* 5-column AI-score breakdown */
+    .score-cols {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.55rem;
+    }
+    .score-col {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 0.55rem;
+      display: flex; flex-direction: column;
+      min-width: 0;
+    }
+    .score-col-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.3rem; margin-bottom: 0.5rem;
+    }
+    .score-col-head .pill { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
+    .score-col-head .count {
+      font-size: 0.75rem; color: var(--muted); font-weight: 500;
+    }
+    .score-sub-label {
+      font-size: 0.65rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 0.5rem 0 0.25rem;
+    }
+    .score-sub-label:first-child { margin-top: 0; }
+    .score-item {
+      padding: 0.35rem 0.45rem;
+      border-radius: 5px;
+      font-size: 0.78rem;
+      margin-bottom: 0.2rem;
+      background: rgba(255,255,255,0.025);
+      border: 1px solid var(--border);
+      line-height: 1.3;
+      display: flex; align-items: flex-start; gap: 0.4rem;
+    }
+    .score-item .name {
+      flex: 1 1 auto; min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .score-item .rec {
+      flex: 0 0 auto; font-size: 0.7rem; font-weight: 700;
+      padding: 0.1rem 0.35rem; border-radius: 4px;
+    }
+    .score-item.agree .rec { background: rgba(34,197,94,0.18); color: #4ade80; }
+    .score-item.near .rec  { background: rgba(234,179,8,0.18); color: #fbbf24; }
+    .score-item.far .rec   { background: rgba(239,68,68,0.18); color: #fca5a5; }
+    .score-empty { font-size: 0.72rem; color: var(--muted); font-style: italic; padding: 0.2rem 0; }
     /* AI × Recruiter agreement matrix */
     .agree-matrix {
       display: inline-grid;
@@ -159,11 +289,13 @@
     .agree-matrix .cell .zero {
       opacity: 0.25;
     }
-    button.primary {
+    button.primary, a.primary {
       background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
       padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
       font-weight: 600; font-size: 0.85rem;
+      text-decoration: none; display: inline-block;
     }
+    a.primary:hover { color: #fff; }
     button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
     button.ghost {
       background: transparent; color: var(--muted); border: 1px solid var(--border);
@@ -255,11 +387,52 @@
       </div>
     </div>
     <div id="extPanelBody" class="ext-card-body" hidden>
-      <ol class="ext-steps">
-        <li>Click <strong>Download</strong>, then unzip the file.</li>
-        <li>Open <code>chrome://extensions/</code> — <button class="ghost" id="btnCopyExtUrl" type="button">Copy</button>.</li>
-        <li>Turn on <strong>Developer mode</strong>, click <strong>Load unpacked</strong>, pick the unzipped folder.</li>
-      </ol>
+      <div class="install-steps">
+        <div class="install-step">
+          <div class="install-step-num">1</div>
+          <div class="install-step-body">
+            <div class="install-step-title">Download the extension</div>
+            <div class="install-step-desc">Click the <strong>Download</strong> button above. You'll get a file like <code>auto-screener-extension-{{ extensionVersion }}.zip</code>.</div>
+            <div class="install-step-desc">Find it in your Downloads folder and <strong>double-click to unzip it</strong>. Keep the unzipped folder somewhere stable — Chrome will read from it directly, so don't move it after.</div>
+          </div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">2</div>
+          <div class="install-step-body">
+            <div class="install-step-title">Open Chrome's extensions page</div>
+            <div class="install-step-desc">In Chrome's address bar, type <code>chrome://extensions/</code> and press Enter.
+              <button class="ghost" id="btnCopyExtUrl" type="button" style="margin-left:0.3rem;">Copy</button>
+            </div>
+            <div class="install-step-note">(Browsers block clickable <code>chrome://</code> links for security, so you have to paste it yourself.)</div>
+          </div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">3</div>
+          <div class="install-step-body">
+            <div class="install-step-title">Turn on Developer mode</div>
+            <div class="install-step-desc">In the top-right of that page, flip the <strong>Developer mode</strong> toggle on. Three new buttons appear (Load unpacked, Pack extension, Update).</div>
+            <div class="install-step-note">If you don't see the toggle, your Chrome is managed by IT (the toggle is hidden). Use Chrome Canary or ask IT to allow developer mode.</div>
+          </div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">4</div>
+          <div class="install-step-body">
+            <div class="install-step-title">Load the unpacked extension</div>
+            <div class="install-step-desc">Click <strong>Load unpacked</strong>, then select the folder you unzipped in step 1. The Auto Screener tile should now appear in the list.</div>
+            <div class="install-step-desc">Click the puzzle-piece icon in Chrome's toolbar (top-right) → click the pin next to Auto Screener so it stays visible.</div>
+          </div>
+        </div>
+        <div class="install-step">
+          <div class="install-step-num">✓</div>
+          <div class="install-step-body">
+            <div class="install-step-title">You're done</div>
+            <div class="install-step-desc">Open any candidate on <code>app.comeet.co</code> — the AI Screener panel appears on the right. The API token is already baked in; no settings to configure.</div>
+          </div>
+        </div>
+      </div>
+      <div class="install-update-note">
+        <strong>Updating later?</strong> Re-download the latest zip, replace your unzipped folder with the new contents, then click the circular refresh icon next to Auto Screener on <code>chrome://extensions/</code>.
+      </div>
     </div>
   </div>
 
@@ -344,16 +517,17 @@
       <div class="dash-stat"><div class="dash-stat-val" id="dashLastScan">—</div><div class="dash-stat-label">Last scan</div></div>
     </div>
 
-    <!-- AI × Recruiter agreement matrix -->
-    <div id="dashMatrixWrap" style="margin-top:1rem; display:none;">
-      <div style="display:flex; align-items:baseline; gap:0.6rem; margin-bottom:0.4rem;">
-        <div style="font-weight:600; font-size:0.9rem;">Agreement matrix</div>
-        <div class="small" style="color:var(--muted);" id="dashMatrixSummary"></div>
-      </div>
-      <div id="dashMatrix" class="agree-matrix"></div>
-      <div class="small" style="color:var(--muted); margin-top:0.45rem;">
-        Rows: <strong>AI's rating</strong>. Columns: <strong>recruiter's rating</strong>. Diagonal = agreement; cells above the diagonal = AI rated higher than the recruiter.
-      </div>
+    <!-- Bulk actions for this position -->
+    <div class="dash-actions">
+      <button type="button" class="primary" id="btnRescoreAll">Re-score all candidates</button>
+      <button type="button" class="ghost danger" id="btnClearScores">Clear all AI scores</button>
+      <span id="dashActionStatus" class="small" style="color:var(--muted);"></span>
+    </div>
+
+    <!-- 5-column AI-score breakdown -->
+    <div id="dashBreakdownWrap" style="margin-top:1rem; display:none;">
+      <div style="font-weight:600; font-size:0.9rem; margin-bottom:0.5rem;">Candidates by AI score</div>
+      <div id="dashBreakdown" class="score-cols"></div>
     </div>
 
     <details id="dashRecentWrap" style="margin-top:0.85rem; display:none;">
@@ -547,9 +721,9 @@
   async function loadDashboard(uid) {
     if (!uid) return;
     try {
-      const [d, m] = await Promise.all([
+      const [d, brk] = await Promise.all([
         api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid) + '&recent_limit=50'),
-        api('/api/position/agreement-matrix?position_uid=' + encodeURIComponent(uid)).catch(() => null),
+        api('/api/position/breakdown?position_uid=' + encodeURIComponent(uid)).catch(() => null),
       ]);
       const ratedEl = document.getElementById('dashRated');
       const fbEl    = document.getElementById('dashFeedback');
@@ -573,8 +747,8 @@
         ? relTime(new Date(d.stats.lastScanAt))
         : 'never';
 
-      // Matrix
-      renderAgreementMatrix(m);
+      // 5-column AI-score breakdown
+      renderBreakdown(brk);
 
       // Recent rows (now in a collapsed <details>)
       const tbody = document.getElementById('dashRecentBody');
@@ -600,50 +774,96 @@
     }
   }
 
-  function renderAgreementMatrix(m) {
-    const wrap = document.getElementById('dashMatrixWrap');
-    const grid = document.getElementById('dashMatrix');
-    const summary = document.getElementById('dashMatrixSummary');
-    if (!m || !m.totalRated) {
+  function renderBreakdown(brk) {
+    const wrap = document.getElementById('dashBreakdownWrap');
+    const grid = document.getElementById('dashBreakdown');
+    if (!brk || !Array.isArray(brk.columns)) {
+      wrap.style.display = 'none';
+      grid.innerHTML = '';
+      return;
+    }
+    const total = brk.columns.reduce((s, c) => s + c.withFeedback.length + c.withoutFeedback.length, 0);
+    if (!total) {
       wrap.style.display = 'none';
       grid.innerHTML = '';
       return;
     }
     wrap.style.display = 'block';
 
-    // Summary line: total rated + bias direction
-    const total = m.totalRated || 0;
-    const agreement = m.agreement != null ? Math.round(m.agreement * 100) + '%' : '—';
-    const bias = m.bias;
-    let biasText = '';
-    if (bias != null && total >= 5) {
-      if (Math.abs(bias) < 0.15) biasText = 'AI is well-calibrated.';
-      else if (bias > 0) biasText = `AI averages ${bias.toFixed(2)} too generous.`;
-      else                biasText = `AI averages ${Math.abs(bias).toFixed(2)} too harsh.`;
-    }
-    summary.textContent = `${total} rated · ${agreement} agreement` + (biasText ? ` · ${biasText}` : '');
-
-    // Build cells: header row + 5 data rows
-    const cells = [];
-    cells.push(`<div class="head corner">AI ↓ / Rec →</div>`);
-    for (let r = 1; r <= 5; r++) {
-      cells.push(`<div class="head">${r}</div>`);
-    }
-    for (let ai = 1; ai <= 5; ai++) {
-      cells.push(`<div class="head row-label">${ai}</div>`);
-      for (let rec = 1; rec <= 5; rec++) {
-        const v = (m.matrix[ai - 1] && m.matrix[ai - 1][rec - 1]) || 0;
-        const diff = Math.abs(ai - rec);
-        let klass = '';
-        if (diff === 0) klass = 'diag';
-        else if (diff === 1) klass = 'near';
-        else klass = 'far';
-        const has = v > 0 ? 'has' : '';
-        cells.push(`<div class="cell ${klass} ${has}">${v > 0 ? v : '<span class="zero">0</span>'}</div>`);
-      }
-    }
-    grid.innerHTML = cells.join('');
+    const colHtml = brk.columns.map(col => {
+      const cnt = col.withFeedback.length + col.withoutFeedback.length;
+      const fbItems = col.withFeedback.map(it => itemRow(it, /*hasFb*/ true)).join('');
+      const noItems = col.withoutFeedback.map(it => itemRow(it, /*hasFb*/ false)).join('');
+      return `
+        <div class="score-col">
+          <div class="score-col-head">
+            <span class="pill r${col.aiRating}">${col.aiRating}/5 · ${escapeHtml(col.label)}</span>
+            <span class="count">${cnt}</span>
+          </div>
+          ${col.withFeedback.length ? `
+            <div class="score-sub-label">With feedback (${col.withFeedback.length})</div>
+            ${fbItems}` : ''}
+          ${col.withoutFeedback.length ? `
+            <div class="score-sub-label">Not rated by recruiter (${col.withoutFeedback.length})</div>
+            ${noItems}` : ''}
+          ${(!col.withFeedback.length && !col.withoutFeedback.length) ? `<div class="score-empty">no candidates</div>` : ''}
+        </div>`;
+    }).join('');
+    grid.innerHTML = colHtml;
   }
+
+  function itemRow(it, hasFb) {
+    const name = it.candidateName || it.candidateUid || '—';
+    if (!hasFb) {
+      return `<div class="score-item"><span class="name" title="${escapeHtml(it.summary || '')}">${escapeHtml(name)}</span></div>`;
+    }
+    const r = Number(it.recruiterRating) || 0;
+    const diff = Math.abs((Number(it.aiRating) || 0) - r);
+    const cls = diff === 0 ? 'agree' : (diff === 1 ? 'near' : 'far');
+    const tip = it.recruiterNote ? `${name} — recruiter rated ${r}/5: ${it.recruiterNote}` : `${name} — recruiter rated ${r}/5`;
+    return `
+      <div class="score-item ${cls}" title="${escapeHtml(tip)}">
+        <span class="name">${escapeHtml(name)}</span>
+        <span class="rec">${r}/5</span>
+      </div>`;
+  }
+
+  // ─── Bulk actions: Re-score / Clear ────────────────────────────────────
+  function setActionStatus(msg, kind) {
+    const el = document.getElementById('dashActionStatus');
+    el.textContent = msg || '';
+    el.style.color = kind === 'err' ? '#fca5a5' : (kind === 'ok' ? '#4ade80' : 'var(--muted)');
+  }
+
+  document.getElementById('btnRescoreAll').addEventListener('click', async () => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return setActionStatus('Pick a position first.', 'err');
+    const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
+    if (!confirm(`Re-score all ${cnt} already-scored candidates on this position? This will run synchronously and may take a few minutes.`)) return;
+    setActionStatus('Re-scoring… this may take a while.');
+    try {
+      const r = await api('/api/position/rescore-all', { position_uid: uid });
+      setActionStatus(`Re-scored ${r.rescored}/${r.totalCandidates} (errors: ${r.errorCount}).`, 'ok');
+      loadDashboard(uid);
+    } catch (err) {
+      setActionStatus(err.message || String(err), 'err');
+    }
+  });
+
+  document.getElementById('btnClearScores').addEventListener('click', async () => {
+    const uid = document.getElementById('pos').value;
+    if (!uid) return setActionStatus('Pick a position first.', 'err');
+    const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
+    if (!confirm(`Clear all AI scores AND remove AI tags/flags from Comeet for ${cnt} candidates on this position?\n\nThis is irreversible. Use only when you want to start fresh.`)) return;
+    setActionStatus('Clearing scores and tags…');
+    try {
+      const r = await api('/api/position/clear-scores', { position_uid: uid });
+      setActionStatus(`Cleared ${r.deletedScoring} score rows, ${r.deletedTags} tag rows, ${r.candidatesAffected} candidates in Comeet.`, 'ok');
+      loadDashboard(uid);
+    } catch (err) {
+      setActionStatus(err.message || String(err), 'err');
+    }
+  });
 
   function ratingLabel(r) {
     return ({1:'Way off',2:'Not a fit',3:'OK',4:'Great',5:'Superstar'})[r] || '';

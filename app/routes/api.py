@@ -149,6 +149,216 @@ def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, A
     }
 
 
+class PositionClearBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+
+
+@router.post("/position/clear-scores")
+def position_clear_scores(body: PositionClearBody) -> dict[str, Any]:
+    """Wipe the AI's record for this position: debug_scoring rows, applied_tags
+    rows, Comeet tag/flag state, and score-done locks.
+
+    Useful when the recruiter wants to start fresh — e.g. after a JD change
+    or significant rubric drift. Confirmation is the UI's responsibility.
+    """
+    from sqlalchemy import delete, select
+    from ..db import db_session
+    from ..models import AppliedTag, CandidateLock, DebugScoring
+    from ..tagging import remove_rating_tags, numeric_candidate_id_from_url
+    from ..comeet_app_client import ComeetAppClient, ComeetAppError
+    from ..comeet_client import ComeetClient
+
+    pos_uid = body.position_uid.strip()
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    # Collect candidates that have AI tags/flags so we know what to scrub on Comeet's side.
+    with db_session() as ses:
+        applied = ses.scalars(
+            select(AppliedTag).where(AppliedTag.position_uid == pos_uid)
+        ).all()
+        candidates_with_tags = sorted({a.candidate_uid for a in applied if a.candidate_uid})
+
+    # Remove tags + flag from Comeet — best effort, don't fail the whole call if one errors.
+    tag_errors = 0
+    flag_errors = 0
+    if candidates_with_tags:
+        ic = ComeetAppClient()
+        for uid in candidates_with_tags:
+            try:
+                remove_rating_tags(uid, client=ic)
+            except Exception:  # noqa: BLE001
+                tag_errors += 1
+            # Clear is_favorite — need numeric id, fetch via public API once.
+            try:
+                with ComeetClient() as pub:
+                    cand = pub.get_candidate(uid)
+                numeric_id = numeric_candidate_id_from_url(cand.get("URL")) if cand else None
+                if numeric_id:
+                    ic.set_candidate_flag(numeric_id, False)
+            except (ComeetAppError, Exception):  # noqa: BLE001
+                flag_errors += 1
+
+    # Wipe DB state.
+    with db_session() as ses:
+        deleted_scoring = ses.execute(
+            delete(DebugScoring).where(DebugScoring.position_uid == pos_uid)
+        ).rowcount or 0
+        deleted_tags = ses.execute(
+            delete(AppliedTag).where(AppliedTag.position_uid == pos_uid)
+        ).rowcount or 0
+        # Drop score-done locks keyed by candidate uid.
+        score_done_keys = [f"score_done:{u}" for u in candidates_with_tags]
+        deleted_locks = 0
+        if score_done_keys:
+            deleted_locks = ses.execute(
+                delete(CandidateLock).where(CandidateLock.key.in_(score_done_keys))
+            ).rowcount or 0
+
+    return {
+        "ok": True,
+        "positionUid": pos_uid,
+        "deletedScoring": int(deleted_scoring),
+        "deletedTags": int(deleted_tags),
+        "deletedLocks": int(deleted_locks),
+        "tagRemovalErrors": tag_errors,
+        "flagRemovalErrors": flag_errors,
+        "candidatesAffected": len(candidates_with_tags),
+    }
+
+
+class PositionRescoreBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+
+
+@router.post("/position/rescore-all")
+def position_rescore_all(body: PositionRescoreBody) -> dict[str, Any]:
+    """Re-score every candidate currently in debug_scoring for this position.
+    Synchronous (blocks until done) — for positions with many candidates this
+    can take 5–30 minutes. UI should warn before invoking.
+    """
+    from sqlalchemy import select
+    from ..db import db_session
+    from ..models import DebugScoring
+    from ..scan import score_one_candidate_now
+
+    pos_uid = body.position_uid.strip()
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    with db_session() as ses:
+        uids = ses.scalars(
+            select(DebugScoring.candidate_uid)
+            .where(DebugScoring.position_uid == pos_uid)
+            .distinct()
+        ).all()
+    uids = [u for u in uids if u]
+
+    rescored = 0
+    errors: list[str] = []
+    for uid in uids:
+        try:
+            score_one_candidate_now(pos_uid, candidate_uid=uid)
+            rescored += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rescore-all: failed for %s: %s", uid, exc)
+            errors.append(f"{uid}: {exc}")
+
+    return {
+        "ok": True,
+        "positionUid": pos_uid,
+        "totalCandidates": len(uids),
+        "rescored": rescored,
+        "errorCount": len(errors),
+        "errors": errors[:10],  # cap response size
+    }
+
+
+@router.get("/position/breakdown")
+def position_breakdown(position_uid: str) -> dict[str, Any]:
+    """5-column breakdown: candidates grouped by the AI's rating, each column
+    further split into "with recruiter feedback" (showing the recruiter's
+    counter-rating) and "no feedback yet".
+
+    Lets the recruiter see at a glance: how the AI distributed scores across
+    candidates, and which AI calls have been validated/corrected.
+    """
+    from sqlalchemy import select, desc
+    from ..db import db_session
+    from ..models import DebugScoring, Feedback
+
+    pos_uid = (position_uid or "").strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    with db_session() as ses:
+        scoring_rows = ses.scalars(
+            select(DebugScoring)
+            .where(DebugScoring.position_uid == pos_uid)
+            .order_by(desc(DebugScoring.timestamp))
+        ).all()
+        # Most-recent recruiter rating per candidate.
+        feedback_rows = ses.scalars(
+            select(Feedback)
+            .where(Feedback.position_uid == pos_uid)
+            .order_by(desc(Feedback.timestamp))
+        ).all()
+
+    recruiter_by_uid: dict[str, dict[str, Any]] = {}
+    for f in feedback_rows:
+        if f.candidate_uid in recruiter_by_uid:
+            continue  # already kept the newest
+        recruiter_by_uid[f.candidate_uid] = {
+            "rating": f.recruiter_rating,
+            "note": (f.note or "").strip()[:240],
+        }
+
+    # Build columns
+    columns: list[dict[str, Any]] = []
+    seen_uids: set[str] = set()
+    for ai in range(1, 6):
+        with_feedback: list[dict[str, Any]] = []
+        without_feedback: list[dict[str, Any]] = []
+        for r in scoring_rows:
+            uid = r.candidate_uid or ""
+            if uid in seen_uids or int(r.final_rating or 0) != ai:
+                continue
+            seen_uids.add(uid)
+            item = {
+                "candidateUid": uid,
+                "candidateName": r.candidate_name or "",
+                "aiRating": ai,
+                "scoredAt": r.timestamp.isoformat() if r.timestamp else None,
+                "summary": (r.summary or "")[:160],
+            }
+            fb = recruiter_by_uid.get(uid)
+            if fb:
+                item["recruiterRating"] = fb["rating"]
+                item["recruiterNote"] = fb["note"]
+                with_feedback.append(item)
+            else:
+                without_feedback.append(item)
+        columns.append({
+            "aiRating": ai,
+            "label": ({1: "Way off", 2: "Not a fit", 3: "OK", 4: "Great", 5: "Superstar"})[ai],
+            "withFeedback": with_feedback,
+            "withoutFeedback": without_feedback,
+        })
+
+    return {"positionUid": pos_uid, "columns": columns}
+
+
 @router.get("/position/agreement-matrix")
 def position_agreement_matrix(position_uid: str) -> dict[str, Any]:
     """Cross-tab of AI rating vs recruiter rating for this position.
