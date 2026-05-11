@@ -6,11 +6,10 @@ Same conceptual endpoints, returning the same shape so the JS port stays minimal
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from ..comeet_client import (
@@ -28,12 +27,7 @@ from ..position_classes import (
     list_auto_screen_positions,
     set_auto_screen_enabled,
 )
-from ..scan import (
-    begin_scan_batch,
-    finish_scan_batch,
-    score_candidate_in_session,
-    score_one_candidate_now,
-)
+from ..scan import score_one_candidate_now
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -799,51 +793,6 @@ def extension_create_class(body: ExtensionCreateClassBody) -> dict[str, Any]:
 
 
 # ─── Scan flow ───────────────────────────────────────────────────────────────
-class BeginScanBody(BaseModel):
-    position_uid: str = Field(min_length=1)
-    seen_uids: list[str] = Field(default_factory=list)
-    class_id: str = ""
-    class_level: str = ""
-
-
-@router.post("/scan/begin")
-def scan_begin(body: BeginScanBody) -> dict[str, Any]:
-    try:
-        result = begin_scan_batch(
-            body.position_uid,
-            seen_uids=body.seen_uids,
-            class_id_override=body.class_id or None,
-            class_level_override=body.class_level or None,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    return _result_to_json(result)
-
-
-class ScoreOneBody(BaseModel):
-    session_id: str = Field(min_length=1)
-    candidate_uid: str = Field(min_length=1)
-
-
-@router.post("/scan/score")
-def scan_score_one(body: ScoreOneBody) -> dict[str, Any]:
-    try:
-        summary = score_candidate_in_session(body.session_id, body.candidate_uid)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    return {"summary": _summary_to_json(summary)}
-
-
-class FinishScanBody(BaseModel):
-    session_id: str = Field(min_length=1)
-    processed_uids: list[str] = Field(default_factory=list)
-
-
-@router.post("/scan/finish")
-def scan_finish(body: FinishScanBody) -> dict[str, Any]:
-    return finish_scan_batch(body.session_id, body.processed_uids)
-
-
 class ScanNowBody(BaseModel):
     position_uid: str = Field(min_length=1)
 
@@ -868,52 +817,3 @@ def scan_now(body: ScanNowBody) -> dict[str, Any]:
         "errors": result.errors,
         "note": result.note,
     }
-
-
-# ─── Feedback ────────────────────────────────────────────────────────────────
-class FeedbackBody(BaseModel):
-    candidate_uid: str = Field(min_length=1)
-    candidate_name: str = ""
-    position_uid: str = Field(min_length=1)
-    position_name: str = ""
-    ai_rating: int | None = None
-    recruiter_rating: int = Field(ge=1, le=5)
-    note: str = ""
-    recruiter_email: str = ""
-
-
-@router.post("/feedback")
-def post_feedback(body: FeedbackBody) -> dict[str, Any]:
-    cls = get_position_class(body.position_uid)
-    class_id = cls["classId"] if cls else "general"
-    class_name = cls["className"] if cls else "General"
-    fb_id = save_feedback(
-        class_id=class_id,
-        class_name=class_name,
-        position_uid=body.position_uid,
-        position_name=body.position_name,
-        candidate_uid=body.candidate_uid,
-        candidate_name=body.candidate_name,
-        ai_rating=body.ai_rating,
-        recruiter_rating=body.recruiter_rating,
-        note=body.note,
-        recruiter_email=body.recruiter_email,
-    )
-    return {"ok": True, "id": fb_id}
-
-
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-def _result_to_json(result) -> dict[str, Any]:
-    out = asdict(result)
-    return {_camel(k): v for k, v in out.items()}
-
-
-def _summary_to_json(summary) -> dict[str, Any]:
-    out = asdict(summary)
-    # The Apps Script UI expects camelCase keys (linkedinUrl, ratingLabel, …).
-    return {_camel(k): v for k, v in out.items()}
-
-
-def _camel(snake: str) -> str:
-    parts = snake.split("_")
-    return parts[0] + "".join(p.title() for p in parts[1:])

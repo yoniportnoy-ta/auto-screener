@@ -493,8 +493,6 @@
         <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
       </div>
     </div>
-    <!-- modeTrain stub kept hidden so legacy JS handlers don't error if they bind to it. -->
-    <button id="btnTrain" type="button" style="display:none"></button>
     <div class="row" style="margin-top:0.75rem">
       <button class="ghost" id="clearFilters" style="flex:0 0 auto">Clear filters</button>
     </div>
@@ -536,23 +534,6 @@
     </details>
   </div>
 
-  <div class="panel" id="resultsPanel" style="display:none">
-    <div id="batchNav" class="meta" style="margin-bottom:0.65rem"></div>
-    <div style="overflow-x:auto">
-      <table>
-        <thead>
-          <tr>
-            <th>Candidate</th>
-            <th>Applied</th>
-            <th>Rating</th>
-            <th>Summary</th>
-            <th>Feedback</th>
-          </tr>
-        </thead>
-        <tbody id="tbody"></tbody>
-      </table>
-    </div>
-  </div>
 </div>
 
 <script>
@@ -953,9 +934,6 @@
   document.getElementById('filterLocation').addEventListener('change', rebuildPositions);
 
   // ─── Scan ───────────────────────────────────────────────────────────────
-  // Train mode: existing batch-and-feedback flow (was the old "Scan & rate" button).
-  document.getElementById('btnTrain').addEventListener('click', () => runScan(true));
-
   // Scan now: synchronous one-shot autoscan for this position (uncapped).
   document.getElementById('btnScanNow').addEventListener('click', async () => {
     const uid = document.getElementById('pos').value;
