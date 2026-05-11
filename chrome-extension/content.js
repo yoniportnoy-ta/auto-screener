@@ -56,6 +56,30 @@
     return resp.json();
   }
 
+  async function scoreNow(positionUid, numericId) {
+    const { backendUrl, apiToken } = await loadSettings();
+    if (!apiToken) {
+      const err = new Error("Auto Screener: API token not set. Open the extension popup to configure it.");
+      err.code = "no_token";
+      throw err;
+    }
+    const resp = await fetch(`${backendUrl}/api/extension/score-now`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Screener-Token": apiToken,
+      },
+      body: JSON.stringify({ position_uid: positionUid, numeric_id: numericId }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      let detail = text;
+      try { detail = JSON.parse(text).detail || text; } catch (_) {}
+      throw new Error(`Scan failed (${resp.status}): ${detail || resp.statusText}`);
+    }
+    return resp.json();
+  }
+
   async function postFeedback(body) {
     const { backendUrl, apiToken } = await loadSettings();
     const resp = await fetch(`${backendUrl}/api/extension/feedback`, {
@@ -178,17 +202,36 @@
     body.innerHTML = `<div class="as-status as-err">${escapeHtml(msg)}</div>`;
   }
 
-  function renderNotScored() {
+  function renderNotScored(onScanClick) {
     const body = document.getElementById("as-body");
     if (!body) return;
     body.innerHTML = `
       <div class="as-empty">
         <strong>Not scored yet.</strong><br>
-        Run a scan from the Auto Screener app, then refresh this page.
+        Run the AI screener for this candidate now — takes ~10-30 seconds.
       </div>
-      ${renderFeedbackHtml(/*aiRating*/ null)}
+      <div class="as-actions" style="margin-top:0.6rem;">
+        <button type="button" class="as-btn" id="as-scan-now">Scan now</button>
+        <span class="as-status" id="as-scan-status"></span>
+      </div>
     `;
-    wireFeedbackHandlers();
+    const btn = document.getElementById("as-scan-now");
+    if (btn && typeof onScanClick === "function") {
+      btn.addEventListener("click", onScanClick);
+    }
+  }
+
+  function renderScanning() {
+    const body = document.getElementById("as-body");
+    if (!body) return;
+    body.innerHTML = `
+      <div class="as-empty">
+        <strong>Scanning…</strong><br>
+        Fetching candidate from Comeet and asking Claude. This usually takes
+        10–30 seconds — don't close this tab.
+      </div>
+      <div class="as-status" id="as-scan-status"></div>
+    `;
   }
 
   function renderFeedbackHtml(aiRating) {
@@ -312,6 +355,31 @@
     });
   }
 
+  async function runScanForCurrent() {
+    const ids = extractIdsFromUrl();
+    if (!ids) return;
+    renderScanning();
+    try {
+      const score = await scoreNow(ids.positionUid, ids.numericId);
+      currentScore = score;
+      renderScore(score);
+    } catch (e) {
+      console.warn("[auto-screener] scoreNow failed:", e);
+      // Show error AND let them retry.
+      const body = document.getElementById("as-body");
+      if (body) {
+        body.innerHTML = `
+          <div class="as-status as-err">${escapeHtml(e.message || String(e))}</div>
+          <div class="as-actions" style="margin-top:0.6rem;">
+            <button type="button" class="as-btn" id="as-scan-retry">Try again</button>
+          </div>
+        `;
+        const btn = document.getElementById("as-scan-retry");
+        if (btn) btn.addEventListener("click", runScanForCurrent);
+      }
+    }
+  }
+
   // ─── Main refresh ───────────────────────────────────────────────────────
   async function refresh() {
     const ids = extractIdsFromUrl();
@@ -337,7 +405,10 @@
     try {
       const score = await fetchScore(ids.numericId);
       if (!score) {
-        renderNotScored();
+        // Not scored yet — auto-trigger a scan immediately. We could also
+        // offer a manual "Scan now" button, but the user explicitly wanted
+        // the auto path so we go straight in.
+        await runScanForCurrent();
         return;
       }
       currentScore = score;

@@ -327,6 +327,132 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
     return summary
 
 
+def score_one_candidate_now(
+    position_uid: str,
+    *,
+    candidate_uid: str = "",
+    numeric_id: str = "",
+) -> CandidateSummary:
+    """Score a single candidate immediately, bypassing the batched UI flow.
+
+    Called by the Chrome extension when a recruiter opens a candidate page that
+    hasn't been scanned yet. Either `candidate_uid` (alphanumeric public-API id)
+    or `numeric_id` (the integer in the Comeet app URL) must be provided.
+
+    Side-effects mirror the normal scan: writes to debug_scoring, marks
+    score_done, applies the rating tag (if AUTO_TAG_ENABLED), and flags the
+    candidate (if AUTO_FLAG_ENABLED + rating >= flag_rating_threshold).
+    """
+    position_uid = (position_uid or "").strip()
+    candidate_uid = (candidate_uid or "").strip()
+    numeric_id = (numeric_id or "").strip()
+    if not position_uid:
+        raise ValueError("position_uid required")
+    if not candidate_uid and not numeric_id:
+        raise ValueError("Either candidate_uid or numeric_id is required")
+
+    cls = get_class_for_position(position_uid)
+    if cls is None:
+        raise ValueError(
+            "No position class selected for this position. Pick one from the UI dropdown first."
+        )
+
+    with ComeetClient() as client:
+        position = client.get_position(position_uid)
+        if not position:
+            raise ValueError(f"Position not found: {position_uid}")
+        position_name = position.get("name") or position_uid
+        jd_text = position_jd_text(position)
+
+        # Resolve numeric_id → alphanumeric uid by scanning only THIS position's
+        # candidates (cheap — one paginated call). Falls back to direct fetch
+        # if candidate_uid was already given.
+        if not candidate_uid and numeric_id:
+            cands = client.list_candidates_for_position(position_uid)
+            for c in cands:
+                c_url = c.get("URL", "") or ""
+                if numeric_id in c_url:
+                    candidate_uid = str(c.get("uid") or "")
+                    if candidate_uid:
+                        break
+            if not candidate_uid:
+                raise ValueError(
+                    f"Candidate {numeric_id} not found in position {position_uid}."
+                )
+
+        candidate = client.get_candidate(candidate_uid)
+
+    if not candidate:
+        return CandidateSummary(candidate_uid=candidate_uid, error="Could not load candidate.")
+
+    summary = CandidateSummary(
+        candidate_uid=str(candidate.get("uid") or candidate_uid),
+        name=candidate_full_name(candidate),
+        time_created=str(candidate.get("time_created") or ""),
+        status=str(candidate.get("status") or ""),
+        profile_url=_normalize_url(candidate.get("URL")),
+        linkedin_url=_normalize_url(candidate.get("linkedin_url")),
+    )
+    resume = candidate.get("resume") or {}
+    summary.cv_url = _normalize_url(resume.get("url"))
+    summary.cv_file_name = (resume.get("name") or "").strip() or None
+    activity = candidate_max_activity_iso(candidate)
+    if activity:
+        summary.activity_iso = activity.isoformat().replace("+00:00", "Z")
+
+    # We don't enforce step / status here — the recruiter is *actively looking*
+    # at the candidate, so they obviously want the score regardless of whether
+    # the candidate is in the configured screening step.
+
+    process_ctx = _build_process_context(candidate)
+    resume_pdf_b64, resume_failed = _maybe_fetch_resume(resume.get("url"))
+
+    inputs = ScoreInputs(
+        candidate=candidate,
+        position_uid=position_uid,
+        position_name=position_name,
+        position_jd=jd_text,
+        class_id=cls["classId"],
+        class_name=cls["className"],
+        process_context=process_ctx,
+        resume_pdf_b64=resume_pdf_b64,
+        resume_url_existed_but_failed=resume_failed,
+    )
+
+    try:
+        result = score_candidate(inputs)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("score_one_candidate_now: scoring failed for %s", candidate_uid)
+        summary.error = f"scoring failed: {exc}"
+        return summary
+
+    summary.rating = result.rating
+    summary.rating_label = _rating_label(result.rating)
+    summary.confidence = result.confidence
+    summary.summary = result.summary
+    summary.strengths = result.strengths
+    summary.gaps = result.gaps
+    if not summary.linkedin_url and result.linkedin_url and "linkedin.com/in/" in result.linkedin_url:
+        summary.linkedin_url = result.linkedin_url.split("?")[0].rstrip("/")
+
+    mark_score_done(summary.candidate_uid)
+
+    try:
+        applied = apply_rating_tag(
+            summary.candidate_uid, summary.rating,
+            candidate_url=summary.profile_url,
+            position_uid=position_uid, position_name=position_name,
+        )
+        if applied:
+            summary.tag_applied = applied
+    except Exception as exc:  # noqa: BLE001
+        log.warning("score_one_candidate_now: tag application failed for %s: %s",
+                    summary.candidate_uid, exc)
+        summary.tag_error = str(exc)
+
+    return summary
+
+
 def finish_scan_batch(session_id: str, processed_uids: list[str]) -> dict:
     sess = load_session(session_id)
     if sess is None:

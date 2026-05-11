@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
@@ -31,6 +32,7 @@ from ..scan import (
     begin_scan_batch,
     finish_scan_batch,
     score_candidate_in_session,
+    score_one_candidate_now,
 )
 
 log = logging.getLogger(__name__)
@@ -213,6 +215,52 @@ def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
         "classId": row.class_id,
         "currentTag": tag.tag_name if tag else None,
         "scoredAt": row.timestamp.isoformat() if row.timestamp else None,
+    }
+
+
+class ExtensionScoreNowBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    numeric_id: str = ""
+    candidate_uid: str = ""
+
+
+@router.post("/extension/score-now", dependencies=[Depends(_require_extension_token)])
+def extension_score_now(body: ExtensionScoreNowBody) -> dict[str, Any]:
+    """Score a single candidate immediately and return the same shape as /score.
+
+    Called by the Chrome extension when the recruiter opens a candidate page
+    that hasn't been scored yet. Synchronous — takes ~5-30s for a single
+    candidate depending on Comeet response time and Claude latency.
+    """
+    if not body.numeric_id and not body.candidate_uid:
+        raise HTTPException(400, "numeric_id or candidate_uid required")
+    if body.numeric_id and not body.numeric_id.isdigit():
+        raise HTTPException(400, "numeric_id must be all digits")
+    try:
+        summary = score_one_candidate_now(
+            body.position_uid,
+            candidate_uid=body.candidate_uid,
+            numeric_id=body.numeric_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if summary.error:
+        raise HTTPException(422, summary.error)
+
+    # Match the /score response shape exactly so the extension's render path
+    # doesn't need a second code branch.
+    return {
+        "candidateUid": summary.candidate_uid,
+        "rating": summary.rating,
+        "confidence": summary.confidence,
+        "summary": summary.summary,
+        "strengths": summary.strengths or [],
+        "gaps": summary.gaps or [],
+        "positionUid": body.position_uid,
+        "positionName": "",  # not needed by the panel; lookup below if we want
+        "classId": None,
+        "currentTag": summary.tag_applied,
+        "scoredAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
