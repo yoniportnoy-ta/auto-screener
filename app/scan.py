@@ -362,6 +362,17 @@ def score_one_candidate_now(
     if not candidate_uid and not numeric_id:
         raise ValueError("Either candidate_uid or numeric_id is required")
 
+    # The Comeet app URL exposes the *numeric* position id (e.g. 437204), but
+    # our DB and the public API use the *alphanumeric* uid (e.g. DB.A64).
+    # If the caller gave us a numeric id, resolve it before looking up the
+    # class assignment.
+    if position_uid.isdigit():
+        resolved = _resolve_numeric_position_uid(position_uid)
+        if resolved:
+            log.info("score_one_candidate_now: resolved numeric position %s → %s",
+                     position_uid, resolved)
+            position_uid = resolved
+
     cls = get_class_for_position(position_uid)
     if cls is None:
         raise ValueError(
@@ -547,6 +558,43 @@ def _build_process_context(candidate: dict[str, Any]) -> str:
     if (candidate.get("disposition_reason") or {}).get("reason"):
         lines.append(f"Disposition: {candidate['disposition_reason']['reason']}")
     return "\n".join(lines)
+
+
+def _resolve_numeric_position_uid(numeric_id: str) -> str | None:
+    """Map Comeet's numeric position id (e.g. '437204' from the app URL) to the
+    alphanumeric position uid (e.g. 'DB.A64') used by the public API + our DB.
+
+    Iterates open positions once and matches against any field that looks like
+    it might contain the numeric id (id, requisition_id, requisition_number,
+    or any URL field). Returns None if no match.
+    """
+    numeric_id = str(numeric_id).strip()
+    if not numeric_id or not numeric_id.isdigit():
+        return None
+    try:
+        with ComeetClient() as client:
+            positions = client.list_open_positions()
+    except Exception as exc:  # noqa: BLE001
+        log.info("_resolve_numeric_position_uid: list failed: %s", exc)
+        return None
+
+    for p in positions:
+        # Direct numeric-field matches.
+        for key in ("id", "requisition_id", "requisition_number", "external_id"):
+            v = p.get(key)
+            if v is not None and str(v).strip() == numeric_id:
+                uid = str(p.get("uid") or "").strip()
+                if uid:
+                    return uid
+        # URL-embedded numeric id (Comeet often returns share URLs that contain
+        # the numeric id as a path segment, eg 'jobs/437204/...').
+        for key in ("url", "URL", "web_url", "share_url"):
+            v = p.get(key)
+            if isinstance(v, str) and numeric_id in v:
+                uid = str(p.get("uid") or "").strip()
+                if uid:
+                    return uid
+    return None
 
 
 def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:

@@ -175,6 +175,14 @@ def extension_get_score(
     if n_id and not n_id.isdigit():
         raise HTTPException(404, "numeric_id must be all digits")
 
+    # Resolve numeric position id (URL form, e.g. '437204') → alphanumeric uid
+    # (e.g. 'DB.A64') so list_candidates_for_position hits the right list.
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
     # If the extension only gave us a numeric id, look up the public uid via
     # the public Comeet API (it has a `URL` field with the numeric id embedded).
     if n_id and not alphanumeric_uid:
