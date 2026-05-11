@@ -107,22 +107,51 @@
     return { positionUid: m[1], numericId: m[2] };
   }
 
+  function _looksLikeName(s) {
+    if (!s) return false;
+    s = s.trim();
+    if (s.length < 3 || s.length > 80) return false;
+    // Reject UI/section labels that aren't people names.
+    const blacklist = [
+      "candidate", "comeet", "screen", "interview", "manager",
+      "workflow", "stage", "step", "approve", "reject", "add tag",
+      "salary", "availability", "source", "added", "last process",
+    ];
+    const lower = s.toLowerCase();
+    for (const bad of blacklist) {
+      if (lower.startsWith(bad) || lower === bad) return false;
+    }
+    // Letters + spaces + hyphens/apostrophes + dots. Allow most non-Latin
+    // scripts via the \p{L} unicode property.
+    return /^[\p{L}][\p{L}\s\-'.]+$/u.test(s);
+  }
+
   function extractCandidateNameFromDom() {
-    // Best-effort: Comeet renders the candidate name in an h1/h2 at the top of the page.
-    // We try a few selectors; fall back to empty string.
+    // 1. Specific selectors Comeet uses.
     const selectors = [
-      "h1.candidate-name",
-      "h1[class*='candidate']",
-      "h2[class*='candidate']",
+      "[data-testid*='candidate-name']",
+      "[class*='CandidateName']",
+      "[class*='candidate-name']",
+      "[class*='candidateName']",
+      "[class*='candidate-profile-header'] h1",
+      "[class*='candidate-profile-header'] h2",
       "header h1",
+      "main h1",
       "h1",
+      "h2",
+      "h3",
     ];
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && el.textContent && el.textContent.trim().length < 120) {
-        return el.textContent.trim();
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        const t = (el.textContent || "").trim();
+        if (_looksLikeName(t)) return t;
       }
     }
+    // 2. Document title fallback ("Sahar Imra | Comeet", "Sahar Imra - Comeet", etc).
+    const title = (document.title || "").trim();
+    const stripped = title.split(/\s*[|·\-—]\s*/)[0].trim();
+    if (_looksLikeName(stripped)) return stripped;
     return "";
   }
 
@@ -273,6 +302,12 @@
     const candidateName = (score && score.candidateName) || extractCandidateNameFromDom();
     const positionName = (score && score.positionName) || extractPositionNameFromDom();
     setHeaderSubtitle(candidateName, positionName);
+    if (!score || !score.candidateUid) {
+      // Bug-safety: never paint the feedback form without a candidateUid,
+      // because we'd have no way to attach the feedback row to a candidate.
+      body.innerHTML = `<div class="as-status as-err">Score response is missing the candidate uid — please re-scan.</div>`;
+      return;
+    }
     const r = Number(score.rating) || 0;
     const confidence = score.confidence != null ? `confidence ${Math.round(score.confidence * 100)}%` : "";
     const strengths = Array.isArray(score.strengths) ? score.strengths.filter(Boolean) : [];
