@@ -25,6 +25,31 @@ from .logging_config import configure_logging
 log = logging.getLogger(__name__)
 
 
+def _run_pending_migrations() -> None:
+    """Run alembic upgrade head on app startup so the DB schema matches the
+    code we're booting. Idempotent — alembic skips already-applied revisions.
+
+    This used to require manual SSH or a render.yaml startCommand hook; doing
+    it inside the app process means new migrations apply automatically on
+    every deploy, no infra change required.
+    """
+    try:
+        from pathlib import Path
+        from alembic import command
+        from alembic.config import Config
+        ini = Path(__file__).parent.parent / "alembic.ini"
+        if not ini.exists():
+            log.warning("alembic.ini not found at %s; skipping migrations", ini)
+            return
+        cfg = Config(str(ini))
+        # Make sure alembic uses the same DATABASE_URL the app does.
+        cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        command.upgrade(cfg, "head")
+        log.info("alembic upgrade head: OK")
+    except Exception as exc:  # noqa: BLE001
+        log.exception("alembic upgrade failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -32,6 +57,7 @@ async def lifespan(app: FastAPI):
         "starting auto-screener env=%s log_level=%s scoring_v2=%s auto_tag=%s",
         settings.app_env, settings.log_level, settings.scoring_use_v2, settings.auto_tag_enabled,
     )
+    _run_pending_migrations()
     yield
     log.info("shutting down")
 
