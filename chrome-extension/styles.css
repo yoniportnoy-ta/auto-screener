@@ -98,6 +98,13 @@
   align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+
+#auto-screener-panel .as-regrade-btn {
+  margin-left: auto;
+  padding: 0.25rem 0.55rem;
+  font-size: 11px;
 }
 
 #auto-screener-panel .as-pill {

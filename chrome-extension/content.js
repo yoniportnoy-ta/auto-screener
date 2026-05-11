@@ -319,6 +319,7 @@
       <div class="as-rating-row">
         <span class="as-pill r${r}">${r}/5 · ${escapeHtml(ratingLabel(r))}</span>
         <span class="as-confidence">${escapeHtml(confidence)}</span>
+        <button type="button" class="as-btn as-ghost as-regrade-btn" id="as-regrade" title="Re-run the AI scorer using the latest recruiter feedback">Re-grade</button>
       </div>
       ${score.summary ? `<div class="as-summary">${escapeHtml(score.summary)}</div>` : ""}
       ${strengths.length ? `
@@ -336,6 +337,10 @@
       ${renderFeedbackHtml(r)}
     `;
     wireFeedbackHandlers(score);
+    const regradeBtn = document.getElementById("as-regrade");
+    if (regradeBtn) {
+      regradeBtn.addEventListener("click", () => runScanForCurrent());
+    }
   }
 
   function wireFeedbackHandlers(score) {
