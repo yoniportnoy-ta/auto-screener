@@ -429,18 +429,28 @@
       renderScore(score);
     } catch (e) {
       console.warn("[auto-screener] scoreNow failed:", e);
-      // Show error AND let them retry.
       const body = document.getElementById("as-body");
-      if (body) {
-        body.innerHTML = `
-          <div class="as-status as-err">${escapeHtml(e.message || String(e))}</div>
-          <div class="as-actions" style="margin-top:0.6rem;">
-            <button type="button" class="as-btn" id="as-scan-retry">Try again</button>
-          </div>
-        `;
-        const btn = document.getElementById("as-scan-retry");
-        if (btn) btn.addEventListener("click", runScanForCurrent);
-      }
+      if (!body) return;
+
+      const msg = e.message || String(e);
+      const isMissingClass = /no position class selected/i.test(msg);
+
+      // Build a backend-UI deeplink so the recruiter can fix common config
+      // issues (e.g. unassigned position class) without leaving Comeet.
+      const { backendUrl } = await loadSettings();
+      const deeplink = `${backendUrl}/?position=${encodeURIComponent(ids.positionUid)}`;
+
+      body.innerHTML = `
+        <div class="as-status as-err">${escapeHtml(msg)}</div>
+        <div class="as-actions" style="margin-top:0.6rem;">
+          ${isMissingClass
+            ? `<a class="as-btn" id="as-open-settings" href="${escapeHtml(deeplink)}" target="_blank" rel="noopener">Open class settings</a>`
+            : ``}
+          <button type="button" class="as-btn ${isMissingClass ? 'as-ghost' : ''}" id="as-scan-retry">Try again</button>
+        </div>
+      `;
+      const btn = document.getElementById("as-scan-retry");
+      if (btn) btn.addEventListener("click", runScanForCurrent);
     }
   }
 

@@ -233,10 +233,18 @@
   cursor: not-allowed;
 }
 
-#auto-screener-panel button.as-btn.as-ghost {
+#auto-screener-panel button.as-btn.as-ghost,
+#auto-screener-panel a.as-btn.as-ghost {
   background: transparent;
   color: #8b9cb3;
   border: 1px solid #2d3a4d;
+}
+
+#auto-screener-panel a.as-btn {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+  line-height: 1.2;
 }
 
 #auto-screener-panel .as-status {

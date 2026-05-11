@@ -331,6 +331,21 @@
       rebuildLocations();
       rebuildPositions();
       populateClasses();
+      // Deeplink support: the Chrome extension links here as `?position=<uid>`
+      // when it hits "no position class selected" so the recruiter lands
+      // directly on that position's settings.
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const wantPos = params.get('position');
+        if (wantPos) {
+          const posSel = document.getElementById('pos');
+          if (posSel && Array.from(posSel.options).some(o => o.value === wantPos)) {
+            posSel.value = wantPos;
+            posSel.dispatchEvent(new Event('change'));
+            posSel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      } catch (_) { /* non-fatal */ }
     } catch (err) {
       setErr(err.message);
     }
