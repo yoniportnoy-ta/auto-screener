@@ -230,11 +230,16 @@ class PositionRescoreBody(BaseModel):
 
 @router.post("/position/rescore-all")
 def position_rescore_all(body: PositionRescoreBody) -> dict[str, Any]:
-    """Re-score every candidate currently in debug_scoring for this position.
-    Synchronous (blocks until done) — for positions with many candidates this
-    can take 5–30 minutes. UI should warn before invoking.
+    """Re-score every previously-scored candidate for this position who is
+    still in the configured CV-screening pipeline step.
+
+    Synchronous — for positions with many candidates this can take 5–30
+    minutes. UI should warn before invoking. Candidates who have moved past
+    CV screening are skipped (we don't want to spend Anthropic credits
+    re-scoring someone already in an interview).
     """
     from sqlalchemy import select
+    from ..comeet_client import ComeetClient, candidate_in_allowed_step
     from ..db import db_session
     from ..models import DebugScoring
     from ..scan import score_one_candidate_now
@@ -246,17 +251,30 @@ def position_rescore_all(body: PositionRescoreBody) -> dict[str, Any]:
         if resolved:
             pos_uid = resolved
 
+    # Previously-scored uids (one DB query).
     with db_session() as ses:
-        uids = ses.scalars(
+        scored_uids = set(ses.scalars(
             select(DebugScoring.candidate_uid)
             .where(DebugScoring.position_uid == pos_uid)
             .distinct()
-        ).all()
-    uids = [u for u in uids if u]
+        ).all()) - {None, ""}
+
+    # Restrict to candidates currently in the allowed step (one Comeet call).
+    try:
+        with ComeetClient() as client:
+            current = client.list_candidates_for_position(pos_uid)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Comeet API failed: {exc}")
+    eligible_uids = [
+        str(c.get("uid") or "")
+        for c in current
+        if c.get("uid") and str(c["uid"]) in scored_uids and candidate_in_allowed_step(c)
+    ]
+    skipped_not_in_step = len(scored_uids) - len(eligible_uids)
 
     rescored = 0
     errors: list[str] = []
-    for uid in uids:
+    for uid in eligible_uids:
         try:
             score_one_candidate_now(pos_uid, candidate_uid=uid)
             rescored += 1
@@ -267,10 +285,12 @@ def position_rescore_all(body: PositionRescoreBody) -> dict[str, Any]:
     return {
         "ok": True,
         "positionUid": pos_uid,
-        "totalCandidates": len(uids),
+        "totalScored": len(scored_uids),
+        "eligibleInStep": len(eligible_uids),
+        "skippedNotInStep": skipped_not_in_step,
         "rescored": rescored,
         "errorCount": len(errors),
-        "errors": errors[:10],  # cap response size
+        "errors": errors[:10],
     }
 
 

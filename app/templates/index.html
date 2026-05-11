@@ -379,21 +379,21 @@
 
   <div class="panel">
     <div class="filters-row">
-      <div class="filter-field">
+      <div class="filter-field" id="fieldRecruiter">
         <label for="filterRecruiter">Lead recruiter</label>
         <select id="filterRecruiter"></select>
       </div>
-      <div class="filter-field">
+      <div class="filter-field" id="fieldLocation" style="display:none">
         <label for="filterLocation">Location</label>
         <select id="filterLocation"></select>
       </div>
-      <div class="filter-field grow">
+      <div class="filter-field grow" id="fieldPosition" style="display:none">
         <label for="pos">Open position</label>
         <select id="pos"></select>
       </div>
     </div>
 
-    <div class="filters-row">
+    <div class="filters-row" id="classRow" style="display:none">
       <div class="filter-field grow">
         <label for="posClass">Position class <span id="classRequired" style="color:var(--bad)">*</span></label>
         <select id="posClass"><option value="">— select class —</option></select>
@@ -414,8 +414,8 @@
       <span id="newClassStatus" class="small" style="color:var(--muted)"></span>
     </div>
 
-    <!-- Two actions on the selected position. -->
-    <div class="modes" style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem">
+    <!-- Two actions on the selected position. Hidden until class is set. -->
+    <div class="modes" id="modesRow" style="display:none; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem">
       <div class="mode-card" id="modeScanNow">
         <div class="mode-title">Score all unscored</div>
         <p class="mode-body">
@@ -587,6 +587,7 @@
       rebuildLocations();
       rebuildPositions();
       populateClasses();
+      document.dispatchEvent(new Event('as-positions-loaded'));
       // Deeplink support: the Chrome extension links here as `?position=<uid>`
       // when it hits "no position class selected" so the recruiter lands
       // directly on that position's settings.
@@ -613,8 +614,17 @@
   document.getElementById('pos').addEventListener('change', async () => {
     const uid = document.getElementById('pos').value;
     setScheduleUI(false, !uid);
-    document.getElementById('dashPanel').style.display = uid ? 'block' : 'none';
-    if (!uid) return;
+    if (!uid) {
+      // No position picked yet — hide class + actions + dashboard.
+      document.getElementById('classRow').style.display = 'none';
+      document.getElementById('modesRow').style.display = 'none';
+      document.getElementById('dashPanel').style.display = 'none';
+      return;
+    }
+    document.getElementById('dashPanel').style.display = 'block';
+    // Reveal the class row only if no class is assigned yet. If one IS
+    // assigned, hide the picker and skip straight to the action cards.
+    let hasClass = false;
     try {
       const cls = await api('/api/position-class/' + encodeURIComponent(uid));
       if (cls && cls.classId) {
@@ -622,9 +632,37 @@
         updateLevels();
         if (cls.level) document.getElementById('posLevel').value = cls.level;
         setScheduleUI(!!cls.autoScreenEnabled, false);
+        hasClass = true;
       }
     } catch (err) { /* non-fatal */ }
+    document.getElementById('classRow').style.display = hasClass ? 'none' : 'flex';
+    document.getElementById('modesRow').style.display = hasClass ? 'grid' : 'none';
     loadDashboard(uid);
+  });
+
+  // ─── Progressive reveal: only show each filter once the previous is touched.
+  (function progressiveReveal() {
+    const r = document.getElementById('filterRecruiter');
+    const l = document.getElementById('filterLocation');
+    const fieldL = document.getElementById('fieldLocation');
+    const fieldP = document.getElementById('fieldPosition');
+    let recruiterTouched = false;
+    let locationTouched  = false;
+
+    function refresh() {
+      fieldL.style.display = recruiterTouched ? '' : 'none';
+      fieldP.style.display = (recruiterTouched && locationTouched) ? '' : 'none';
+    }
+    r.addEventListener('change', () => { recruiterTouched = true; refresh(); });
+    l.addEventListener('change', () => { locationTouched = true; refresh(); });
+    refresh();
+  })();
+
+  // When the class picker is set manually, reveal the action cards.
+  document.getElementById('posClass').addEventListener('change', () => {
+    if (document.getElementById('posClass').value) {
+      document.getElementById('modesRow').style.display = 'grid';
+    }
   });
 
   // ─── Position dashboard loader ─────────────────────────────────────────
@@ -754,10 +792,11 @@
     if (!uid) return setActionStatus('Pick a position first.', 'err');
     const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
     if (!confirm(`Re-score all ${cnt} already-scored candidates on this position? This will run synchronously and may take a few minutes.`)) return;
-    setActionStatus('Re-scoring… this may take a while.');
+    setActionStatus('Re-scoring CV-screening candidates… this may take a while.');
     try {
       const r = await api('/api/position/rescore-all', { position_uid: uid });
-      setActionStatus(`Re-scored ${r.rescored}/${r.totalCandidates} (errors: ${r.errorCount}).`, 'ok');
+      const skipped = r.skippedNotInStep ? ` (${r.skippedNotInStep} skipped — past CV screen)` : '';
+      setActionStatus(`Re-scored ${r.rescored}/${r.eligibleInStep}${skipped} · errors: ${r.errorCount}`, 'ok');
       loadDashboard(uid);
     } catch (err) {
       setActionStatus(err.message || String(err), 'err');
@@ -865,7 +904,16 @@
 
   document.getElementById('clearFilters').addEventListener('click', () => {
     document.getElementById('filterRecruiter').value = '';
+    document.getElementById('filterLocation').value = '';
+    document.getElementById('pos').value = '';
+    document.getElementById('posClass').value = '';
     rebuildLocations(); rebuildPositions();
+    // Collapse back to the first step.
+    document.getElementById('fieldLocation').style.display = 'none';
+    document.getElementById('fieldPosition').style.display = 'none';
+    document.getElementById('classRow').style.display = 'none';
+    document.getElementById('modesRow').style.display = 'none';
+    document.getElementById('dashPanel').style.display = 'none';
   });
 
   document.getElementById('filterRecruiter').addEventListener('change', () => { rebuildLocations(); rebuildPositions(); });
