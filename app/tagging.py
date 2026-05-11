@@ -226,6 +226,27 @@ def apply_rating_tag(
         position_uid=position_uid, position_name=position_name,
     )
     log.info("tagged candidate=%s person_id=%s with %s", candidate_uid, person_id, tag_name)
+
+    # Auto-flag candidates at or above the threshold (visual marker in Comeet UI).
+    if settings.auto_flag_enabled and int(rating) >= int(settings.flag_rating_threshold):
+        numeric_id = numeric_candidate_id_from_url(candidate_url)
+        if not numeric_id:
+            # Fallback: derive from a fresh public-API fetch.
+            from .comeet_client import ComeetClient
+            try:
+                with ComeetClient() as pub_client:
+                    cand = pub_client.get_candidate(candidate_uid)
+                if cand:
+                    numeric_id = numeric_candidate_id_from_url(cand.get("URL"))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("flag: could not resolve numeric id for %s: %s", candidate_uid, exc)
+        if numeric_id:
+            try:
+                owner_client.set_candidate_flag(numeric_id, True)
+                log.info("flagged candidate=%s numeric=%s rating=%d", candidate_uid, numeric_id, rating)
+            except ComeetAppError as exc:
+                log.warning("flag failed for %s: %s", candidate_uid, exc)
+
     return tag_name
 
 

@@ -15,6 +15,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +43,19 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs" if not settings.is_production else None,
     redoc_url=None,
+)
+
+
+# CORS — the Chrome extension content script runs on app.comeet.co and calls
+# our /api/extension/* endpoints. Chrome also issues an Origin: chrome-extension://<id>
+# preflight, which we allow via regex. Token auth gates the actual writes.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.comeet.co"],
+    allow_origin_regex=r"^chrome-extension://.*$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 

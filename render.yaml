@@ -61,6 +61,8 @@ services:
       - key: AUTO_TAG_ENABLED
         value: "1"   # apply rating tags from both UI scans and the cron
       - key: TAG_RATING_THRESHOLD
+        value: "1"   # tag every score (1-5); set to 3+ to only tag promising candidates
+      - key: TAG_RATING_THRESHOLD
         value: "3"
       - key: NOTE_RATING_THRESHOLD
         value: "3"

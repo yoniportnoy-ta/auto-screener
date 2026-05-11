@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     note_rating_threshold: int = 3
     auto_tag_enabled: bool = False
     tag_rating_threshold: int = 3
+    # Candidates rated >= flag_rating_threshold also get is_favorite=true in Comeet.
+    # 6 disables flagging entirely; 4 is the default — only "Great" and "Superstar".
+    flag_rating_threshold: int = 4
+    auto_flag_enabled: bool = True
     screener_max_per_run: int = 20
     screener_step_substrings: str = "cv screen / recruiter"
     excluded_recruiting_statuses: str = "Rejected,Withdrawn,Hired"

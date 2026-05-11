@@ -1,0 +1,241 @@
+/* Auto Screener overlay — injected onto app.comeet.co candidate pages.
+ * Scoped under `#auto-screener-panel` so we don't leak styles into Comeet's UI.
+ */
+
+#auto-screener-panel {
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  width: 340px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  z-index: 2147483646; /* under any native modal but above page content */
+  background: #1a2332;
+  color: #e7ecf3;
+  border: 1px solid #2d3a4d;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+#auto-screener-panel.as-collapsed {
+  width: auto;
+  max-height: none;
+  padding: 0;
+}
+
+#auto-screener-panel .as-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid #2d3a4d;
+  background: #0f1419;
+  border-radius: 10px 10px 0 0;
+  user-select: none;
+}
+
+#auto-screener-panel.as-collapsed .as-header {
+  border-bottom: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+#auto-screener-panel .as-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #c9b8ff;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+#auto-screener-panel .as-toggle {
+  background: transparent;
+  border: none;
+  color: #8b9cb3;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+#auto-screener-panel .as-toggle:hover {
+  color: #e7ecf3;
+}
+
+#auto-screener-panel.as-collapsed .as-body {
+  display: none;
+}
+
+#auto-screener-panel .as-body {
+  padding: 0.8rem;
+}
+
+#auto-screener-panel .as-rating-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+#auto-screener-panel .as-pill {
+  display: inline-block;
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  border: 1px solid #2d3a4d;
+}
+
+#auto-screener-panel .as-pill.r5 { border-color: rgba(34,197,94,0.75);  background: rgba(34,197,94,0.12);  color: #4ade80; }
+#auto-screener-panel .as-pill.r4 { border-color: rgba(132,204,22,0.7); background: rgba(132,204,22,0.12); color: #a3e635; }
+#auto-screener-panel .as-pill.r3 { border-color: rgba(234,179,8,0.7);  background: rgba(234,179,8,0.12);  color: #fbbf24; }
+#auto-screener-panel .as-pill.r2 { border-color: rgba(249,115,22,0.7); background: rgba(249,115,22,0.12); color: #fb923c; }
+#auto-screener-panel .as-pill.r1 { border-color: rgba(239,68,68,0.75); background: rgba(239,68,68,0.10); color: #fca5a5; }
+
+#auto-screener-panel .as-confidence {
+  font-size: 11px;
+  color: #8b9cb3;
+}
+
+#auto-screener-panel .as-summary {
+  font-size: 12.5px;
+  color: #d8dde6;
+  margin-bottom: 0.7rem;
+  white-space: pre-wrap;
+}
+
+#auto-screener-panel .as-section {
+  margin-bottom: 0.6rem;
+}
+
+#auto-screener-panel .as-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+  color: #8b9cb3;
+}
+
+#auto-screener-panel .as-label.yes { color: #4ade80; }
+#auto-screener-panel .as-label.no  { color: #f87171; }
+
+#auto-screener-panel ul.as-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 12px;
+  color: #d8dde6;
+}
+
+#auto-screener-panel ul.as-list li {
+  margin-bottom: 0.15rem;
+}
+
+#auto-screener-panel .as-feedback {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid #2d3a4d;
+}
+
+#auto-screener-panel .as-stars {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.3rem 0 0.5rem;
+}
+
+#auto-screener-panel .as-star {
+  font-size: 22px;
+  cursor: pointer;
+  color: #44556b;
+  line-height: 1;
+  transition: color 0.1s ease, transform 0.1s ease;
+  user-select: none;
+}
+
+#auto-screener-panel .as-star:hover {
+  transform: scale(1.15);
+}
+
+#auto-screener-panel .as-star.as-on {
+  color: #fbbf24;
+}
+
+#auto-screener-panel textarea.as-note {
+  width: 100%;
+  min-height: 60px;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid #2d3a4d;
+  background: #0f1419;
+  color: #e7ecf3;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+#auto-screener-panel textarea.as-note:focus {
+  outline: none;
+  border-color: #9671ff;
+}
+
+#auto-screener-panel .as-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.6rem;
+  gap: 0.4rem;
+}
+
+#auto-screener-panel button.as-btn {
+  background: #9671ff;
+  color: #fff;
+  border: 1px solid rgba(150, 113, 255, 0.92);
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#auto-screener-panel button.as-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#auto-screener-panel button.as-btn.as-ghost {
+  background: transparent;
+  color: #8b9cb3;
+  border: 1px solid #2d3a4d;
+}
+
+#auto-screener-panel .as-status {
+  font-size: 11px;
+  color: #8b9cb3;
+  margin-top: 0.4rem;
+}
+
+#auto-screener-panel .as-status.as-ok  { color: #4ade80; }
+#auto-screener-panel .as-status.as-err { color: #fca5a5; }
+
+#auto-screener-panel .as-empty {
+  font-size: 12px;
+  color: #8b9cb3;
+  font-style: italic;
+}
+
+#auto-screener-panel .as-empty strong {
+  color: #c9b8ff;
+  font-style: normal;
+}
+
+#auto-screener-panel .as-meta {
+  font-size: 10.5px;
+  color: #6d7e95;
+  margin-top: 0.4rem;
+  text-align: right;
+}

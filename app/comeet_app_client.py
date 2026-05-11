@@ -420,6 +420,22 @@ class ComeetAppClient:
         status, _ = self._request("DELETE", f"/api/v1/persons/{person_id}/tags/{tag_id}")
         return status == 204
 
+    # -- candidate flag (is_favorite) --------------------------------------
+    def set_candidate_flag(self, numeric_id: int | str, flagged: bool) -> dict[str, Any]:
+        """PATCH /api/v1/candidates/{numeric_id} with {is_favorite: bool}.
+
+        Comeet renders flagged candidates with a visible marker so recruiters can
+        jump straight to top profiles. Idempotent — passing the same value again
+        is a no-op on Comeet's side.
+        """
+        _, body = self._request(
+            "PATCH", f"/api/v1/candidates/{numeric_id}",
+            json_body={"is_favorite": bool(flagged)},
+        )
+        if not isinstance(body, dict):
+            raise ComeetAppError(f"set_candidate_flag unexpected response: {body!r}")
+        return body
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 def _extract_person_id(payload: Any) -> int | None:
