@@ -149,6 +149,65 @@ def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, A
     }
 
 
+@router.get("/position/agreement-matrix")
+def position_agreement_matrix(position_uid: str) -> dict[str, Any]:
+    """Cross-tab of AI rating vs recruiter rating for this position.
+
+    Returns a 5x5 matrix `counts[ai][rec]` (1..5 each) of how many feedback
+    rows fall into each AI-rating × recruiter-rating cell. Lets the recruiter
+    see at a glance where the AI agrees, where it's too harsh, and where it's
+    too lenient — much more useful than a single agreement %.
+    """
+    from sqlalchemy import select, func
+    from ..db import db_session
+    from ..models import Feedback
+
+    pos_uid = (position_uid or "").strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    # counts[ai][rec] — both 1..5; index 0 unused for ease of mapping.
+    counts = [[0] * 6 for _ in range(6)]
+    with db_session() as ses:
+        rows = ses.execute(
+            select(Feedback.ai_rating, Feedback.recruiter_rating, func.count())
+            .where(Feedback.position_uid == pos_uid)
+            .where(Feedback.ai_rating.isnot(None))
+            .where(Feedback.recruiter_rating.isnot(None))
+            .group_by(Feedback.ai_rating, Feedback.recruiter_rating)
+        ).all()
+    for ai, rec, c in rows:
+        if 1 <= int(ai) <= 5 and 1 <= int(rec) <= 5:
+            counts[int(ai)][int(rec)] = int(c)
+
+    # Summary stats:
+    total = sum(counts[i][j] for i in range(1, 6) for j in range(1, 6))
+    agreed = sum(counts[i][i] for i in range(1, 6))
+    # Bias = mean(ai_rating - recruiter_rating). Positive = AI rates too high.
+    sum_delta = 0
+    for i in range(1, 6):
+        for j in range(1, 6):
+            sum_delta += (i - j) * counts[i][j]
+    bias = (sum_delta / total) if total else None
+
+    # Trim to 5x5 matrix indexed 0..4 for cleaner JSON.
+    matrix = [[counts[i][j] for j in range(1, 6)] for i in range(1, 6)]
+    return {
+        "positionUid": pos_uid,
+        "matrix": matrix,             # matrix[ai-1][rec-1] = count
+        "ratings": [1, 2, 3, 4, 5],
+        "totalRated": total,
+        "agreed": agreed,
+        "agreement": (agreed / total) if total else None,
+        "bias": bias,                  # mean(ai - rec); >0 means AI too generous
+    }
+
+
 # ─── Position class management ───────────────────────────────────────────────
 @router.get("/position-classes")
 def get_classes() -> list[dict[str, Any]]:

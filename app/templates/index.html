@@ -106,6 +106,59 @@
     .dash-stat.bad  .dash-stat-val { color: var(--bad); }
     #dashRecentTbl td .pill { font-size: 0.75rem; padding: 0.25rem 0.55rem; }
     #dashRecentTbl td { vertical-align: middle; }
+    /* AI × Recruiter agreement matrix */
+    .agree-matrix {
+      display: inline-grid;
+      grid-template-columns: auto repeat(5, 64px);
+      grid-auto-rows: 44px;
+      gap: 3px;
+      align-items: stretch;
+    }
+    .agree-matrix .cell, .agree-matrix .head {
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px; font-size: 0.85rem;
+    }
+    .agree-matrix .head {
+      color: var(--muted); font-weight: 500; font-size: 0.72rem;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .agree-matrix .head.corner {
+      background: transparent;
+      writing-mode: horizontal-tb;
+      text-align: right; padding-right: 0.5rem;
+      font-size: 0.65rem;
+    }
+    .agree-matrix .head.row-label {
+      justify-content: flex-end; padding-right: 0.5rem;
+    }
+    .agree-matrix .cell {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+      cursor: default;
+    }
+    /* Diagonal — perfect agreement */
+    .agree-matrix .cell.diag.has {
+      background: rgba(34,197,94,0.18);
+      border-color: rgba(34,197,94,0.55);
+      color: #4ade80;
+      font-weight: 700;
+    }
+    /* Off by 1 — yellow */
+    .agree-matrix .cell.near.has {
+      background: rgba(234,179,8,0.12);
+      border-color: rgba(234,179,8,0.4);
+      color: #fbbf24;
+    }
+    /* Off by 2+ — red */
+    .agree-matrix .cell.far.has {
+      background: rgba(239,68,68,0.14);
+      border-color: rgba(239,68,68,0.4);
+      color: #fca5a5;
+    }
+    .agree-matrix .cell .zero {
+      opacity: 0.25;
+    }
     button.primary {
       background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
       padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
@@ -290,15 +343,28 @@
       <div class="dash-stat"><div class="dash-stat-val" id="dashAgreement">—</div><div class="dash-stat-label">Agreement</div></div>
       <div class="dash-stat"><div class="dash-stat-val" id="dashLastScan">—</div><div class="dash-stat-label">Last scan</div></div>
     </div>
-    <div id="dashRecentWrap" style="margin-top:0.75rem; display:none;">
-      <div class="small" style="color:var(--muted); margin-bottom:0.4rem;">Recent scores</div>
-      <div style="overflow-x:auto">
+
+    <!-- AI × Recruiter agreement matrix -->
+    <div id="dashMatrixWrap" style="margin-top:1rem; display:none;">
+      <div style="display:flex; align-items:baseline; gap:0.6rem; margin-bottom:0.4rem;">
+        <div style="font-weight:600; font-size:0.9rem;">Agreement matrix</div>
+        <div class="small" style="color:var(--muted);" id="dashMatrixSummary"></div>
+      </div>
+      <div id="dashMatrix" class="agree-matrix"></div>
+      <div class="small" style="color:var(--muted); margin-top:0.45rem;">
+        Rows: <strong>AI's rating</strong>. Columns: <strong>recruiter's rating</strong>. Diagonal = agreement; cells above the diagonal = AI rated higher than the recruiter.
+      </div>
+    </div>
+
+    <details id="dashRecentWrap" style="margin-top:0.85rem; display:none;">
+      <summary class="small" style="color:var(--muted); cursor:pointer;">Recent scores (latest <span id="dashRecentCount">0</span>)</summary>
+      <div style="overflow-x:auto; margin-top:0.5rem;">
         <table id="dashRecentTbl">
           <thead><tr><th>Candidate</th><th>Rating</th><th>Summary</th><th>Scored</th></tr></thead>
           <tbody id="dashRecentBody"></tbody>
         </table>
       </div>
-    </div>
+    </details>
   </div>
 
   <div class="panel" id="resultsPanel" style="display:none">
@@ -481,14 +547,16 @@
   async function loadDashboard(uid) {
     if (!uid) return;
     try {
-      const d = await api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid));
+      const [d, m] = await Promise.all([
+        api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid) + '&recent_limit=50'),
+        api('/api/position/agreement-matrix?position_uid=' + encodeURIComponent(uid)).catch(() => null),
+      ]);
       const ratedEl = document.getElementById('dashRated');
       const fbEl    = document.getElementById('dashFeedback');
       const agEl    = document.getElementById('dashAgreement');
       const lastEl  = document.getElementById('dashLastScan');
       ratedEl.textContent = (d.stats.totalScored || 0).toString();
       fbEl.textContent    = (d.stats.feedbackCount || 0).toString();
-      // Agreement coloring
       const ag = d.stats.agreement;
       const agStat = agEl.parentElement;
       agStat.classList.remove('good', 'warn', 'bad');
@@ -505,11 +573,15 @@
         ? relTime(new Date(d.stats.lastScanAt))
         : 'never';
 
-      // Recent rows
+      // Matrix
+      renderAgreementMatrix(m);
+
+      // Recent rows (now in a collapsed <details>)
       const tbody = document.getElementById('dashRecentBody');
       const wrap  = document.getElementById('dashRecentWrap');
       const rows  = Array.isArray(d.recent) ? d.recent : [];
       wrap.style.display = rows.length ? 'block' : 'none';
+      document.getElementById('dashRecentCount').textContent = rows.length;
       tbody.innerHTML = rows.map(r => {
         const r5 = Number(r.rating) || 0;
         const label = ratingLabel(r5);
@@ -526,6 +598,51 @@
     } catch (err) {
       console.warn('dashboard load failed', err);
     }
+  }
+
+  function renderAgreementMatrix(m) {
+    const wrap = document.getElementById('dashMatrixWrap');
+    const grid = document.getElementById('dashMatrix');
+    const summary = document.getElementById('dashMatrixSummary');
+    if (!m || !m.totalRated) {
+      wrap.style.display = 'none';
+      grid.innerHTML = '';
+      return;
+    }
+    wrap.style.display = 'block';
+
+    // Summary line: total rated + bias direction
+    const total = m.totalRated || 0;
+    const agreement = m.agreement != null ? Math.round(m.agreement * 100) + '%' : '—';
+    const bias = m.bias;
+    let biasText = '';
+    if (bias != null && total >= 5) {
+      if (Math.abs(bias) < 0.15) biasText = 'AI is well-calibrated.';
+      else if (bias > 0) biasText = `AI averages ${bias.toFixed(2)} too generous.`;
+      else                biasText = `AI averages ${Math.abs(bias).toFixed(2)} too harsh.`;
+    }
+    summary.textContent = `${total} rated · ${agreement} agreement` + (biasText ? ` · ${biasText}` : '');
+
+    // Build cells: header row + 5 data rows
+    const cells = [];
+    cells.push(`<div class="head corner">AI ↓ / Rec →</div>`);
+    for (let r = 1; r <= 5; r++) {
+      cells.push(`<div class="head">${r}</div>`);
+    }
+    for (let ai = 1; ai <= 5; ai++) {
+      cells.push(`<div class="head row-label">${ai}</div>`);
+      for (let rec = 1; rec <= 5; rec++) {
+        const v = (m.matrix[ai - 1] && m.matrix[ai - 1][rec - 1]) || 0;
+        const diff = Math.abs(ai - rec);
+        let klass = '';
+        if (diff === 0) klass = 'diag';
+        else if (diff === 1) klass = 'near';
+        else klass = 'far';
+        const has = v > 0 ? 'has' : '';
+        cells.push(`<div class="cell ${klass} ${has}">${v > 0 ? v : '<span class="zero">0</span>'}</div>`);
+      }
+    }
+    grid.innerHTML = cells.join('');
   }
 
   function ratingLabel(r) {
