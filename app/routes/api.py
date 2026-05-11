@@ -144,13 +144,21 @@ def extension_ping() -> dict[str, Any]:
 
 
 @router.get("/extension/score", dependencies=[Depends(_require_extension_token)])
-def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
+def extension_get_score(
+    numeric_id: str = "",
+    uid: str = "",
+    position_uid: str = "",
+) -> dict[str, Any]:
     """Used by the in-Comeet Chrome extension.
 
     Accepts either a numeric candidate ID (what Comeet's URL contains) or the
     alphanumeric public-API uid. Returns the latest scoring summary we have on
     record (rating, confidence, summary, strengths, gaps), or 404 if we've never
     scored this candidate.
+
+    If `position_uid` is supplied (the extension always does — it's in the page
+    URL), the numeric→alphanumeric resolution only scans THAT position's
+    candidate list, which is ~10–50× faster than scanning every open position.
     """
     from sqlalchemy import select
     from ..comeet_client import ComeetClient
@@ -159,6 +167,7 @@ def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
 
     alphanumeric_uid = (uid or "").strip()
     n_id = (numeric_id or "").strip()
+    pos_uid = (position_uid or "").strip()
 
     # Fast-fail if the caller gave us a numeric_id that obviously isn't a
     # Comeet candidate id (only digits). Keeps the popup's "Test connection"
@@ -171,18 +180,28 @@ def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
     if n_id and not alphanumeric_uid:
         with ComeetClient() as pub:
             try:
-                positions = pub.list_open_positions()
-                # Search across recent candidates — limited but cheap. We can
-                # add a numeric→uid mapping table later if this becomes hot.
-                for p in positions:
-                    candidates = pub.list_candidates_for_position(p["uid"])
-                    for c in candidates:
-                        c_url = c.get("URL", "")
+                # Fast path: just this candidate's position.
+                if pos_uid:
+                    cands = pub.list_candidates_for_position(pos_uid)
+                    for c in cands:
+                        c_url = c.get("URL", "") or ""
                         if n_id in c_url:
-                            alphanumeric_uid = str(c.get("uid", ""))
+                            alphanumeric_uid = str(c.get("uid") or "")
                             break
-                    if alphanumeric_uid:
-                        break
+                # Fallback (rare): brute-force across all open positions.
+                if not alphanumeric_uid:
+                    positions = pub.list_open_positions()
+                    for p in positions:
+                        if pos_uid and p.get("uid") == pos_uid:
+                            continue  # already scanned above
+                        candidates = pub.list_candidates_for_position(p["uid"])
+                        for c in candidates:
+                            c_url = c.get("URL", "")
+                            if n_id in c_url:
+                                alphanumeric_uid = str(c.get("uid", ""))
+                                break
+                        if alphanumeric_uid:
+                            break
             except Exception:  # noqa: BLE001
                 pass
 
@@ -205,6 +224,7 @@ def extension_get_score(numeric_id: str = "", uid: str = "") -> dict[str, Any]:
 
     return {
         "candidateUid": alphanumeric_uid,
+        "candidateName": row.candidate_name or "",
         "rating": row.final_rating,
         "confidence": row.confidence,
         "summary": row.summary,
@@ -247,17 +267,28 @@ def extension_score_now(body: ExtensionScoreNowBody) -> dict[str, Any]:
     if summary.error:
         raise HTTPException(422, summary.error)
 
+    # Look up the position name so the extension panel header shows the role.
+    position_name = ""
+    try:
+        with ComeetClient() as pub:
+            pos = pub.get_position(body.position_uid)
+            if pos:
+                position_name = str(pos.get("name") or "")
+    except Exception:  # noqa: BLE001
+        pass
+
     # Match the /score response shape exactly so the extension's render path
     # doesn't need a second code branch.
     return {
         "candidateUid": summary.candidate_uid,
+        "candidateName": summary.name or "",
         "rating": summary.rating,
         "confidence": summary.confidence,
         "summary": summary.summary,
         "strengths": summary.strengths or [],
         "gaps": summary.gaps or [],
         "positionUid": body.position_uid,
-        "positionName": "",  # not needed by the panel; lookup below if we want
+        "positionName": position_name,
         "classId": None,
         "currentTag": summary.tag_applied,
         "scoredAt": datetime.now(timezone.utc).isoformat(),

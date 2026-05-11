@@ -34,14 +34,16 @@
   }
 
   // ─── Backend calls ──────────────────────────────────────────────────────
-  async function fetchScore(numericId) {
+  async function fetchScore(numericId, positionUid) {
     const { backendUrl, apiToken } = await loadSettings();
     if (!apiToken) {
       const err = new Error("Auto Screener: API token not set. Open the extension popup to configure it.");
       err.code = "no_token";
       throw err;
     }
-    const url = `${backendUrl}/api/extension/score?numeric_id=${encodeURIComponent(numericId)}`;
+    const qs = new URLSearchParams({ numeric_id: numericId });
+    if (positionUid) qs.set("position_uid", positionUid);
+    const url = `${backendUrl}/api/extension/score?${qs.toString()}`;
     const resp = await fetch(url, {
       method: "GET",
       headers: { "X-Screener-Token": apiToken },
@@ -154,7 +156,10 @@
 
     panel.innerHTML = `
       <div class="as-header">
-        <span class="as-title">AI Screener</span>
+        <div class="as-header-text">
+          <div class="as-title">AI Screener</div>
+          <div class="as-subtitle" id="as-subtitle"></div>
+        </div>
         <button class="as-toggle" type="button" title="Collapse">${collapsed ? "▸" : "▾"}</button>
       </div>
       <div class="as-body" id="as-body"></div>
@@ -188,6 +193,15 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function setHeaderSubtitle(candidateName, positionName) {
+    const el = document.getElementById("as-subtitle");
+    if (!el) return;
+    const parts = [];
+    if (candidateName) parts.push(escapeHtml(candidateName));
+    if (positionName) parts.push(escapeHtml(positionName));
+    el.innerHTML = parts.join(" · ");
   }
 
   function renderLoading() {
@@ -255,6 +269,10 @@
   function renderScore(score) {
     const body = document.getElementById("as-body");
     if (!body) return;
+    // Prefer the score response's own candidate name when present, fall back to DOM.
+    const candidateName = (score && score.candidateName) || extractCandidateNameFromDom();
+    const positionName = (score && score.positionName) || extractPositionNameFromDom();
+    setHeaderSubtitle(candidateName, positionName);
     const r = Number(score.rating) || 0;
     const confidence = score.confidence != null ? `confidence ${Math.round(score.confidence * 100)}%` : "";
     const strengths = Array.isArray(score.strengths) ? score.strengths.filter(Boolean) : [];
@@ -400,37 +418,62 @@
     currentScore = null;
 
     ensurePanel();
+    // Show candidate identity in the header immediately (from the DOM) so the
+    // user knows whose score the panel is loading even before the network
+    // round-trip completes.
+    setHeaderSubtitle(extractCandidateNameFromDom(), extractPositionNameFromDom());
     renderLoading();
 
+    // Snapshot the numeric id we're loading for — if the user navigates to
+    // another candidate mid-fetch, we don't paint stale data.
+    const loadingFor = ids.numericId;
+
     try {
-      const score = await fetchScore(ids.numericId);
+      const score = await fetchScore(ids.numericId, ids.positionUid);
+      if (loadingFor !== currentNumericId) return; // user moved on
       if (!score) {
-        // Not scored yet — auto-trigger a scan immediately. We could also
-        // offer a manual "Scan now" button, but the user explicitly wanted
-        // the auto path so we go straight in.
         await runScanForCurrent();
         return;
       }
       currentScore = score;
       renderScore(score);
     } catch (e) {
+      if (loadingFor !== currentNumericId) return;
       console.warn("[auto-screener]", e);
       renderError(e.message || String(e));
     }
   }
 
   // ─── SPA navigation watcher ─────────────────────────────────────────────
-  // Comeet doesn't fire 'popstate' for in-app navigations. We watch the URL
-  // ourselves on a short interval; cheap, and survives whatever router they use.
+  // Comeet doesn't always fire 'popstate' for in-app navigations. We do three
+  // things:
+  //   1. patch history.pushState / replaceState to dispatch a custom event,
+  //   2. listen for popstate (back/forward),
+  //   3. fall back to a short interval poll in case the SPA bypasses history.
   let lastUrl = location.href;
-  function watchUrl() {
+  function onNav() {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       refresh();
     }
   }
-  setInterval(watchUrl, 500);
-  window.addEventListener("popstate", refresh);
+  (function patchHistory() {
+    const origPush = history.pushState;
+    const origReplace = history.replaceState;
+    history.pushState = function (...args) {
+      const ret = origPush.apply(this, args);
+      window.dispatchEvent(new Event("as-locationchange"));
+      return ret;
+    };
+    history.replaceState = function (...args) {
+      const ret = origReplace.apply(this, args);
+      window.dispatchEvent(new Event("as-locationchange"));
+      return ret;
+    };
+  })();
+  window.addEventListener("as-locationchange", onNav);
+  window.addEventListener("popstate", onNav);
+  setInterval(onNav, 250);
 
   // Initial run after the page settles a bit (DOM may still be filling in).
   setTimeout(refresh, 300);
