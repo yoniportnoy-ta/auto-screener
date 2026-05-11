@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Auto Screener — Comeet companion",
   "description": "Shows the AI screening score on each Comeet candidate page and lets recruiters submit feedback inline.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -26,7 +26,7 @@
   "content_scripts": [
     {
       "matches": ["https://app.comeet.co/app/req/*"],
-      "js": ["content.js"],
+      "js": ["_token.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
     },
@@ -35,7 +35,7 @@
         "https://auto-screener-2va5.onrender.com/*",
         "http://localhost:8000/*"
       ],
-      "js": ["screener-bridge.js"],
+      "js": ["_token.js", "screener-bridge.js"],
       "run_at": "document_idle"
     }
   ]

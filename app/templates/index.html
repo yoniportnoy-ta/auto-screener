@@ -41,29 +41,48 @@
     .filters-row { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; margin-bottom: 0.75rem; }
     .filter-field { flex: 1 1 160px; min-width: 140px; }
     .filter-field.grow { flex: 2 1 260px; }
-    .ext-badge {
-      display: inline-flex; align-items: center; gap: 0.4rem; vertical-align: middle;
-      margin-left: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 999px;
-      font-size: 0.75rem; font-weight: 500; border: 1px solid var(--border);
-      background: var(--panel); color: var(--muted);
+    /* Chrome extension status card — compact when installed, expands on demand. */
+    .ext-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.65rem 0.9rem; margin-bottom: 1rem;
     }
-    .ext-badge .ext-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+    .ext-card.installed { border-color: rgba(34, 197, 94, 0.45); }
+    .ext-card.outdated  { border-color: rgba(234, 179, 8, 0.45); }
+    .ext-card.missing   { border-color: rgba(239, 68, 68, 0.45); }
+    .ext-card-row {
+      display: flex; align-items: center; gap: 0.8rem;
     }
-    .ext-badge.ext-installed { color: var(--ok); border-color: rgba(34,197,94,0.45); }
-    .ext-badge.ext-installed .ext-dot { background: var(--ok); }
-    .ext-badge.ext-outdated  { color: var(--warn); border-color: rgba(234,179,8,0.45); }
-    .ext-badge.ext-outdated  .ext-dot { background: var(--warn); }
-    .ext-badge.ext-missing   { color: var(--bad);  border-color: rgba(239,68,68,0.4); }
-    .ext-badge.ext-missing   .ext-dot { background: var(--bad); }
-    .ext-panel-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+    .ext-card-icon {
+      flex: 0 0 auto; width: 1.6rem; height: 1.6rem; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--bg); border: 1px solid var(--border);
+      font-size: 0.95rem; line-height: 1;
     }
-    .ext-panel .ext-steps { margin: 0; padding-left: 1.25rem; font-size: 0.9rem; }
-    .ext-panel .ext-steps li { margin-bottom: 0.5rem; }
-    .ext-panel code {
+    .ext-card.installed .ext-card-icon { color: var(--ok); border-color: rgba(34,197,94,0.5); }
+    .ext-card.outdated  .ext-card-icon { color: var(--warn); border-color: rgba(234,179,8,0.5); }
+    .ext-card.missing   .ext-card-icon { color: var(--bad); border-color: rgba(239,68,68,0.5); }
+    .ext-card-text { flex: 1 1 auto; min-width: 0; }
+    .ext-card-title { font-size: 0.95rem; font-weight: 600; }
+    .ext-card-sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.05rem; }
+    .ext-card-actions {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem;
+    }
+    .ext-card-actions .primary { padding: 0.4rem 0.75rem; font-size: 0.8rem; text-decoration: none; }
+    .ext-card-actions .ghost   { padding: 0.4rem 0.55rem; font-size: 0.85rem; min-width: 2.2rem; }
+    .ext-card-body { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
+    .ext-card-body[hidden] { display: none; }
+    .ext-steps {
+      margin: 0; padding-left: 1.1rem;
+      font-size: 0.83rem; color: var(--text); line-height: 1.55;
+    }
+    .ext-steps li { margin-bottom: 0.35rem; }
+    .ext-steps li:last-child { margin-bottom: 0; }
+    .ext-steps code {
       background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-      padding: 0.05rem 0.35rem; font-size: 0.85em;
+      padding: 0.02rem 0.32rem; font-size: 0.88em;
+    }
+    .ext-steps button.ghost {
+      padding: 0.1rem 0.45rem; font-size: 0.72rem; margin-left: 0.25rem;
     }
     button.primary {
       background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
@@ -145,51 +164,29 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>
-    Auto Screener
-    <span id="extBadge" class="ext-badge ext-unknown" title="Chrome extension status">
-      <span class="ext-dot"></span><span id="extBadgeText">extension: checking…</span>
-    </span>
-  </h1>
+  <h1>Auto Screener</h1>
 
-  <!-- Chrome extension install / update panel -->
-  <div class="panel ext-panel" id="extPanel">
-    <div class="ext-panel-head">
-      <div>
-        <strong>Comeet Chrome extension</strong>
-        <span class="small" id="extVersionLine">Server has v{{ extensionVersion }}.</span>
+  <!-- Chrome extension status / install panel -->
+  <div class="ext-card" id="extPanel">
+    <div class="ext-card-row" id="extCardSummary">
+      <span class="ext-card-icon" id="extCardIcon" aria-hidden="true">…</span>
+      <div class="ext-card-text">
+        <div class="ext-card-title" id="extCardTitle">Checking Chrome extension…</div>
+        <div class="ext-card-sub" id="extCardSub">Looking for the Auto Screener extension in this browser.</div>
       </div>
-      <button class="ghost" id="btnExtToggle" type="button">Install / Update ▾</button>
+      <div class="ext-card-actions" id="extCardActions">
+        <a href="/extension.zip" download class="primary ext-download" id="extDownload">Download v{{ extensionVersion }}</a>
+        <button class="ghost" id="btnExtToggle" type="button" aria-label="Toggle install instructions">▾</button>
+      </div>
     </div>
-    <div id="extPanelBody" style="display:none; margin-top:0.8rem;">
+    <div id="extPanelBody" class="ext-card-body" hidden>
       <ol class="ext-steps">
-        <li>
-          <a href="/extension.zip" download class="primary" style="text-decoration:none; display:inline-block;">
-            Download extension
-          </a>
-          <span class="small">(.zip; latest server version v{{ extensionVersion }})</span>
-        </li>
-        <li>
-          Unzip it somewhere stable — e.g. <code>~/Documents/auto-screener-extension/</code>.
-          (You'll point Chrome at this folder; don't move it after.)
-        </li>
-        <li>
-          Open
-          <code>chrome://extensions/</code>
-          <button class="ghost" id="btnCopyExtUrl" type="button" style="font-size:0.75rem; margin-left:0.4rem;">Copy URL</button>
-          <span class="small">(Chrome blocks clickable <code>chrome://</code> links, so paste it in the address bar.)</span>
-        </li>
-        <li>Turn on <strong>Developer mode</strong> (top-right of that page).</li>
-        <li>Click <strong>Load unpacked</strong> and pick the unzipped folder.</li>
-        <li>
-          Click the new toolbar icon → paste your <code>SCREENER_API_TOKEN</code> → <strong>Test connection</strong>.
-        </li>
+        <li>Click <strong>Download v{{ extensionVersion }}</strong> above to grab <code>auto-screener-extension-{{ extensionVersion }}.zip</code>. The API token is already baked in — no paste needed.</li>
+        <li>Unzip it somewhere stable, e.g. <code>~/Documents/auto-screener-extension/</code>. Don't move the folder after, Chrome points at it directly.</li>
+        <li>Open <code>chrome://extensions/</code> — <button class="ghost" id="btnCopyExtUrl" type="button">Copy URL</button> — and paste in the address bar (Chrome blocks clickable <code>chrome://</code> links).</li>
+        <li>Turn on <strong>Developer mode</strong> (top-right toggle), then click <strong>Load unpacked</strong> and pick the unzipped folder.</li>
+        <li>Done — open any Comeet candidate page. To update later, re-download here and click the refresh icon next to the extension in <code>chrome://extensions/</code>.</li>
       </ol>
-      <div class="meta" style="margin-top:0.6rem;">
-        <strong>Already installed?</strong>
-        After an update, open <code>chrome://extensions/</code> and click the circular refresh icon on the Auto Screener tile.
-        Chrome doesn't let web pages reload extensions for security reasons, so this step is manual.
-      </div>
     </div>
   </div>
 
@@ -746,15 +743,14 @@
   // ─── Chrome extension install/version detection ─────────────────────────
   (function extWatcher() {
     const SERVER_VERSION = "{{ extensionVersion }}";
-    const badge = document.getElementById('extBadge');
-    const badgeText = document.getElementById('extBadgeText');
-    const versionLine = document.getElementById('extVersionLine');
-    let installed = null; // installed version string, once known
-
-    function setBadge(kind, text) {
-      badge.className = 'ext-badge ext-' + kind;
-      badgeText.textContent = text;
-    }
+    const card     = document.getElementById('extPanel');
+    const icon     = document.getElementById('extCardIcon');
+    const title    = document.getElementById('extCardTitle');
+    const sub      = document.getElementById('extCardSub');
+    const download = document.getElementById('extDownload');
+    const body     = document.getElementById('extPanelBody');
+    const toggle   = document.getElementById('btnExtToggle');
+    let installed = null;
 
     function cmpVersions(a, b) {
       const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
@@ -766,18 +762,45 @@
       return 0;
     }
 
+    function setState(kind, opts) {
+      card.classList.remove('installed', 'outdated', 'missing');
+      card.classList.add(kind);
+      icon.textContent  = opts.icon;
+      title.textContent = opts.title;
+      sub.textContent   = opts.sub;
+      download.textContent = opts.cta;
+      download.style.display = opts.hideCta ? 'none' : '';
+    }
+
     function applyState() {
       if (!installed) {
-        setBadge('missing', 'extension: not installed');
+        setState('missing', {
+          icon: '✗',
+          title: 'Chrome extension not installed',
+          sub: 'Download v' + SERVER_VERSION + '. Token + backend are pre-configured.',
+          cta: 'Download v' + SERVER_VERSION,
+        });
+        // Auto-expand the install steps when nothing is installed yet.
+        body.hidden = false;
+        toggle.textContent = '▴';
         return;
       }
       const cmp = cmpVersions(installed, SERVER_VERSION);
       if (cmp >= 0) {
-        setBadge('installed', `extension: v${installed} ✓`);
+        setState('installed', {
+          icon: '✓',
+          title: 'Extension installed (v' + installed + ')',
+          sub: 'Open any Comeet candidate page to see the panel.',
+          cta: 'Re-download v' + SERVER_VERSION,
+        });
       } else {
-        setBadge('outdated', `extension: v${installed} (update → v${SERVER_VERSION})`);
+        setState('outdated', {
+          icon: '!',
+          title: 'Update available (v' + installed + ' → v' + SERVER_VERSION + ')',
+          sub: 'Download the new zip, then click the refresh icon on the Auto Screener tile in chrome://extensions/.',
+          cta: 'Download v' + SERVER_VERSION,
+        });
       }
-      versionLine.textContent = `Server has v${SERVER_VERSION}. Installed v${installed}.`;
     }
 
     window.addEventListener('message', (event) => {
@@ -789,23 +812,21 @@
       }
     });
 
-    // Ask the bridge to announce itself, and assume "not installed" if no
-    // reply within ~2 s.
     function ping() {
       window.postMessage({ source: 'auto-screener-page', type: 'ping' }, window.location.origin);
     }
     setTimeout(ping, 100);
     setTimeout(ping, 500);
-    setTimeout(() => { if (installed === null) applyState(); }, 2000);
+    setTimeout(() => { if (installed === null) applyState(); }, 1500);
   })();
 
-  // Toggle the install panel.
+  // Toggle the install panel body.
   document.getElementById('btnExtToggle').addEventListener('click', () => {
     const body = document.getElementById('extPanelBody');
     const btn  = document.getElementById('btnExtToggle');
-    const show = body.style.display === 'none';
-    body.style.display = show ? 'block' : 'none';
-    btn.textContent = (show ? 'Install / Update ▴' : 'Install / Update ▾');
+    const show = body.hidden;
+    body.hidden = !show;
+    btn.textContent = show ? '▴' : '▾';
   });
 
   // Copy the chrome://extensions/ URL (Chrome blocks direct linking to it).

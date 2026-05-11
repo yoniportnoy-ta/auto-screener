@@ -22,13 +22,23 @@
   let submitting = false;
 
   // ─── Settings loader ────────────────────────────────────────────────────
+  // Optional embedded defaults injected by the backend when the extension
+  // is downloaded via /extension.zip. If present, they back-fill chrome.storage
+  // so recruiters don't have to paste anything.
+  const EMBEDDED_TOKEN   = (typeof window !== "undefined" && window.AS_EMBEDDED_TOKEN)   || "";
+  const EMBEDDED_BACKEND = (typeof window !== "undefined" && window.AS_EMBEDDED_BACKEND) || "";
+
   function loadSettings() {
     return new Promise((resolve) => {
       chrome.storage.local.get(["backendUrl", "apiToken"], (data) => {
-        resolve({
-          backendUrl: (data.backendUrl || "https://auto-screener-2va5.onrender.com").replace(/\/+$/, ""),
-          apiToken: data.apiToken || "",
-        });
+        const backendUrl = (data.backendUrl || EMBEDDED_BACKEND || "https://auto-screener-2va5.onrender.com").replace(/\/+$/, "");
+        const apiToken   = data.apiToken || EMBEDDED_TOKEN || "";
+        // First-run hydration: persist the embedded values so future calls
+        // (and the popup) see them.
+        if (!data.apiToken && EMBEDDED_TOKEN) {
+          chrome.storage.local.set({ apiToken: EMBEDDED_TOKEN, backendUrl });
+        }
+        resolve({ backendUrl, apiToken });
       });
     });
   }

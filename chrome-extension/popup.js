@@ -3,7 +3,9 @@
  * Persists backend URL + API token + recruiter email to chrome.storage.local.
  */
 
-const DEFAULT_BACKEND = "https://auto-screener-2va5.onrender.com";
+const EMBEDDED_BACKEND = (typeof window !== "undefined" && window.AS_EMBEDDED_BACKEND) || "";
+const EMBEDDED_TOKEN   = (typeof window !== "undefined" && window.AS_EMBEDDED_TOKEN)   || "";
+const DEFAULT_BACKEND  = EMBEDDED_BACKEND || "https://auto-screener-2va5.onrender.com";
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,7 +18,14 @@ function setStatus(msg, kind) {
 function load() {
   chrome.storage.local.get(["backendUrl", "apiToken"], (data) => {
     $("backend").value = data.backendUrl || DEFAULT_BACKEND;
-    $("token").value = data.apiToken || "";
+    $("token").value   = data.apiToken   || EMBEDDED_TOKEN || "";
+    // Persist the embedded token on first launch so subsequent fetches in
+    // content.js can read it without re-reading the bundled script.
+    if (!data.apiToken && EMBEDDED_TOKEN) {
+      chrome.storage.local.set({ apiToken: EMBEDDED_TOKEN, backendUrl: DEFAULT_BACKEND });
+      setStatus("Token auto-loaded from server.", "ok");
+      setTimeout(() => setStatus(""), 2500);
+    }
   });
 }
 
