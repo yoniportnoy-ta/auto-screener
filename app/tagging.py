@@ -213,6 +213,23 @@ def apply_rating_tag(
             log.warning("apply_rating_tag: cannot resolve person_id for %s", candidate_uid)
             return None
 
+    # Before applying the new tag, drop any *other* AI Screener tags this
+    # candidate carries. Without this, a candidate re-scored from 4→2 would
+    # end up with both "Great (AI Screener)" and "Not a fit (AI Screener)"
+    # tags simultaneously.
+    try:
+        removed = _remove_other_ai_tags(
+            candidate_uid, keep=tag_name,
+            client=owner_client, person_id=person_id,
+        )
+        if removed:
+            log.info("re-score cleanup: removed %d stale AI tag(s) from %s before applying %s",
+                     removed, candidate_uid, tag_name)
+    except Exception as exc:  # noqa: BLE001
+        # Cleanup failure is non-fatal — better to have two tags than to
+        # block the new one from landing.
+        log.warning("apply_rating_tag: stale-tag cleanup failed for %s: %s", candidate_uid, exc)
+
     tag_id = get_or_create_tag_id(owner_client, tag_name, color=rating_tag_color(rating))
 
     try:
@@ -227,8 +244,11 @@ def apply_rating_tag(
     )
     log.info("tagged candidate=%s person_id=%s with %s", candidate_uid, person_id, tag_name)
 
-    # Auto-flag candidates at or above the threshold (visual marker in Comeet UI).
-    if settings.auto_flag_enabled and int(rating) >= int(settings.flag_rating_threshold):
+    # Flag management: candidates at or above flag_rating_threshold get
+    # is_favorite=true; on a re-score that drops below the threshold we ALSO
+    # clear the flag so it actually reflects the current rating.
+    if settings.auto_flag_enabled:
+        should_flag = int(rating) >= int(settings.flag_rating_threshold)
         numeric_id = numeric_candidate_id_from_url(candidate_url)
         if not numeric_id:
             # Fallback: derive from a fresh public-API fetch.
@@ -242,12 +262,60 @@ def apply_rating_tag(
                 log.warning("flag: could not resolve numeric id for %s: %s", candidate_uid, exc)
         if numeric_id:
             try:
-                owner_client.set_candidate_flag(numeric_id, True)
-                log.info("flagged candidate=%s numeric=%s rating=%d", candidate_uid, numeric_id, rating)
+                owner_client.set_candidate_flag(numeric_id, should_flag)
+                log.info("flag candidate=%s numeric=%s rating=%d is_favorite=%s",
+                         candidate_uid, numeric_id, rating, should_flag)
             except ComeetAppError as exc:
                 log.warning("flag failed for %s: %s", candidate_uid, exc)
 
     return tag_name
+
+
+def _remove_other_ai_tags(
+    candidate_uid: str,
+    *,
+    keep: str,
+    client: ComeetAppClient,
+    person_id: int,
+) -> int:
+    """Drop every AI Screener / AI: tag we've previously applied to this candidate
+    EXCEPT `keep`. Used by apply_rating_tag to enforce one-tag-per-candidate.
+
+    Returns the count of tags actually deleted from Comeet.
+    """
+    rating_names = list(RATING_TAG_NAMES.values())
+    with db_session() as session:
+        rows = session.scalars(
+            select(AppliedTag).where(
+                AppliedTag.candidate_uid == candidate_uid,
+                AppliedTag.tag_name != keep,
+                (AppliedTag.tag_name.startswith(AI_TAG_PREFIX))
+                | (AppliedTag.tag_name.in_(rating_names)),
+            )
+        ).all()
+    if not rows:
+        return 0
+
+    removed = 0
+    for row in rows:
+        tag_id = _cached_tag_id(row.tag_name)
+        if tag_id is None:
+            # Skip silently — without the Comeet tag id we can't delete it
+            # anyway, and on the next scan we'll just hit this same branch.
+            continue
+        try:
+            ok = client.remove_tag_from_person(person_id, tag_id)
+        except ComeetAppError as exc:
+            log.warning("_remove_other_ai_tags: %s on %s: %s", row.tag_name, candidate_uid, exc)
+            continue
+        if ok:
+            removed += 1
+            with db_session() as session:
+                session.query(AppliedTag).filter(
+                    AppliedTag.candidate_uid == candidate_uid,
+                    AppliedTag.tag_name == row.tag_name,
+                ).delete()
+    return removed
 
 
 def remove_rating_tags(
