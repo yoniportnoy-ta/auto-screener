@@ -67,11 +67,11 @@ def extension_zip(request: Request) -> StreamingResponse:
             if not path.is_file() or ".DS_Store" in path.name:
                 continue
             rel = str(path.relative_to(_EXTENSION_DIR))
-            if rel == "_token.js":
+            if rel == "embedded-config.js":
                 # Skip the repo placeholder; we'll write the generated one below.
                 continue
             zf.write(path, arcname=rel)
-        zf.writestr("_token.js", token_js_content)
+        zf.writestr("embedded-config.js", token_js_content)
     buf.seek(0)
     version = _extension_version()
     return StreamingResponse(
