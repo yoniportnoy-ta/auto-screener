@@ -819,6 +819,12 @@
   window.addEventListener("popstate", onNav);
   setInterval(onNav, 250);
 
-  // Initial run after the page settles a bit (DOM may still be filling in).
-  setTimeout(refresh, 300);
+  // Initial run after the page settles. Comeet's SPA does its own routing
+  // post-load, so the URL may still be settling when document_idle fires.
+  // We retry a few times at increasing delays — refresh() is cheap when the
+  // URL doesn't match (returns immediately), and a no-op when it does match
+  // and the panel is already current.
+  setTimeout(refresh, 800);
+  setTimeout(refresh, 1800);
+  setTimeout(refresh, 3500);
 })();

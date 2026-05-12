@@ -69,6 +69,46 @@ def list_open_positions() -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/positions/unscreened-counts")
+def positions_unscreened_counts() -> dict[str, int]:
+    """For every open position, return how many candidates are currently
+    sitting in the CV-screening pipeline step.
+
+    "Unscreened" here means "parked in CV screening, waiting on the recruiter
+    to act" — regardless of whether the AI has already scored them or not.
+    That's the recruiter's true workload number.
+
+    Used by the home-page position dropdown to show "Name (N)" so the
+    recruiter can spot at a glance where work is waiting.
+
+    Fans out the Comeet API calls in parallel so we don't pay 20× sequential
+    latency. Returns a {position_uid: int} map.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from ..comeet_client import ComeetClient, candidate_in_allowed_step
+
+    with ComeetClient() as pub:
+        positions = pub.list_open_positions()
+        pos_uids = [str(p["uid"]) for p in positions if p.get("uid")]
+
+    def _count_in_step(pos_uid: str) -> tuple[str, int]:
+        try:
+            with ComeetClient() as client:
+                cands = client.list_candidates_for_position(pos_uid)
+        except Exception as exc:  # noqa: BLE001
+            log.info("unscreened-counts: %s: %s", pos_uid, exc)
+            return pos_uid, -1  # -1 signals "unknown" to the frontend
+        cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
+        return pos_uid, cnt
+
+    counts: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for future in as_completed(pool.submit(_count_in_step, u) for u in pos_uids):
+            pos_uid, cnt = future.result()
+            counts[pos_uid] = cnt
+    return counts
+
+
 # ─── Position dashboard ──────────────────────────────────────────────────────
 @router.get("/position/dashboard")
 def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, Any]:

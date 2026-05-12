@@ -144,27 +144,23 @@
       padding: 0.02rem 0.32rem; font-size: 0.88em;
     }
     /* Position dashboard */
-    .dash-stats {
-      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 0.6rem;
+    /* Compact one-line stats strip — subordinate to the CTAs visually. */
+    .dash-stats-inline {
+      display: flex; flex-wrap: wrap;
+      gap: 0.4rem 1.2rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
     }
-    @media (max-width: 720px) {
-      .dash-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dash-pair b {
+      color: var(--text); font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      margin-right: 0.25rem;
     }
-    .dash-stat {
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 8px; padding: 0.6rem 0.75rem;
-    }
-    .dash-stat-val {
-      font-size: 1.25rem; font-weight: 700; color: var(--text); line-height: 1;
-    }
-    .dash-stat-label {
-      font-size: 0.7rem; color: var(--muted); margin-top: 0.25rem;
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    .dash-stat.good .dash-stat-val { color: var(--ok); }
-    .dash-stat.warn .dash-stat-val { color: var(--warn); }
-    .dash-stat.bad  .dash-stat-val { color: var(--bad); }
+    .dash-pair.good b { color: var(--ok); }
+    .dash-pair.warn b { color: var(--warn); }
+    .dash-pair.bad  b { color: var(--bad); }
     #dashRecentTbl td .pill { font-size: 0.75rem; padding: 0.25rem 0.55rem; }
     #dashRecentTbl td { vertical-align: middle; }
     /* Bulk actions row */
@@ -521,12 +517,12 @@
 
   <!-- Position dashboard — appears once a position is selected -->
   <div class="panel" id="dashPanel" style="display:none">
-    <div class="dash-stats" id="dashStats">
-      <div class="dash-stat"><div class="dash-stat-val" id="dashUnscored">—</div><div class="dash-stat-label">Unscored</div></div>
-      <div class="dash-stat"><div class="dash-stat-val" id="dashRated">—</div><div class="dash-stat-label">Scored</div></div>
-      <div class="dash-stat"><div class="dash-stat-val" id="dashFeedback">—</div><div class="dash-stat-label">With feedback</div></div>
-      <div class="dash-stat"><div class="dash-stat-val" id="dashAgreement">—</div><div class="dash-stat-label">Agreement</div></div>
-      <div class="dash-stat"><div class="dash-stat-val" id="dashLastScan">—</div><div class="dash-stat-label">Last scan</div></div>
+    <div class="dash-stats-inline" id="dashStats">
+      <span class="dash-pair"><b id="dashUnscored">—</b> unscored</span>
+      <span class="dash-pair"><b id="dashRated">—</b> scored</span>
+      <span class="dash-pair"><b id="dashFeedback">—</b> with feedback</span>
+      <span class="dash-pair"><b id="dashAgreement">—</b> agreement</span>
+      <span class="dash-pair"><b id="dashLastScan">—</b> last scan</span>
     </div>
 
     <!-- Primary actions on the position. Hidden until class is set. -->
@@ -620,6 +616,17 @@
     sel.value = locs.includes(prev) ? prev : '';
   }
 
+  // Map of position_uid → unscreened count (candidates currently sitting in
+  // CV-screen step), populated lazily from the backend.
+  let unscreenedByUid = {};
+
+  function positionLabel(p) {
+    const base = p.name || p.uid;
+    const cnt = unscreenedByUid[p.uid];
+    if (cnt == null || cnt < 0) return base;
+    return cnt === 0 ? base : `${base} (${cnt})`;
+  }
+
   function rebuildPositions() {
     const rec = document.getElementById('filterRecruiter').value;
     const loc = document.getElementById('filterLocation').value;
@@ -630,8 +637,23 @@
     const filtered = allPositions
       .filter(p => (!rec || p.leadRecruiter === rec) && (!loc || p.location === loc))
       .sort((a, b) => (a.name + a.uid).localeCompare(b.name + b.uid));
-    filtered.forEach(p => sel.appendChild(new Option(p.name || p.uid, p.uid)));
+    filtered.forEach(p => sel.appendChild(new Option(positionLabel(p), p.uid)));
     sel.value = filtered.find(p => p.uid === prev) ? prev : '';
+  }
+
+  // Lazy-load unscreened counts after the dropdown is built. The endpoint
+  // can take several seconds (one Comeet call per position) so we kick this
+  // off in the background and re-render the dropdown when it returns.
+  async function loadUnscreenedCounts() {
+    try {
+      const counts = await api('/api/positions/unscreened-counts');
+      if (counts && typeof counts === 'object') {
+        unscreenedByUid = counts;
+        rebuildPositions();
+      }
+    } catch (e) {
+      console.warn('unscreened-counts fetch failed:', e);
+    }
   }
 
   function populateRecruiters() {
@@ -687,6 +709,9 @@
       rebuildPositions();
       populateClasses();
       document.dispatchEvent(new Event('as-positions-loaded'));
+      // Kick off the unscreened-count fetch in the background. The dropdown
+      // updates in place once it returns.
+      loadUnscreenedCounts();
       // Deeplink support: the Chrome extension links here as `?position=<uid>`
       // when it hits "no position class selected" so the recruiter lands
       // directly on that position's settings.
@@ -710,19 +735,47 @@
   // ─── Position selection: pre-load saved class + schedule state ──────────
   let scheduleEnabled = false;
 
+  // Cross-handler state used to drop stale fetches + cancel in-flight scan polls
+  // when the recruiter switches positions mid-session.
+  let activePoll = null;
+  function cancelActivePoll() {
+    if (activePoll) { clearInterval(activePoll); activePoll = null; }
+  }
+
   document.getElementById('pos').addEventListener('change', async () => {
     const uid = document.getElementById('pos').value;
     setScheduleUI(false, !uid);
+    // Any scan/rescore polling was tied to the previous position — kill it
+    // so it can't overwrite the dashboard with stale data.
+    cancelActivePoll();
     if (!uid) {
       // No position picked yet — hide class + actions + dashboard.
       document.getElementById('classRow').style.display = 'none';
       document.getElementById('modesRow').style.display = 'none';
       document.getElementById('dashPanel').style.display = 'none';
       document.getElementById('dashPlaceholder').style.display = '';
+      // Reset visible dashboard fields so the next position doesn't briefly
+      // show the previous one's numbers/columns.
+      ['dashUnscored','dashRated','dashFeedback','dashAgreement','dashLastScan'].forEach(id => {
+        document.getElementById(id).textContent = '—';
+      });
+      const grid = document.getElementById('dashBreakdown');
+      if (grid) grid.innerHTML = '';
+      document.getElementById('dashBreakdownWrap').style.display = 'none';
       return;
     }
     document.getElementById('dashPanel').style.display = 'block';
     document.getElementById('dashPlaceholder').style.display = 'none';
+    // Reset the visible numbers + columns immediately so we don't briefly
+    // render the previous position's data before the new one loads.
+    ['dashUnscored','dashRated','dashFeedback','dashAgreement','dashLastScan'].forEach(id => {
+      document.getElementById(id).textContent = '—';
+    });
+    {
+      const grid = document.getElementById('dashBreakdown');
+      if (grid) grid.innerHTML = '';
+      document.getElementById('dashBreakdownWrap').style.display = 'none';
+    }
     // Reveal the class row only if no class is assigned yet. If one IS
     // assigned, hide the picker and skip straight to the action cards.
     let hasClass = false;
@@ -739,7 +792,9 @@
         document.getElementById('recruiterNotes').value = '';
       }
     } catch (err) { /* non-fatal */ }
-    document.getElementById('classRow').style.display = hasClass ? 'none' : 'flex';
+    // Class picker is ALWAYS visible once a position is chosen (so the
+    // recruiter can change it later), not just when there's no assignment.
+    document.getElementById('classRow').style.display = 'flex';
     document.getElementById('modesRow').style.display = hasClass ? 'grid' : 'none';
     document.getElementById('notesRow').style.display = hasClass ? 'block' : 'none';
     loadDashboard(uid);
@@ -782,11 +837,25 @@
     refresh();
   })();
 
-  // When the class picker is set manually, reveal the action cards + notes.
-  document.getElementById('posClass').addEventListener('change', () => {
-    if (document.getElementById('posClass').value) {
+  // Picking (or changing) the class — persist to the backend so it sticks,
+  // then reveal the action cards + notes.
+  document.getElementById('posClass').addEventListener('change', async () => {
+    const classId = document.getElementById('posClass').value;
+    const uid = document.getElementById('pos').value;
+    if (!classId || !uid) return;
+    const level = document.getElementById('posLevel')?.value || '';
+    try {
+      await api('/api/position-class', {
+        position_uid: uid,
+        class_id: classId,
+        level: level,
+      });
       document.getElementById('modesRow').style.display = 'grid';
       document.getElementById('notesRow').style.display = 'block';
+      // Reload the dashboard since the class can change which rubric applies.
+      loadDashboard(uid);
+    } catch (err) {
+      setErr('Failed to save class: ' + (err.message || err));
     }
   });
 
@@ -798,6 +867,9 @@
         api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid) + '&recent_limit=50'),
         api('/api/position/breakdown?position_uid=' + encodeURIComponent(uid)).catch(() => null),
       ]);
+      // Drop the response if the user has moved on to a different position
+      // (or cleared the picker) while this fetch was in flight.
+      if (document.getElementById('pos').value !== uid) return;
       const ratedEl    = document.getElementById('dashRated');
       const fbEl       = document.getElementById('dashFeedback');
       const agEl       = document.getElementById('dashAgreement');
@@ -816,7 +888,7 @@
         else if (unscored > 20) unscoredStat.classList.add('warn');
       }
       const ag = d.stats.agreement;
-      const agStat = agEl.parentElement;
+      const agStat = agEl.closest('.dash-pair');
       agStat.classList.remove('good', 'warn', 'bad');
       if (ag == null) {
         agEl.textContent = '—';
@@ -933,16 +1005,18 @@
     const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
     if (!confirm(`Re-score all ${cnt} already-scored candidates on this position? This will run synchronously and may take a few minutes.`)) return;
     setActionStatus('Re-scoring CV-screening candidates… this may take a while.');
-    const rescorePoll = setInterval(() => { loadDashboard(uid); }, 3000);
+    cancelActivePoll();
+    activePoll = setInterval(() => { loadDashboard(uid); }, 3000);
     try {
       const r = await api('/api/position/rescore-all', { position_uid: uid });
+      if (document.getElementById('pos').value !== uid) return;  // user moved on
       const skipped = r.skippedNotInStep ? ` (${r.skippedNotInStep} skipped — past CV screen)` : '';
       setActionStatus(`Re-scored ${r.rescored}/${r.eligibleInStep}${skipped} · errors: ${r.errorCount}`, 'ok');
     } catch (err) {
       setActionStatus(err.message || String(err), 'err');
     } finally {
-      clearInterval(rescorePoll);
-      loadDashboard(uid);
+      cancelActivePoll();
+      if (document.getElementById('pos').value === uid) loadDashboard(uid);
     }
   });
 
@@ -1078,12 +1152,12 @@
     const original = btn.textContent;
     btn.textContent = 'Scanning…';
     document.getElementById('meta').textContent = 'Scoring candidates…';
-    // Poll the dashboard endpoint while the scan runs so the breakdown
-    // columns + unscored count update live, instead of waiting for the
-    // whole scan to return.
-    const pollHandle = setInterval(() => { loadDashboard(uid); }, 3000);
+    // Poll while the scan runs so the breakdown fills in live.
+    cancelActivePoll();
+    activePoll = setInterval(() => { loadDashboard(uid); }, 3000);
     try {
       const r = await api('/api/scan/now', { position_uid: uid });
+      if (document.getElementById('pos').value !== uid) return;
       const tagsLine = r.tagsApplied
         ? ` · ${r.tagsApplied} tag${r.tagsApplied === 1 ? '' : 's'} applied`
         : '';
@@ -1100,10 +1174,8 @@
       setErr(err.message);
       document.getElementById('meta').textContent = '';
     } finally {
-      clearInterval(pollHandle);
-      // Final refresh so we don't miss the last few candidates that landed
-      // in the last polling gap.
-      loadDashboard(uid);
+      cancelActivePoll();
+      if (document.getElementById('pos').value === uid) loadDashboard(uid);
       btn.disabled = false;
       btn.textContent = original;
     }
