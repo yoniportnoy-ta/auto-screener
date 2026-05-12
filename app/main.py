@@ -54,10 +54,22 @@ def _prewarm_unscreened_counts() -> None:
     """Fire the unscreened-counts fetch on startup so the cache is hot
     before the first recruiter loads the home page. ~30-90s; runs in a
     daemon thread so it never blocks app boot or request handling.
+
+    Set SKIP_PREWARM=1 to disable. The prewarm fan-out (12 concurrent
+    curl_cffi sessions, now 4) was OOM-killing the 512 MB starter
+    instance when combined with --workers 2. Even with workers=1, we
+    now delay the fetch by 20s so the app's boot/migration/healthcheck
+    phase finishes before the memory-heavy Comeet calls start.
     """
+    import os
     import threading
 
+    if os.environ.get("SKIP_PREWARM") == "1":
+        log.info("prewarm: disabled via SKIP_PREWARM=1")
+        return
+
     def _runner():
+        time.sleep(20)
         try:
             # Import lazily so a routing import error doesn't kill app boot.
             from .routes.api import compute_unscreened_counts

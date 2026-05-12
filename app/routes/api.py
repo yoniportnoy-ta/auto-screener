@@ -161,7 +161,11 @@ def compute_unscreened_counts(fresh: bool = False) -> dict[str, int]:
         cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
         return pos_uid, cnt
 
-    with ThreadPoolExecutor(max_workers=12) as pool:
+    # Keep this small (4, not 12). Each worker holds a curl_cffi session +
+    # potentially a 2captcha solver, so 12 in parallel was OOM-killing the
+    # 512 MB starter instance during prewarm. 4 still finishes ~30 positions
+    # in well under a minute.
+    with ThreadPoolExecutor(max_workers=4) as pool:
         for future in as_completed(pool.submit(_count_in_step, u) for u in missing):
             pos_uid, cnt = future.result()
             counts[pos_uid] = cnt
