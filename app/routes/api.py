@@ -98,9 +98,28 @@ def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, A
         total_scored = int(ses.scalar(
             select(func.count()).select_from(DebugScoring).where(DebugScoring.position_uid == pos_uid)
         ) or 0)
+        scored_uids = set(ses.scalars(
+            select(DebugScoring.candidate_uid).where(DebugScoring.position_uid == pos_uid).distinct()
+        ).all()) - {None, ""}
         last_scan_at = ses.scalar(
             select(func.max(DebugScoring.timestamp)).where(DebugScoring.position_uid == pos_uid)
         )
+
+    # Count candidates currently in CV-screen step that haven't been scored yet.
+    # One Comeet API call; filter via the same predicate the scan uses.
+    unscored_in_step: int | None = None
+    in_step_total: int | None = None
+    try:
+        from ..comeet_client import candidate_in_allowed_step
+        with ComeetClient() as client:
+            cands = client.list_candidates_for_position(pos_uid)
+        in_step = [c for c in cands if c.get("uid") and candidate_in_allowed_step(c)]
+        in_step_total = len(in_step)
+        unscored_in_step = sum(1 for c in in_step if str(c["uid"]) not in scored_uids)
+    except Exception as exc:  # noqa: BLE001
+        log.info("dashboard: unscored-count fetch failed: %s", exc)
+
+    with db_session() as ses:
 
         # Agreement = count(rows where recruiter_rating == ai_rating) / count(rows where both present)
         feedback_rows = ses.scalars(
@@ -139,6 +158,8 @@ def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, A
             "feedbackCount": feedback_count,
             "agreement": agreement,
             "lastScanAt": last_scan_at.isoformat() if last_scan_at else None,
+            "unscoredInStep": unscored_in_step,
+            "inStepTotal": in_step_total,
         },
         "recent": recent,
     }

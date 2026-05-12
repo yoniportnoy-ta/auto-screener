@@ -145,8 +145,11 @@
     }
     /* Position dashboard */
     .dash-stats {
-      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 0.6rem;
+    }
+    @media (max-width: 720px) {
+      .dash-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .dash-stat {
       background: var(--bg); border: 1px solid var(--border);
@@ -364,9 +367,11 @@
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 0.85rem 1rem;
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
       gap: 0.6rem;
+      align-items: start;
+      min-height: 130px;
       transition: border-color 0.15s, background 0.15s;
     }
     .mode-card:hover { border-color: rgba(var(--accent-rgb), 0.55); }
@@ -536,6 +541,7 @@
   <!-- Position dashboard — appears once a position is selected -->
   <div class="panel" id="dashPanel" style="display:none">
     <div class="dash-stats" id="dashStats">
+      <div class="dash-stat"><div class="dash-stat-val" id="dashUnscored">—</div><div class="dash-stat-label">Unscored</div></div>
       <div class="dash-stat"><div class="dash-stat-val" id="dashRated">—</div><div class="dash-stat-label">Scored</div></div>
       <div class="dash-stat"><div class="dash-stat-val" id="dashFeedback">—</div><div class="dash-stat-label">With feedback</div></div>
       <div class="dash-stat"><div class="dash-stat-val" id="dashAgreement">—</div><div class="dash-stat-label">Agreement</div></div>
@@ -791,12 +797,23 @@
         api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid) + '&recent_limit=50'),
         api('/api/position/breakdown?position_uid=' + encodeURIComponent(uid)).catch(() => null),
       ]);
-      const ratedEl = document.getElementById('dashRated');
-      const fbEl    = document.getElementById('dashFeedback');
-      const agEl    = document.getElementById('dashAgreement');
-      const lastEl  = document.getElementById('dashLastScan');
+      const ratedEl    = document.getElementById('dashRated');
+      const fbEl       = document.getElementById('dashFeedback');
+      const agEl       = document.getElementById('dashAgreement');
+      const lastEl     = document.getElementById('dashLastScan');
+      const unscoredEl = document.getElementById('dashUnscored');
       ratedEl.textContent = (d.stats.totalScored || 0).toString();
       fbEl.textContent    = (d.stats.feedbackCount || 0).toString();
+      const unscored = d.stats.unscoredInStep;
+      const unscoredStat = unscoredEl.parentElement;
+      unscoredStat.classList.remove('good', 'warn', 'bad');
+      if (unscored == null) {
+        unscoredEl.textContent = '—';
+      } else {
+        unscoredEl.textContent = String(unscored);
+        if (unscored === 0) unscoredStat.classList.add('good');
+        else if (unscored > 20) unscoredStat.classList.add('warn');
+      }
       const ag = d.stats.agreement;
       const agStat = agEl.parentElement;
       agStat.classList.remove('good', 'warn', 'bad');
@@ -915,13 +932,16 @@
     const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
     if (!confirm(`Re-score all ${cnt} already-scored candidates on this position? This will run synchronously and may take a few minutes.`)) return;
     setActionStatus('Re-scoring CV-screening candidates… this may take a while.');
+    const rescorePoll = setInterval(() => { loadDashboard(uid); }, 3000);
     try {
       const r = await api('/api/position/rescore-all', { position_uid: uid });
       const skipped = r.skippedNotInStep ? ` (${r.skippedNotInStep} skipped — past CV screen)` : '';
       setActionStatus(`Re-scored ${r.rescored}/${r.eligibleInStep}${skipped} · errors: ${r.errorCount}`, 'ok');
-      loadDashboard(uid);
     } catch (err) {
       setActionStatus(err.message || String(err), 'err');
+    } finally {
+      clearInterval(rescorePoll);
+      loadDashboard(uid);
     }
   });
 
@@ -1045,7 +1065,8 @@
   document.getElementById('filterLocation').addEventListener('change', rebuildPositions);
 
   // ─── Scan ───────────────────────────────────────────────────────────────
-  // Scan now: synchronous one-shot autoscan for this position (uncapped).
+  // Scan now: synchronous on the wire, but we poll the dashboard every 3s
+  // while we wait so the breakdown columns fill in live.
   document.getElementById('btnScanNow').addEventListener('click', async () => {
     const uid = document.getElementById('pos').value;
     if (!uid) return setErr('Choose a position.');
@@ -1054,8 +1075,12 @@
     const btn = document.getElementById('btnScanNow');
     btn.disabled = true;
     const original = btn.textContent;
-    btn.textContent = 'Scanning… (this can take several minutes)';
-    document.getElementById('meta').textContent = 'Running one-shot scan…';
+    btn.textContent = 'Scanning…';
+    document.getElementById('meta').textContent = 'Scoring candidates…';
+    // Poll the dashboard endpoint while the scan runs so the breakdown
+    // columns + unscored count update live, instead of waiting for the
+    // whole scan to return.
+    const pollHandle = setInterval(() => { loadDashboard(uid); }, 3000);
     try {
       const r = await api('/api/scan/now', { position_uid: uid });
       const tagsLine = r.tagsApplied
@@ -1074,6 +1099,10 @@
       setErr(err.message);
       document.getElementById('meta').textContent = '';
     } finally {
+      clearInterval(pollHandle);
+      // Final refresh so we don't miss the last few candidates that landed
+      // in the last polling gap.
+      loadDashboard(uid);
       btn.disabled = false;
       btn.textContent = original;
     }
