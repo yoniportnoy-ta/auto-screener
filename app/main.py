@@ -51,15 +51,22 @@ def _run_pending_migrations() -> None:
 
 
 def _prewarm_unscreened_counts() -> None:
-    """Fire the unscreened-counts fetch on startup so the cache is hot
-    before the first recruiter loads the home page. ~30-90s; runs in a
-    daemon thread so it never blocks app boot or request handling.
+    """Keep the unscreened-counts cache warm so position dropdowns always
+    show "(N)" badges without making the recruiter wait. Runs forever in a
+    daemon thread, refreshing one position at a time on a slow cadence.
 
-    Set SKIP_PREWARM=1 to disable. The prewarm fan-out (12 concurrent
-    curl_cffi sessions, now 4) was OOM-killing the 512 MB starter
-    instance when combined with --workers 2. Even with workers=1, we
-    now delay the fetch by 20s so the app's boot/migration/healthcheck
-    phase finishes before the memory-heavy Comeet calls start.
+    History — what was tried and why this shape:
+      - v1: prewarm-once at startup with ThreadPoolExecutor(12). OOM-killed
+        the 512 MB starter instance.
+      - v2: ThreadPoolExecutor(4) + 20s delay. Container still got
+        health-check-restarted around the 5 min mark — the burst of parallel
+        Comeet calls (each constructing httpx clients + parsing big JSON
+        responses) starved /healthz long enough for Render to give up.
+      - v3 (this): sequential, one position every few seconds, with a long
+        initial wait so the app + alembic + first health checks finish first.
+        No bursts, no parallelism, no OOM, /healthz stays responsive.
+
+    Set SKIP_PREWARM=1 to disable entirely (useful for local dev).
     """
     import os
     import threading
@@ -68,18 +75,49 @@ def _prewarm_unscreened_counts() -> None:
         log.info("prewarm: disabled via SKIP_PREWARM=1")
         return
 
+    # Tunables. Conservative defaults; override via env if needed.
+    initial_delay = int(os.environ.get("PREWARM_INITIAL_DELAY_SECONDS", "60"))
+    per_position_gap = float(os.environ.get("PREWARM_PER_POSITION_GAP_SECONDS", "3"))
+    refresh_loop_gap = int(os.environ.get("PREWARM_REFRESH_LOOP_GAP_SECONDS", "3000"))  # 50 min
+
     def _runner():
-        time.sleep(20)
-        try:
-            # Import lazily so a routing import error doesn't kill app boot.
-            from .routes.api import compute_unscreened_counts
-            t0 = time.monotonic()
-            counts = compute_unscreened_counts(fresh=True)
-            took = int((time.monotonic() - t0) * 1000)
-            log.info("prewarm: unscreened-counts ready (%d positions, %dms)",
-                     len(counts), took)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("prewarm: unscreened-counts failed: %s", exc)
+        # Let the app fully boot first. /healthz needs to be answering 200s
+        # before we start any Comeet work, otherwise Render restarts us.
+        time.sleep(initial_delay)
+        while True:
+            try:
+                # Lazy import so a routing import error doesn't crash boot.
+                from .comeet_client import ComeetClient, candidate_in_allowed_step
+                from .routes.api import _UNSCREENED_CACHE
+                t0 = time.monotonic()
+                with ComeetClient() as pub:
+                    positions = pub.list_open_positions()
+                    pos_uids = [str(p["uid"]) for p in positions if p.get("uid")]
+                ok = 0
+                fail = 0
+                for u in pos_uids:
+                    try:
+                        with ComeetClient() as client:
+                            cands = client.list_candidates_for_position(u)
+                        cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
+                        _UNSCREENED_CACHE[u] = (cnt, time.time())
+                        ok += 1
+                    except Exception as exc:  # noqa: BLE001
+                        log.info("prewarm: %s: %s", u, exc)
+                        fail += 1
+                    # Stagger so we don't ever burst Comeet or steal the GIL
+                    # from /healthz responses for too long.
+                    time.sleep(per_position_gap)
+                took = int(time.monotonic() - t0)
+                log.info(
+                    "prewarm: refreshed cache (%d ok, %d failed, %ds)",
+                    ok, fail, took,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("prewarm: refresh loop iteration failed: %s", exc)
+            # Sleep until next refresh. The cache TTL is 60 min; we re-warm
+            # at 50 min so a recruiter never sees a stale-and-expired entry.
+            time.sleep(refresh_loop_gap)
 
     threading.Thread(target=_runner, name="prewarm-unscreened", daemon=True).start()
 

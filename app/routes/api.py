@@ -111,11 +111,13 @@ def position_in_step_counts(position_uid: str) -> dict[str, Any]:
 
 
 # Module-level cache for /positions/unscreened-counts.
-# The Comeet fan-out is slow (~30-90s), so we keep results in memory for 5 min.
-# Per-instance only — Render runs a couple of workers, each warms its own
-# cache on first hit. Good enough.
+# The Comeet fan-out is slow (~1-2 min cold), so we keep results in memory for
+# an hour. A background warmer (see app/main.py) refreshes one position at a
+# time every 50 min so the cache effectively never goes cold during a single
+# session — meaning the recruiter only ever pays the cold-fetch cost on the
+# very first page load after a container restart.
 _UNSCREENED_CACHE: dict[str, tuple[int, float]] = {}
-_UNSCREENED_CACHE_TTL_SECONDS = 300
+_UNSCREENED_CACHE_TTL_SECONDS = 3600
 
 
 def compute_unscreened_counts(fresh: bool = False) -> dict[str, int]:
