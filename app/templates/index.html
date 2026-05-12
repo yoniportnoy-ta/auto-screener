@@ -623,8 +623,12 @@
   function positionLabel(p) {
     const base = p.name || p.uid;
     const cnt = unscreenedByUid[p.uid];
+    // Unknown (counts call hasn't returned yet): show nothing extra.
     if (cnt == null || cnt < 0) return base;
-    return cnt === 0 ? base : `${base} (${cnt})`;
+    // Always show the count — even (0) — so the recruiter can tell at a
+    // glance whether the unscreened-CV pipeline is empty for that role
+    // versus "data hasn't loaded yet" (which shows no parens at all).
+    return `${base} (${cnt})`;
   }
 
   function rebuildPositions() {
