@@ -500,25 +500,6 @@
       <span id="newClassStatus" class="small" style="color:var(--muted)"></span>
     </div>
 
-    <!-- Two actions on the selected position. Hidden until class is set. -->
-    <div class="modes" id="modesRow" style="display:none; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; margin-top:0.75rem">
-      <div class="mode-card" id="modeScanNow">
-        <div class="mode-title">
-          Score all unscored
-          <span class="info-tip" tabindex="0"
-                title="Score every eligible candidate on this position now and tag them in Comeet. Idempotent — won't re-score anyone already scored. Use the Chrome extension to rate them as you review each one.">?</span>
-        </div>
-        <button class="primary mode-cta" id="btnScanNow">Run</button>
-      </div>
-      <div class="mode-card" id="modeSchedule">
-        <div class="mode-title">
-          Auto-screen new candidates
-          <span class="info-tip" tabindex="0"
-                title="Every hour, any newly-applied candidate on this position gets scored and tagged automatically — no manual action required.">?</span>
-        </div>
-        <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
-      </div>
-    </div>
     <div class="row" style="margin-top:0.75rem">
       <button class="ghost" id="clearFilters" style="flex:0 0 auto">Clear filters</button>
     </div>
@@ -548,9 +529,29 @@
       <div class="dash-stat"><div class="dash-stat-val" id="dashLastScan">—</div><div class="dash-stat-label">Last scan</div></div>
     </div>
 
-    <!-- Bulk actions for this position -->
-    <div class="dash-actions">
-      <button type="button" class="primary" id="btnRescoreAll">Re-score all candidates</button>
+    <!-- Primary actions on the position. Hidden until class is set. -->
+    <div class="modes" id="modesRow" style="display:none; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; margin-top:0.85rem">
+      <div class="mode-card" id="modeScanNow">
+        <div class="mode-title">
+          Score all unscored
+          <span class="info-tip" tabindex="0"
+                title="Score every eligible candidate on this position now and tag them in Comeet. Idempotent — won't re-score anyone already scored. Use the Chrome extension to rate them as you review each one.">?</span>
+        </div>
+        <button class="primary mode-cta" id="btnScanNow">Run</button>
+      </div>
+      <div class="mode-card" id="modeSchedule">
+        <div class="mode-title">
+          Auto-screen new candidates
+          <span class="info-tip" tabindex="0"
+                title="Every hour, any newly-applied candidate on this position gets scored and tagged automatically — no manual action required.">?</span>
+        </div>
+        <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
+      </div>
+    </div>
+
+    <!-- Bulk maintenance actions for this position -->
+    <div class="dash-actions" style="margin-top:0.75rem">
+      <button type="button" class="ghost" id="btnRescoreAll">Re-score all candidates</button>
       <button type="button" class="ghost danger" id="btnClearScores">Clear all AI scores</button>
       <span id="dashActionStatus" class="small" style="color:var(--muted);"></span>
     </div>
