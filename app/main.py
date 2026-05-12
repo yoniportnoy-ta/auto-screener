@@ -78,46 +78,45 @@ def _prewarm_unscreened_counts() -> None:
     # Tunables. Conservative defaults; override via env if needed.
     initial_delay = int(os.environ.get("PREWARM_INITIAL_DELAY_SECONDS", "60"))
     per_position_gap = float(os.environ.get("PREWARM_PER_POSITION_GAP_SECONDS", "3"))
-    refresh_loop_gap = int(os.environ.get("PREWARM_REFRESH_LOOP_GAP_SECONDS", "3000"))  # 50 min
 
     def _runner():
         # Let the app fully boot first. /healthz needs to be answering 200s
         # before we start any Comeet work, otherwise Render restarts us.
         time.sleep(initial_delay)
-        while True:
-            try:
-                # Lazy import so a routing import error doesn't crash boot.
-                from .comeet_client import ComeetClient, candidate_in_allowed_step
-                from .routes.api import _UNSCREENED_CACHE
-                t0 = time.monotonic()
-                with ComeetClient() as pub:
-                    positions = pub.list_open_positions()
-                    pos_uids = [str(p["uid"]) for p in positions if p.get("uid")]
-                ok = 0
-                fail = 0
-                for u in pos_uids:
-                    try:
-                        with ComeetClient() as client:
-                            cands = client.list_candidates_for_position(u)
-                        cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
-                        _UNSCREENED_CACHE[u] = (cnt, time.time())
-                        ok += 1
-                    except Exception as exc:  # noqa: BLE001
-                        log.info("prewarm: %s: %s", u, exc)
-                        fail += 1
-                    # Stagger so we don't ever burst Comeet or steal the GIL
-                    # from /healthz responses for too long.
-                    time.sleep(per_position_gap)
-                took = int(time.monotonic() - t0)
-                log.info(
-                    "prewarm: refreshed cache (%d ok, %d failed, %ds)",
-                    ok, fail, took,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("prewarm: refresh loop iteration failed: %s", exc)
-            # Sleep until next refresh. The cache TTL is 60 min; we re-warm
-            # at 50 min so a recruiter never sees a stale-and-expired entry.
-            time.sleep(refresh_loop_gap)
+        # One-shot prewarm. We used to loop here every 50 min to keep the
+        # cache always warm, but the second iteration consistently killed
+        # the container (likely httpx pool / fd leak between iterations).
+        # One-shot is reliable; users after the 60-min TTL pay one slow
+        # fetch (~90s) but the container stays up indefinitely.
+        try:
+            from .comeet_client import ComeetClient, candidate_in_allowed_step
+            from .routes.api import _UNSCREENED_CACHE
+            t0 = time.monotonic()
+            with ComeetClient() as pub:
+                positions = pub.list_open_positions()
+                pos_uids = [str(p["uid"]) for p in positions if p.get("uid")]
+            ok = 0
+            fail = 0
+            for u in pos_uids:
+                try:
+                    with ComeetClient() as client:
+                        cands = client.list_candidates_for_position(u)
+                    cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
+                    _UNSCREENED_CACHE[u] = (cnt, time.time())
+                    ok += 1
+                except Exception as exc:  # noqa: BLE001
+                    log.info("prewarm: %s: %s", u, exc)
+                    fail += 1
+                # Stagger so we don't ever burst Comeet or steal the GIL
+                # from /healthz responses for too long.
+                time.sleep(per_position_gap)
+            took = int(time.monotonic() - t0)
+            log.info(
+                "prewarm: warmed cache (%d ok, %d failed, %ds)",
+                ok, fail, took,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prewarm: failed: %s", exc)
 
     threading.Thread(target=_runner, name="prewarm-unscreened", daemon=True).start()
 
