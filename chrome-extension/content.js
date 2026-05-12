@@ -824,7 +824,10 @@
   // We retry a few times at increasing delays — refresh() is cheap when the
   // URL doesn't match (returns immediately), and a no-op when it does match
   // and the panel is already current.
-  setTimeout(refresh, 800);
-  setTimeout(refresh, 1800);
-  setTimeout(refresh, 3500);
+  refresh();
+  setTimeout(refresh, 400);
+  setTimeout(refresh, 1200);
+  setTimeout(refresh, 2500);
+  setTimeout(refresh, 5000);
+  setTimeout(refresh, 8000);
 })();

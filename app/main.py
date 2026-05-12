@@ -50,6 +50,28 @@ def _run_pending_migrations() -> None:
         log.exception("alembic upgrade failed: %s", exc)
 
 
+def _prewarm_unscreened_counts() -> None:
+    """Fire the unscreened-counts fetch on startup so the cache is hot
+    before the first recruiter loads the home page. ~30-90s; runs in a
+    daemon thread so it never blocks app boot or request handling.
+    """
+    import threading
+
+    def _runner():
+        try:
+            # Import lazily so a routing import error doesn't kill app boot.
+            from .routes.api import compute_unscreened_counts
+            t0 = time.monotonic()
+            counts = compute_unscreened_counts(fresh=True)
+            took = int((time.monotonic() - t0) * 1000)
+            log.info("prewarm: unscreened-counts ready (%d positions, %dms)",
+                     len(counts), took)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prewarm: unscreened-counts failed: %s", exc)
+
+    threading.Thread(target=_runner, name="prewarm-unscreened", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -58,6 +80,7 @@ async def lifespan(app: FastAPI):
         settings.app_env, settings.log_level, settings.scoring_use_v2, settings.auto_tag_enabled,
     )
     _run_pending_migrations()
+    _prewarm_unscreened_counts()
     yield
     log.info("shutting down")
 

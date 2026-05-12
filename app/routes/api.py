@@ -69,27 +69,87 @@ def list_open_positions() -> list[dict[str, Any]]:
     ]
 
 
-@router.get("/positions/unscreened-counts")
-def positions_unscreened_counts() -> dict[str, int]:
-    """For every open position, return how many candidates are currently
-    sitting in the CV-screening pipeline step.
+@router.get("/position/in-step-counts")
+def position_in_step_counts(position_uid: str) -> dict[str, Any]:
+    """Slow stat: candidates currently sitting in CV-screen step for this
+    position (total + how many of those haven't been AI-scored yet).
 
-    "Unscreened" here means "parked in CV screening, waiting on the recruiter
-    to act" — regardless of whether the AI has already scored them or not.
-    That's the recruiter's true workload number.
+    Split out from /position/dashboard so the dashboard returns instantly
+    on DB-only data; this Comeet-dependent call streams in afterward.
+    """
+    from sqlalchemy import select
+    from ..comeet_client import ComeetClient, candidate_in_allowed_step
+    from ..db import db_session
+    from ..models import DebugScoring
 
-    Used by the home-page position dropdown to show "Name (N)" so the
-    recruiter can spot at a glance where work is waiting.
+    pos_uid = (position_uid or "").strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
 
-    Fans out the Comeet API calls in parallel so we don't pay 20× sequential
-    latency. Returns a {position_uid: int} map.
+    with db_session() as ses:
+        scored_uids = set(ses.scalars(
+            select(DebugScoring.candidate_uid).where(DebugScoring.position_uid == pos_uid).distinct()
+        ).all()) - {None, ""}
+
+    try:
+        with ComeetClient() as client:
+            cands = client.list_candidates_for_position(pos_uid)
+    except Exception as exc:  # noqa: BLE001
+        log.info("in-step-counts: %s", exc)
+        return {"inStepTotal": None, "unscoredInStep": None}
+
+    in_step = [c for c in cands if c.get("uid") and candidate_in_allowed_step(c)]
+    return {
+        "inStepTotal": len(in_step),
+        "unscoredInStep": sum(1 for c in in_step if str(c["uid"]) not in scored_uids),
+    }
+
+
+# Module-level cache for /positions/unscreened-counts.
+# The Comeet fan-out is slow (~30-90s), so we keep results in memory for 5 min.
+# Per-instance only — Render runs a couple of workers, each warms its own
+# cache on first hit. Good enough.
+_UNSCREENED_CACHE: dict[str, tuple[int, float]] = {}
+_UNSCREENED_CACHE_TTL_SECONDS = 300
+
+
+def compute_unscreened_counts(fresh: bool = False) -> dict[str, int]:
+    """Shared implementation for /positions/unscreened-counts. Also used by
+    the background warmer in app.main lifespan so the cache is populated
+    before the first recruiter request.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
     from ..comeet_client import ComeetClient, candidate_in_allowed_step
 
     with ComeetClient() as pub:
         positions = pub.list_open_positions()
         pos_uids = [str(p["uid"]) for p in positions if p.get("uid")]
+
+    now = _time.time()
+    counts: dict[str, int] = {}
+    missing: list[str] = []
+
+    for u in pos_uids:
+        if not fresh:
+            cached = _UNSCREENED_CACHE.get(u)
+            if cached and (now - cached[1]) < _UNSCREENED_CACHE_TTL_SECONDS:
+                counts[u] = cached[0]
+                continue
+        missing.append(u)
+
+    log.info(
+        "unscreened-counts: %d cached, %d to fetch (fresh=%s)",
+        len(counts), len(missing), fresh,
+    )
+
+    if not missing:
+        return counts
 
     def _count_in_step(pos_uid: str) -> tuple[str, int]:
         try:
@@ -97,16 +157,27 @@ def positions_unscreened_counts() -> dict[str, int]:
                 cands = client.list_candidates_for_position(pos_uid)
         except Exception as exc:  # noqa: BLE001
             log.info("unscreened-counts: %s: %s", pos_uid, exc)
-            return pos_uid, -1  # -1 signals "unknown" to the frontend
+            return pos_uid, -1
         cnt = sum(1 for c in cands if c.get("uid") and candidate_in_allowed_step(c))
         return pos_uid, cnt
 
-    counts: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for future in as_completed(pool.submit(_count_in_step, u) for u in pos_uids):
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        for future in as_completed(pool.submit(_count_in_step, u) for u in missing):
             pos_uid, cnt = future.result()
             counts[pos_uid] = cnt
+            if cnt >= 0:
+                _UNSCREENED_CACHE[pos_uid] = (cnt, now)
     return counts
+
+
+@router.get("/positions/unscreened-counts")
+def positions_unscreened_counts(fresh: bool = False) -> dict[str, int]:
+    """For every open position, return how many candidates are currently
+    sitting in the CV-screening pipeline step (in-memory cached, 5 min TTL).
+
+    Pass ?fresh=1 to force a re-fetch (bypasses cache).
+    """
+    return compute_unscreened_counts(fresh=fresh)
 
 
 # ─── Position dashboard ──────────────────────────────────────────────────────
@@ -134,30 +205,19 @@ def position_dashboard(position_uid: str, recent_limit: int = 20) -> dict[str, A
     cls = get_position_class(pos_uid)
 
     with db_session() as ses:
-        # Stats
+        # Stats — DB only, fast.
         total_scored = int(ses.scalar(
             select(func.count()).select_from(DebugScoring).where(DebugScoring.position_uid == pos_uid)
         ) or 0)
-        scored_uids = set(ses.scalars(
-            select(DebugScoring.candidate_uid).where(DebugScoring.position_uid == pos_uid).distinct()
-        ).all()) - {None, ""}
         last_scan_at = ses.scalar(
             select(func.max(DebugScoring.timestamp)).where(DebugScoring.position_uid == pos_uid)
         )
 
-    # Count candidates currently in CV-screen step that haven't been scored yet.
-    # One Comeet API call; filter via the same predicate the scan uses.
+    # Unscored-in-step requires a Comeet call (slow). Split out into a
+    # separate endpoint (/position/in-step-counts) so the dashboard stays
+    # fast and the recruiter sees the basic stats immediately.
     unscored_in_step: int | None = None
     in_step_total: int | None = None
-    try:
-        from ..comeet_client import candidate_in_allowed_step
-        with ComeetClient() as client:
-            cands = client.list_candidates_for_position(pos_uid)
-        in_step = [c for c in cands if c.get("uid") and candidate_in_allowed_step(c)]
-        in_step_total = len(in_step)
-        unscored_in_step = sum(1 for c in in_step if str(c["uid"]) not in scored_uids)
-    except Exception as exc:  # noqa: BLE001
-        log.info("dashboard: unscored-count fetch failed: %s", exc)
 
     with db_session() as ses:
 

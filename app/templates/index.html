@@ -709,9 +709,6 @@
       rebuildPositions();
       populateClasses();
       document.dispatchEvent(new Event('as-positions-loaded'));
-      // Kick off the unscreened-count fetch in the background. The dropdown
-      // updates in place once it returns.
-      loadUnscreenedCounts();
       // Deeplink support: the Chrome extension links here as `?position=<uid>`
       // when it hits "no position class selected" so the recruiter lands
       // directly on that position's settings.
@@ -877,16 +874,9 @@
       const unscoredEl = document.getElementById('dashUnscored');
       ratedEl.textContent = (d.stats.totalScored || 0).toString();
       fbEl.textContent    = (d.stats.feedbackCount || 0).toString();
-      const unscored = d.stats.unscoredInStep;
-      const unscoredStat = unscoredEl.parentElement;
-      unscoredStat.classList.remove('good', 'warn', 'bad');
-      if (unscored == null) {
-        unscoredEl.textContent = '—';
-      } else {
-        unscoredEl.textContent = String(unscored);
-        if (unscored === 0) unscoredStat.classList.add('good');
-        else if (unscored > 20) unscoredStat.classList.add('warn');
-      }
+      // Unscored-in-step is loaded lazily via /position/in-step-counts so
+      // the dashboard doesn't block on a slow Comeet call.
+      unscoredEl.textContent = '…';
       const ag = d.stats.agreement;
       const agStat = agEl.closest('.dash-pair');
       agStat.classList.remove('good', 'warn', 'bad');
@@ -905,6 +895,25 @@
 
       // 5-column AI-score breakdown
       renderBreakdown(brk);
+
+      // Lazy-load the Comeet-dependent unscored-in-step count. We keep this
+      // separate from the main dashboard fetch so the basic stats render
+      // instantly even when Comeet's API is slow.
+      api('/api/position/in-step-counts?position_uid=' + encodeURIComponent(uid))
+        .then(s => {
+          if (document.getElementById('pos').value !== uid) return;
+          const u = s.unscoredInStep;
+          const stat = unscoredEl.parentElement;
+          stat.classList.remove('good', 'warn', 'bad');
+          if (u == null) {
+            unscoredEl.textContent = '—';
+          } else {
+            unscoredEl.textContent = String(u);
+            if (u === 0) stat.classList.add('good');
+            else if (u > 20) stat.classList.add('warn');
+          }
+        })
+        .catch(() => { unscoredEl.textContent = '—'; });
 
       // Recent rows (now in a collapsed <details>)
       const tbody = document.getElementById('dashRecentBody');
