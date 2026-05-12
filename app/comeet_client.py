@@ -326,19 +326,94 @@ def position_lead_recruiter(position: dict[str, Any]) -> str:
 
 
 _COUNTRY_EXPANSIONS = {
-    "USA": "United States",
+    # Israel — country codes and common cities
+    "IL": "Israel",
+    "ISR": "Israel",
+    "ISRAEL": "Israel",
+    "TELAVIV": "Israel",
+    "TELAVIVYAFO": "Israel",
+    "TLV": "Israel",
+    "JERUSALEM": "Israel",
+    "HAIFA": "Israel",
+    "HERZLIYA": "Israel",
+    "HERTZLIYA": "Israel",
+    "RAMATGAN": "Israel",
+    "BEERSHEVA": "Israel",
+    "BEERSHEBA": "Israel",
+    "REHOVOT": "Israel",
+    "NETANYA": "Israel",
+    "RAANANA": "Israel",
+    "PETACHTIKVA": "Israel",
+    "RISHONLEZION": "Israel",
+    # United States
     "US": "United States",
+    "USA": "United States",
+    "UNITEDSTATES": "United States",
+    "AMERICA": "United States",
+    "NEWYORK": "United States",
+    "NYC": "United States",
+    "NEWYORKNY": "United States",
+    "SANFRANCISCO": "United States",
+    "SF": "United States",
+    "LOSANGELES": "United States",
+    "LA": "United States",
+    "AUSTIN": "United States",
+    "BOSTON": "United States",
+    "CHICAGO": "United States",
+    "SEATTLE": "United States",
+    "MIAMI": "United States",
+    "REMOTEUS": "United States",
+    # Canada
+    "CA": "Canada",       # note: this also matches California, but Comeet usually
+    "CAN": "Canada",      #       writes "California" in full so we accept the risk
+    "CANADA": "Canada",
+    "TORONTO": "Canada",
+    "MONTREAL": "Canada",
+    "VANCOUVER": "Canada",
+    "OTTAWA": "Canada",
+    "CALGARY": "Canada",
+    # United Kingdom
     "UK": "United Kingdom",
     "GB": "United Kingdom",
+    "UNITEDKINGDOM": "United Kingdom",
+    "LONDON": "United Kingdom",
+    "MANCHESTER": "United Kingdom",
+    # United Arab Emirates
     "UAE": "United Arab Emirates",
+    "DUBAI": "United Arab Emirates",
+    "ABUDHABI": "United Arab Emirates",
+    # Germany
+    "DE": "Germany",
+    "DEU": "Germany",
+    "GERMANY": "Germany",
+    "BERLIN": "Germany",
+    "MUNICH": "Germany",
+    # France
+    "FR": "France",
+    "FRA": "France",
+    "FRANCE": "France",
+    "PARIS": "France",
+    # India
+    "IN": "India",
+    "IND": "India",
+    "INDIA": "India",
+    "BANGALORE": "India",
+    "BENGALURU": "India",
+    "MUMBAI": "India",
+    "HYDERABAD": "India",
+    "PUNE": "India",
+    "NEWDELHI": "India",
 }
 
 
 def _expand_country_display(raw: str) -> str:
+    import re as _re
     s = (raw or "").strip()
     if not s:
         return ""
-    compact = s.replace(".", "").replace(" ", "").upper()
+    # Strip everything but letters and uppercase, so "Tel-Aviv", "Tel Aviv",
+    # "TEL.AVIV", "Tel_Aviv" all collapse to "TELAVIV".
+    compact = _re.sub(r"[^A-Za-z]", "", s).upper()
     if compact in _COUNTRY_EXPANSIONS:
         return _COUNTRY_EXPANSIONS[compact]
     if len(s) == 2 and s.isalpha():
