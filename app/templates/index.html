@@ -708,6 +708,10 @@
       rebuildLocations();
       rebuildPositions();
       populateClasses();
+      // Fire the unscreened-count fetch in the background so position labels
+      // start showing "(N)" once the data lands. Fully async — doesn't block
+      // the rest of the page.
+      loadUnscreenedCounts();
       document.dispatchEvent(new Event('as-positions-loaded'));
       // Deeplink support: the Chrome extension links here as `?position=<uid>`
       // when it hits "no position class selected" so the recruiter lands
