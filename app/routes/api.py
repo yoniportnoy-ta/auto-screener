@@ -743,6 +743,7 @@ def extension_get_score(
     # If the extension only gave us a numeric id, look up the public uid via
     # the public Comeet API (it has a `URL` field with the numeric id embedded).
     if n_id and not alphanumeric_uid:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         with ComeetClient() as pub:
             try:
                 # Fast path: just this candidate's position.
@@ -753,20 +754,38 @@ def extension_get_score(
                         if n_id in c_url:
                             alphanumeric_uid = str(c.get("uid") or "")
                             break
-                # Fallback (rare): brute-force across all open positions.
+                # Fallback (rare): brute-force across all open positions, but
+                # parallelised so we don't spend 60–90s walking ~30 positions
+                # sequentially when a recruiter opens /app/can/<id> without
+                # position context.
                 if not alphanumeric_uid:
                     positions = pub.list_open_positions()
-                    for p in positions:
-                        if pos_uid and p.get("uid") == pos_uid:
-                            continue  # already scanned above
-                        candidates = pub.list_candidates_for_position(p["uid"])
-                        for c in candidates:
-                            c_url = c.get("URL", "")
-                            if n_id in c_url:
-                                alphanumeric_uid = str(c.get("uid", ""))
+                    other_uids = [
+                        str(p["uid"]) for p in positions
+                        if p.get("uid") and p.get("uid") != pos_uid
+                    ]
+
+                    def _find_in_pos(p_uid: str) -> str:
+                        try:
+                            with ComeetClient() as client:
+                                cands = client.list_candidates_for_position(p_uid)
+                            for c in cands:
+                                c_url = c.get("URL", "") or ""
+                                if n_id in c_url:
+                                    return str(c.get("uid") or "")
+                        except Exception:  # noqa: BLE001
+                            return ""
+                        return ""
+
+                    with ThreadPoolExecutor(max_workers=4) as pool:
+                        futures = [pool.submit(_find_in_pos, u) for u in other_uids]
+                        for fut in as_completed(futures):
+                            found = fut.result()
+                            if found:
+                                alphanumeric_uid = found
+                                # Don't bother cancelling the rest — they'll
+                                # finish soon and we've already moved on.
                                 break
-                        if alphanumeric_uid:
-                            break
             except Exception:  # noqa: BLE001
                 pass
 
