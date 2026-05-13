@@ -17,1299 +17,744 @@
     :root {
       --bg: #0f1419;
       --panel: #1a2332;
-      --text: #e7ecf3;
-      --muted: #8b9cb3;
-      --accent: #9671ff;
-      --accent-rgb: 150, 113, 255;
-      --accent-link: #c9b8ff;
-      --accent-link-hover: #ddd0ff;
-      --ok: #22c55e;
-      --warn: #eab308;
-      --bad: #ef4444;
+      --panel-2: #243044;
       --border: #2d3a4d;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      --text: #e7ecf3;
+      --text-muted: #8a98a9;
+      --accent: #a78bfa;       /* violet */
+      --accent-dim: #8c75e0;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --err: #f87171;
     }
     * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+    }
     body {
-      margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5;
-    }
-    .wrap { max-width: 1480px; margin: 0 auto; padding: 1.5rem clamp(1rem, 2vw, 2rem); }
-    /* Two-column workspace: filters on the left grow/shrink without moving
-       the dashboard on the right. */
-    .workspace {
       display: grid;
-      grid-template-columns: minmax(280px, 340px) 1fr;
-      gap: 1rem;
-      align-items: start;
+      grid-template-columns: 300px 1fr;
+      min-height: 100vh;
+      transition: grid-template-columns 0.25s ease;
     }
-    .workspace > .panel { margin-bottom: 0; }
-    .dash-placeholder {
+    body.no-session { grid-template-columns: 1fr; }
+    body.no-session #sessionHeader { display: none; }
+
+    /* ─── Persistent session header (top-left rail) ─── */
+    #sessionHeader {
+      padding: 1.5rem 1.25rem;
+      border-right: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      color: var(--accent);
+      text-transform: uppercase;
+    }
+    .session-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .session-field { font-size: 0.85rem; }
+    .session-field .label {
+      display: block;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      margin-bottom: 0.2rem;
+    }
+    .session-field .value {
+      color: var(--text);
+      font-weight: 500;
+      word-wrap: break-word;
+      line-height: 1.35;
+    }
+    .session-field.brief .value {
+      font-weight: 400;
+      color: var(--text-muted);
+      max-height: 7em;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 5;
+      -webkit-box-orient: vertical;
+      font-size: 0.8rem;
+    }
+    .start-over-btn {
+      margin-top: 0.6rem;
+      padding: 0.5rem 0.8rem;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      text-align: left;
+    }
+    .start-over-btn:hover { color: var(--text); border-color: var(--accent); }
+
+    /* ─── Main wizard area ─── */
+    main {
+      padding: 4rem 2rem 3rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .step {
+      width: 100%;
+      max-width: 640px;
+      display: none;
+    }
+    .step.active {
+      display: block;
+      animation: fadeIn 0.25s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .step h1 {
+      font-size: 1.7rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem 0;
+      letter-spacing: -0.01em;
+    }
+    .step .hint {
+      color: var(--text-muted);
+      margin: 0 0 1.5rem 0;
+      font-size: 0.95rem;
+      line-height: 1.55;
+    }
+
+    /* ─── Step 1: recruiter cards ─── */
+    .recruiter-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.6rem;
+      margin-bottom: 1.5rem;
+    }
+    .recruiter-card {
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      cursor: pointer;
+      text-align: left;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-family: inherit;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .recruiter-card:hover { border-color: var(--accent); background: var(--panel-2); }
+    .recruiter-card.selected {
+      border-color: var(--accent);
+      background: var(--panel-2);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    /* ─── Step 2: position list ─── */
+    .position-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .position-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 1.2rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      cursor: pointer;
+      color: var(--text);
+      font-family: inherit;
+      text-align: left;
+      transition: border-color 0.15s, background 0.15s, transform 0.05s;
+    }
+    .position-card:hover { border-color: var(--accent); background: var(--panel-2); }
+    .position-card:active { transform: scale(0.995); }
+    .position-card .pos-name { font-weight: 500; font-size: 0.95rem; }
+    .position-card .pos-meta {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    /* ─── Step 3: auto-class working state ─── */
+    .working {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      padding: 1rem 0;
+    }
+    .spinner {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Step 4: brief textarea ─── */
+    textarea.brief-input {
+      width: 100%;
       min-height: 220px;
+      padding: 1rem;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.55;
+      resize: vertical;
+    }
+    textarea.brief-input:focus { outline: none; border-color: var(--accent); }
+    .button-row {
+      margin-top: 1rem;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.6rem;
+    }
+    .btn-primary {
+      padding: 0.7rem 1.5rem;
+      background: var(--accent);
+      color: #1a1330;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
+    .btn-primary:disabled {
+      background: var(--border);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    /* ─── Done state ─── */
+    .done-card {
+      padding: 2.5rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      text-align: center;
+    }
+    .done-card .checkmark {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(74, 222, 128, 0.12);
+      border: 2px solid var(--ok);
+      color: var(--ok);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--muted);
-      text-align: left;
-      border-style: dashed;
+      font-size: 1.7rem;
+      margin: 0 auto 1.2rem;
     }
-    .dash-placeholder-inner {
-      display: flex; gap: 1rem; align-items: center;
-      max-width: 420px;
+    .done-card h1 { margin: 0 0 0.6rem; font-size: 1.4rem; }
+    .done-card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      max-width: 480px;
+      margin: 0 auto;
     }
-    .dash-placeholder-icon {
-      font-size: 2rem; color: var(--accent-link);
-    }
-    @media (max-width: 980px) {
-      .workspace { grid-template-columns: 1fr; }
-      .dash-placeholder { display: none; }
-    }
-    h1 { font-size: 1.4rem; margin: 0 0 1rem; font-weight: 600; }
-    .panel {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-      padding: 1rem 1.25rem; margin-bottom: 1rem;
-    }
-    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
-    select, input, button { font: inherit; }
-    select, input[type="text"] {
-      width: 100%; padding: 0.5rem 0.65rem; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg); color: var(--text);
-    }
-    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin-top: 0.75rem; }
-    .row > div { flex: 1 1 200px; }
-    .filters-row { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; margin-bottom: 0.75rem; }
-    .filter-field { flex: 1 1 160px; min-width: 140px; }
-    .filter-field.grow { flex: 2 1 260px; }
-    /* Stacked filters: each picker on its own full-width row so nothing
-       resizes when the next one is revealed. */
-    .filters-row.stacked { margin-bottom: 0.55rem; }
-    .filters-row.stacked .filter-field { flex: 1 1 100%; min-width: 0; }
-    /* Chrome extension status card — compact when installed, expands on demand. */
-    .ext-card {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-      padding: 0.65rem 0.9rem; margin-bottom: 1rem;
-    }
-    .ext-card.installed { border-color: rgba(34, 197, 94, 0.45); }
-    .ext-card.outdated  { border-color: rgba(234, 179, 8, 0.45); }
-    .ext-card.missing   { border-color: rgba(239, 68, 68, 0.45); }
-    .ext-card-row {
-      display: flex; align-items: center; gap: 0.8rem;
-    }
-    .ext-card-icon {
-      flex: 0 0 auto; width: 1.6rem; height: 1.6rem; border-radius: 50%;
-      display: inline-flex; align-items: center; justify-content: center;
-      background: var(--bg); border: 1px solid var(--border);
-      font-size: 0.95rem; line-height: 1;
-    }
-    .ext-card.installed .ext-card-icon { color: var(--ok); border-color: rgba(34,197,94,0.5); }
-    .ext-card.outdated  .ext-card-icon { color: var(--warn); border-color: rgba(234,179,8,0.5); }
-    .ext-card.missing   .ext-card-icon { color: var(--bad); border-color: rgba(239,68,68,0.5); }
-    .ext-card-text { flex: 1 1 auto; min-width: 0; }
-    .ext-card-title { font-size: 0.95rem; font-weight: 600; }
-    .ext-card-sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.05rem; }
-    .ext-card-sub:empty { display: none; }
-    .ext-card-actions {
-      flex: 0 0 auto; display: flex; align-items: center; gap: 0.4rem;
-    }
-    .ext-card-actions .primary { padding: 0.4rem 0.75rem; font-size: 0.8rem; text-decoration: none; }
-    .ext-card-actions .ghost   { padding: 0.4rem 0.55rem; font-size: 0.85rem; min-width: 2.2rem; }
-    .ext-card-body { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
-    .ext-card-body[hidden] { display: none; }
-    .ext-steps {
-      margin: 0; padding-left: 1.1rem;
-      font-size: 0.83rem; color: var(--text); line-height: 1.55;
-    }
-    .ext-steps li { margin-bottom: 0.35rem; }
-    .ext-steps li:last-child { margin-bottom: 0; }
-    .ext-steps code {
-      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-      padding: 0.02rem 0.32rem; font-size: 0.88em;
-    }
-    .ext-steps button.ghost {
-      padding: 0.1rem 0.45rem; font-size: 0.72rem; margin-left: 0.25rem;
-    }
-    /* Compact install steps */
-    .install-steps-compact {
-      margin: 0; padding-left: 1.4rem;
-      font-size: 0.82rem; line-height: 1.7; color: var(--text);
-    }
-    .install-steps-compact li::marker {
-      color: #c9b8ff; font-weight: 700;
-    }
-    .install-steps-compact code {
-      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-      padding: 0.02rem 0.32rem; font-size: 0.88em;
-    }
-    .install-steps-compact button.ghost {
-      padding: 0.05rem 0.4rem; font-size: 0.7rem;
-      margin-left: 0.25rem; vertical-align: baseline;
-    }
-    .install-update-note {
-      margin-top: 0.6rem;
-      font-size: 0.75rem;
-      color: var(--muted);
-    }
-    .install-update-note code {
-      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-      padding: 0.02rem 0.32rem; font-size: 0.88em;
-    }
-    /* Position dashboard */
-    /* Compact one-line stats strip — subordinate to the CTAs visually. */
-    .dash-stats-inline {
-      display: flex; flex-wrap: wrap;
-      gap: 0.4rem 1.2rem;
-      font-size: 0.82rem;
-      color: var(--muted);
-      padding-bottom: 0.4rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .dash-pair b {
-      color: var(--text); font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      margin-right: 0.25rem;
-    }
-    .dash-pair.good b { color: var(--ok); }
-    .dash-pair.warn b { color: var(--warn); }
-    .dash-pair.bad  b { color: var(--bad); }
-    #dashRecentTbl td .pill { font-size: 0.75rem; padding: 0.25rem 0.55rem; }
-    #dashRecentTbl td { vertical-align: middle; }
-    /* Bulk actions row */
-    .dash-actions {
-      display: flex; align-items: center; gap: 0.6rem;
-      margin-top: 0.85rem; flex-wrap: wrap;
-    }
-    button.ghost.danger {
-      color: #fca5a5; border-color: rgba(239,68,68,0.45);
-    }
-    button.ghost.danger:hover {
-      background: rgba(239,68,68,0.10);
-    }
-    /* 5-column AI-score breakdown */
-    .score-cols {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 0.55rem;
-    }
-    .score-col {
-      background: var(--bg);
-      border: 1px solid var(--border);
+
+    /* ─── Extension install / update card ─── */
+    #extensionCard {
+      width: 100%;
+      max-width: 640px;
+      margin: 2rem auto 0;
+      padding: 1.25rem 1.5rem;
+      background: var(--panel);
+      border: 1px solid var(--warn);
       border-radius: 8px;
-      padding: 0.6rem 0.55rem;
-      display: flex; flex-direction: column;
-      min-width: 0;
     }
-    .score-col-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 0.3rem; margin-bottom: 0.5rem;
+    #extensionCard.hidden { display: none; }
+    #extensionCard h3 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+      color: var(--warn);
     }
-    .score-col-head .pill { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
-    .score-col-head .count {
-      font-size: 0.75rem; color: var(--muted); font-weight: 500;
+    #extensionCard p {
+      margin: 0.4rem 0 0.6rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.5;
     }
-    .score-sub-label {
-      font-size: 0.65rem; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 0.05em;
-      margin: 0.5rem 0 0.25rem;
+    #extensionCard ol {
+      padding-left: 1.3rem;
+      margin: 0.4rem 0 0;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.7;
     }
-    .score-section { margin-top: 0.4rem; }
-    .score-section:first-of-type { margin-top: 0; }
-    .score-section > summary.score-sub-label {
-      cursor: pointer;
-      list-style: none;
-      padding: 0.2rem 0;
-      display: flex; align-items: center; gap: 0.3rem;
-      margin: 0;
-      user-select: none;
-    }
-    .score-section > summary.score-sub-label::-webkit-details-marker { display: none; }
-    .score-section > summary.score-sub-label::before {
-      content: "▸";
-      display: inline-block;
-      width: 0.7rem;
-      color: var(--muted);
-      font-size: 0.7rem;
-      transition: transform 0.15s ease;
-    }
-    .score-section[open] > summary.score-sub-label::before {
-      transform: rotate(90deg);
-    }
-    .score-section > summary.score-sub-label:hover { color: var(--text); }
-    .score-section[open] > summary.score-sub-label { margin-bottom: 0.3rem; }
-    .score-section-body { display: contents; }
-    .score-item {
-      padding: 0.35rem 0.45rem;
-      border-radius: 5px;
-      font-size: 0.78rem;
-      margin-bottom: 0.2rem;
-      background: rgba(255,255,255,0.025);
-      border: 1px solid var(--border);
-      line-height: 1.3;
-      display: flex; align-items: flex-start; gap: 0.4rem;
-      color: var(--text);
-      text-decoration: none;
-      transition: border-color 0.1s, background 0.1s;
-    }
-    a.score-item:hover {
-      border-color: rgba(var(--accent-rgb), 0.5);
-      background: rgba(var(--accent-rgb), 0.06);
-      cursor: pointer;
-    }
-    .score-item .name {
-      flex: 1 1 auto; min-width: 0; overflow: hidden;
-      text-overflow: ellipsis; white-space: nowrap;
-    }
-    .score-item .rec {
-      flex: 0 0 auto; font-size: 0.7rem; font-weight: 700;
-      padding: 0.1rem 0.35rem; border-radius: 4px;
-    }
-    .score-item.agree .rec { background: rgba(34,197,94,0.18); color: #4ade80; }
-    .score-item.near .rec  { background: rgba(234,179,8,0.18); color: #fbbf24; }
-    .score-item.far .rec   { background: rgba(239,68,68,0.18); color: #fca5a5; }
-    .score-empty { font-size: 0.72rem; color: var(--muted); font-style: italic; padding: 0.2rem 0; }
-    .score-more { margin-top: 0.1rem; }
-    .score-more summary {
-      list-style: none;
-      cursor: pointer;
-      font-size: 0.72rem;
-      color: var(--accent-link);
-      padding: 0.25rem 0.45rem;
-      border-radius: 5px;
-      border: 1px dashed var(--border);
-      text-align: center;
-      transition: color 0.1s, border-color 0.1s;
-    }
-    .score-more summary::-webkit-details-marker { display: none; }
-    .score-more summary:hover {
-      color: var(--accent-link-hover);
-      border-color: var(--accent);
-    }
-    .score-more[open] summary { margin-bottom: 0.2rem; }
-    /* AI × Recruiter agreement matrix */
-    .agree-matrix {
-      display: inline-grid;
-      grid-template-columns: auto repeat(5, 64px);
-      grid-auto-rows: 44px;
-      gap: 3px;
-      align-items: stretch;
-    }
-    .agree-matrix .cell, .agree-matrix .head {
-      display: flex; align-items: center; justify-content: center;
-      border-radius: 6px; font-size: 0.85rem;
-    }
-    .agree-matrix .head {
-      color: var(--muted); font-weight: 500; font-size: 0.72rem;
-      text-transform: uppercase; letter-spacing: 0.04em;
-    }
-    .agree-matrix .head.corner {
-      background: transparent;
-      writing-mode: horizontal-tb;
-      text-align: right; padding-right: 0.5rem;
-      font-size: 0.65rem;
-    }
-    .agree-matrix .head.row-label {
-      justify-content: flex-end; padding-right: 0.5rem;
-    }
-    .agree-matrix .cell {
-      background: rgba(255,255,255,0.03);
-      border: 1px solid var(--border);
-      font-variant-numeric: tabular-nums;
-      cursor: default;
-    }
-    /* Diagonal — perfect agreement */
-    .agree-matrix .cell.diag.has {
-      background: rgba(34,197,94,0.18);
-      border-color: rgba(34,197,94,0.55);
-      color: #4ade80;
-      font-weight: 700;
-    }
-    /* Off by 1 — yellow */
-    .agree-matrix .cell.near.has {
-      background: rgba(234,179,8,0.12);
-      border-color: rgba(234,179,8,0.4);
-      color: #fbbf24;
-    }
-    /* Off by 2+ — red */
-    .agree-matrix .cell.far.has {
-      background: rgba(239,68,68,0.14);
-      border-color: rgba(239,68,68,0.4);
-      color: #fca5a5;
-    }
-    .agree-matrix .cell .zero {
-      opacity: 0.25;
-    }
-    button.primary, a.primary {
-      background: var(--accent); color: #fff; border: 1px solid rgba(var(--accent-rgb), 0.92);
-      padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
-      font-weight: 600; font-size: 0.85rem;
-      text-decoration: none; display: inline-block;
-    }
-    a.primary:hover { color: #fff; }
-    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.ghost {
-      background: transparent; color: var(--muted); border: 1px solid var(--border);
-      padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer;
-      font-weight: 600; font-size: 0.85rem;
-    }
-    .err { color: #fca5a5; font-size: 0.9rem; margin-top: 0.75rem; }
-    .meta { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th, td {
-      text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
-      vertical-align: top;
-    }
-    th { color: var(--muted); font-weight: 500; }
-    .pill {
-      display: inline-block; padding: 0.4rem 0.75rem; border-radius: 8px;
-      font-size: 0.8rem; font-weight: 600; border: 1px solid var(--border);
-    }
-    .pill.r5 { border-color: rgba(34,197,94,0.75);  background: rgba(34,197,94,0.12); color: #4ade80; }
-    .pill.r4 { border-color: rgba(132,204,22,0.7);  background: rgba(132,204,22,0.12); color: #a3e635; }
-    .pill.r3 { border-color: rgba(234,179,8,0.7);   background: rgba(234,179,8,0.12); color: #fbbf24; }
-    .pill.r2 { border-color: rgba(249,115,22,0.7);  background: rgba(249,115,22,0.12); color: #fb923c; }
-    .pill.r1 { border-color: rgba(239,68,68,0.75);  background: rgba(239,68,68,0.10); color: #fca5a5; }
-    .small { font-size: 0.78rem; color: var(--muted); }
-    .mode-card {
+    #extensionCard a { color: var(--accent); text-decoration: none; }
+    #extensionCard a:hover { text-decoration: underline; }
+    #extensionCard code {
       background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.85rem 1rem;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 0.6rem;
-      align-items: start;
-      min-height: 130px;
-      transition: border-color 0.15s, background 0.15s;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      font-size: 0.85em;
     }
-    .mode-card:hover { border-color: rgba(var(--accent-rgb), 0.55); }
-    .mode-card.active { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.06); }
-    .mode-card .mode-title {
-      font-weight: 700; font-size: 0.95rem; color: var(--text);
-      display: flex; align-items: center; gap: 0.4rem;
+
+    /* ─── Errors ─── */
+    .err-banner {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto 1rem;
+      padding: 0.75rem 1rem;
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid var(--err);
+      border-radius: 6px;
+      color: var(--err);
+      font-size: 0.85rem;
     }
-    .mode-card .mode-body { font-size: 0.8rem; color: var(--muted); margin: 0; line-height: 1.45; flex: 1 1 auto; }
-    /* Small "?" icon that surfaces a tooltip on hover/focus. Uses the
-       native title attribute for the tooltip body so no JS is needed. */
-    .info-tip {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 1.1rem; height: 1.1rem;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 0.7rem; font-weight: 700;
-      cursor: help;
-      user-select: none;
-      transition: color 0.12s, border-color 0.12s, background 0.12s;
-    }
-    .info-tip:hover, .info-tip:focus {
-      outline: none;
-      color: var(--accent-link);
-      border-color: rgba(var(--accent-rgb), 0.5);
-      background: rgba(var(--accent-rgb), 0.08);
-    }
-    .mode-card .mode-cta { width: 100%; padding: 0.55rem 0.75rem; font-size: 0.85rem; }
-    .mode-card .mode-cta.scheduled-on {
-      background: rgba(34, 197, 94, 0.18);
-      border-color: rgba(34, 197, 94, 0.7);
-      color: #4ade80;
-    }
-    @media (max-width: 760px) {
-      .modes { grid-template-columns: 1fr !important; }
-    }
-    .row-error td { background: rgba(239,68,68,0.07); color: #fca5a5; }
-    .row-skipped td { background: rgba(234,179,8,0.05); color: #facc15; }
+    .err-banner.hidden { display: none; }
   </style>
 </head>
-<body>
-<div class="wrap">
-  <h1>Auto Screener</h1>
-
-  <!-- Chrome extension status / install panel -->
-  <div class="ext-card" id="extPanel">
-    <div class="ext-card-row" id="extCardSummary">
-      <span class="ext-card-icon" id="extCardIcon" aria-hidden="true">…</span>
-      <div class="ext-card-text">
-        <div class="ext-card-title" id="extCardTitle">Checking Chrome extension…</div>
-        <div class="ext-card-sub" id="extCardSub">Looking for the Auto Screener extension in this browser.</div>
+<body class="no-session">
+  <!-- Persistent session header. Shown progressively as the recruiter
+       fills in steps; the body's no-session class hides it entirely
+       until at least step 1 is done. -->
+  <aside id="sessionHeader">
+    <div class="brand">AI Screener</div>
+    <div class="session-fields">
+      <div class="session-field" id="sessRecruiterField" style="display:none;">
+        <span class="label">Recruiter</span>
+        <span class="value" id="sessRecruiter"></span>
       </div>
-      <div class="ext-card-actions" id="extCardActions">
-        <a href="/extension.zip" download class="primary ext-download" id="extDownload">Download v{{ extensionVersion }}</a>
-        <button class="ghost" id="btnExtToggle" type="button" aria-label="Toggle install instructions">▾</button>
+      <div class="session-field" id="sessPositionField" style="display:none;">
+        <span class="label">Position</span>
+        <span class="value" id="sessPosition"></span>
+      </div>
+      <div class="session-field" id="sessClassField" style="display:none;">
+        <span class="label">Class</span>
+        <span class="value" id="sessClass"></span>
+      </div>
+      <div class="session-field brief" id="sessBriefField" style="display:none;">
+        <span class="label">Brief</span>
+        <span class="value" id="sessBrief"></span>
       </div>
     </div>
-    <div id="extPanelBody" class="ext-card-body" hidden>
-      <ol class="install-steps-compact">
-        <li><strong>Download</strong> and unzip the file.</li>
-        <li>Paste <code>chrome://extensions/</code> in the address bar
-            <button class="ghost" id="btnCopyExtUrl" type="button">Copy</button>.</li>
-        <li>Turn on <strong>Developer mode</strong> (top-right).</li>
-        <li>Click <strong>Load unpacked</strong> and pick the unzipped folder.</li>
-        <li>Open any candidate on <code>app.comeet.co</code>.</li>
+    <button class="start-over-btn" id="startOverBtn" type="button">↺ Start over</button>
+  </aside>
+
+  <main>
+    <div id="errBanner" class="err-banner hidden"></div>
+
+    <!-- ──────────────── Step 1: recruiter ──────────────── -->
+    <section class="step active" id="step1">
+      <h1>Who's screening today?</h1>
+      <p class="hint">Pick your name to load your open positions.</p>
+      <div class="recruiter-list" id="recruiterList">
+        <div class="working"><div class="spinner"></div> Loading recruiters…</div>
+      </div>
+      <div class="button-row">
+        <button class="btn-primary" id="step1Next" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ──────────────── Step 2: position ──────────────── -->
+    <section class="step" id="step2">
+      <h1>Which position?</h1>
+      <p class="hint">Pick the role you want to screen for.</p>
+      <div class="position-list" id="positionList">
+        <div class="working"><div class="spinner"></div> Loading positions…</div>
+      </div>
+    </section>
+
+    <!-- ──────────────── Step 3: auto-class (transient) ──────────────── -->
+    <section class="step" id="step3">
+      <h1>Setting up screening…</h1>
+      <p class="hint">Auto-selecting the right rubric class for this role.</p>
+      <div class="working" id="classStatus">
+        <div class="spinner"></div> Looking at your existing classes…
+      </div>
+    </section>
+
+    <!-- ──────────────── Step 4: brief ──────────────── -->
+    <section class="step" id="step4">
+      <h1>What are you looking for?</h1>
+      <p class="hint">
+        Write a few sentences about the role and what matters most. The AI
+        screener uses this on every candidate, in addition to the position
+        description. Be specific — "5+ yrs senior PM at consumer-scale
+        companies" is much more useful than "great PM".
+      </p>
+      <textarea class="brief-input" id="briefText"
+        placeholder="e.g. Looking for an iOS engineer with 4+ yrs at high-traffic consumer apps. Must have led at least one feature end-to-end. Prefer candidates with experience in real-time / media-heavy products. Hard rejects: agency-only background, no team-lead experience."></textarea>
+      <div class="button-row">
+        <button class="btn-primary" id="step4Next" disabled>Start session →</button>
+      </div>
+    </section>
+
+    <!-- ──────────────── Done ──────────────── -->
+    <section class="step" id="stepDone">
+      <div class="done-card">
+        <div class="checkmark">✓</div>
+        <h1>Session active</h1>
+        <p>
+          You're all set. The full screening view is coming next — for now,
+          everything you set up is saved on the position record, so any scan
+          (Chrome extension, scheduled cron) will use it automatically.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─── Extension install / update card (conditional) ─── -->
+    <section id="extensionCard" class="hidden">
+      <h3 id="extCardTitle">Chrome extension</h3>
+      <p id="extCardBody"></p>
+      <ol>
+        <li>Download <a id="extDownloadLink" href="/extension.zip">the extension zip</a> and unzip it.</li>
+        <li>Open <code>chrome://extensions</code> and turn on <strong>Developer mode</strong> (top-right).</li>
+        <li>Click <strong>Load unpacked</strong> and select the unzipped folder.</li>
       </ol>
-      <div class="install-update-note">
-        <strong>Updating?</strong> Re-download, replace the unzipped folder, click the refresh icon next to Auto Screener on <code>chrome://extensions/</code>.
-      </div>
-    </div>
-  </div>
+    </section>
+  </main>
 
-  <div class="workspace">
-  <div class="panel filter-panel">
-    <div class="filters-row stacked">
-      <div class="filter-field" id="fieldRecruiter">
-        <label for="filterRecruiter">Lead recruiter</label>
-        <select id="filterRecruiter"></select>
-      </div>
-    </div>
-    <div class="filters-row stacked" id="fieldLocation" style="display:none">
-      <div class="filter-field">
-        <label for="filterLocation">Location</label>
-        <select id="filterLocation"></select>
-      </div>
-    </div>
-    <div class="filters-row stacked" id="fieldPosition" style="display:none">
-      <div class="filter-field">
-        <label for="pos">Open position</label>
-        <select id="pos"></select>
-      </div>
-    </div>
+  <script>
+    "use strict";
 
-    <div class="filters-row" id="classRow" style="display:none">
-      <div class="filter-field grow">
-        <label for="posClass">Position class <span id="classRequired" style="color:var(--bad)">*</span></label>
-        <select id="posClass"><option value="">— select class —</option></select>
-      </div>
-      <div class="filter-field" id="levelWrap" style="display:none">
-        <label for="posLevel">Level</label>
-        <select id="posLevel"><option value="">Any level</option></select>
-      </div>
-      <div class="filter-field" style="flex:0 0 auto; align-self:flex-end">
-        <button class="ghost" id="btnNewClass" style="font-size:0.78rem">+ New class</button>
-      </div>
-    </div>
+    // ─── Server-injected context ────────────────────────────────────
+    const SERVER_EXTENSION_VERSION = "{{ extensionVersion }}";
 
-    <div class="filters-row stacked" id="notesRow" style="display:none">
-      <div class="filter-field">
-        <label for="recruiterNotes">Notes for AI (applies to every scan on this position)</label>
-        <textarea id="recruiterNotes" rows="4" placeholder="e.g. agency hires count as a 2/5 regardless of resume; we want EU candidates only; ignore the 'fluency in Spanish' requirement"
-          style="width:100%; padding:0.5rem 0.6rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; font:inherit; font-size:0.85rem; resize:vertical;"></textarea>
-        <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.35rem;">
-          <button type="button" class="ghost" id="btnSaveNotes" style="font-size:0.78rem">Save notes</button>
-          <span id="notesStatus" class="small" style="color:var(--muted);"></span>
-        </div>
-      </div>
-    </div>
+    // ─── State (mirrored to sessionStorage so reloads don't reset) ──
+    const STATE_KEY = "as_session_v1";
+    const INITIAL_STATE = {
+      step: 1,
+      recruiter: "",
+      positionUid: "",
+      positionName: "",
+      classId: "",
+      className: "",
+      brief: "",
+    };
+    let state = loadState();
+    let allPositions = [];   // cached after first /api/positions hit
 
-    <div id="newClassRow" style="display:none; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-top:0.45rem; padding:0.45rem 0.6rem; background:rgba(var(--accent-rgb), 0.06); border:1px solid var(--border); border-radius:8px">
-      <input type="text" id="newClassName" placeholder="New class name…" style="flex:1; min-width:180px; padding:0.35rem 0.55rem; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem" />
-      <button type="button" class="primary" id="btnSaveNewClass">Create</button>
-      <button type="button" class="ghost" id="btnCancelNewClass">Cancel</button>
-      <span id="newClassStatus" class="small" style="color:var(--muted)"></span>
-    </div>
-
-    <div class="row" style="margin-top:0.75rem">
-      <button class="ghost" id="clearFilters" style="flex:0 0 auto">Clear filters</button>
-    </div>
-
-    <div id="err" class="err" style="display:none"></div>
-    <div id="meta" class="meta"></div>
-  </div>
-
-  <!-- Empty state shown until a position is picked -->
-  <div class="panel dash-placeholder" id="dashPlaceholder">
-    <div class="dash-placeholder-inner">
-      <div class="dash-placeholder-icon">→</div>
-      <div>
-        <div style="font-weight:600; margin-bottom:0.25rem;">Pick a position to see its dashboard</div>
-        <div class="small">Status, agreement matrix, recent scores, and bulk actions appear here once you choose one on the left.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Position dashboard — appears once a position is selected -->
-  <div class="panel" id="dashPanel" style="display:none">
-    <div class="dash-stats-inline" id="dashStats">
-      <span class="dash-pair"><b id="dashUnscored">—</b> unscored</span>
-      <span class="dash-pair"><b id="dashRated">—</b> scored</span>
-      <span class="dash-pair"><b id="dashFeedback">—</b> with feedback</span>
-      <span class="dash-pair"><b id="dashAgreement">—</b> agreement</span>
-      <span class="dash-pair"><b id="dashLastScan">—</b> last scan</span>
-    </div>
-
-    <!-- Primary actions on the position. Hidden until class is set. -->
-    <div class="modes" id="modesRow" style="display:none; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0.75rem; margin-top:0.85rem">
-      <div class="mode-card" id="modeScanNow">
-        <div class="mode-title">
-          Score all unscored
-          <span class="info-tip" tabindex="0"
-                title="Score every eligible candidate on this position now and tag them in Comeet. Idempotent — won't re-score anyone already scored. Use the Chrome extension to rate them as you review each one.">?</span>
-        </div>
-        <button class="primary mode-cta" id="btnScanNow">Run</button>
-      </div>
-      <div class="mode-card" id="modeSchedule">
-        <div class="mode-title">
-          Auto-screen new candidates
-          <span class="info-tip" tabindex="0"
-                title="Every hour, any newly-applied candidate on this position gets scored and tagged automatically — no manual action required.">?</span>
-        </div>
-        <button class="primary mode-cta" id="btnSchedule" disabled>Pick a class first</button>
-      </div>
-    </div>
-
-    <!-- Bulk maintenance actions for this position -->
-    <div class="dash-actions" style="margin-top:0.75rem">
-      <button type="button" class="ghost" id="btnRescoreAll">Re-score all candidates</button>
-      <button type="button" class="ghost danger" id="btnClearScores">Clear all AI scores</button>
-      <span id="dashActionStatus" class="small" style="color:var(--muted);"></span>
-    </div>
-
-    <!-- 5-column AI-score breakdown -->
-    <div id="dashBreakdownWrap" style="margin-top:1rem; display:none;">
-      <div style="font-weight:600; font-size:0.9rem; margin-bottom:0.5rem;">Candidates by AI score</div>
-      <div id="dashBreakdown" class="score-cols"></div>
-    </div>
-
-    <details id="dashRecentWrap" style="margin-top:0.85rem; display:none;">
-      <summary class="small" style="color:var(--muted); cursor:pointer;">Recent scores (latest <span id="dashRecentCount">0</span>)</summary>
-      <div style="overflow-x:auto; margin-top:0.5rem;">
-        <table id="dashRecentTbl">
-          <thead><tr><th>Candidate</th><th>Rating</th><th>Summary</th><th>Scored</th></tr></thead>
-          <tbody id="dashRecentBody"></tbody>
-        </table>
-      </div>
-    </details>
-  </div>
-  </div><!-- /workspace -->
-
-</div>
-
-<script>
-  // ─── Tiny JSON helper ───────────────────────────────────────────────────
-  async function api(path, body) {
-    const opts = { method: body ? 'POST' : 'GET', headers: {} };
-    if (body !== undefined) {
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(body);
-    }
-    const r = await fetch(path, opts);
-    if (!r.ok) {
-      let detail = await r.text();
-      try { detail = JSON.parse(detail).detail || detail; } catch (e) {}
-      throw new Error('HTTP ' + r.status + ': ' + detail);
-    }
-    return r.json();
-  }
-
-  function setErr(msg) {
-    const el = document.getElementById('err');
-    if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.style.display = 'block'; el.textContent = msg;
-  }
-
-  // ─── State ──────────────────────────────────────────────────────────────
-  let allPositions = [];
-  let allClasses = [];
-
-  // ─── Position dropdowns ─────────────────────────────────────────────────
-  function uniqSorted(values) {
-    return [...new Set(values.filter(Boolean))].sort();
-  }
-
-  function rebuildLocations() {
-    const rec = document.getElementById('filterRecruiter').value;
-    const sel = document.getElementById('filterLocation');
-    const prev = sel.value;
-    const subset = rec ? allPositions.filter(p => p.leadRecruiter === rec) : allPositions;
-    const locs = uniqSorted(subset.map(p => p.location));
-    sel.innerHTML = '';
-    sel.appendChild(new Option(rec ? 'All locations (this recruiter)' : 'All locations', ''));
-    locs.forEach(l => sel.appendChild(new Option(l, l)));
-    sel.value = locs.includes(prev) ? prev : '';
-  }
-
-  // Map of position_uid → unscreened count (candidates currently sitting in
-  // CV-screen step), populated lazily from the backend.
-  let unscreenedByUid = {};
-
-  function positionLabel(p) {
-    const base = p.name || p.uid;
-    const cnt = unscreenedByUid[p.uid];
-    // Unknown (counts call hasn't returned yet): show nothing extra.
-    if (cnt == null || cnt < 0) return base;
-    // Always show the count — even (0) — so the recruiter can tell at a
-    // glance whether the unscreened-CV pipeline is empty for that role
-    // versus "data hasn't loaded yet" (which shows no parens at all).
-    return `${base} (${cnt})`;
-  }
-
-  function rebuildPositions() {
-    const rec = document.getElementById('filterRecruiter').value;
-    const loc = document.getElementById('filterLocation').value;
-    const sel = document.getElementById('pos');
-    const prev = sel.value;
-    sel.innerHTML = '';
-    sel.appendChild(new Option('Select a position…', ''));
-    const filtered = allPositions
-      .filter(p => (!rec || p.leadRecruiter === rec) && (!loc || p.location === loc))
-      .sort((a, b) => (a.name + a.uid).localeCompare(b.name + b.uid));
-    filtered.forEach(p => sel.appendChild(new Option(positionLabel(p), p.uid)));
-    sel.value = filtered.find(p => p.uid === prev) ? prev : '';
-  }
-
-  // Lazy-load unscreened counts after the dropdown is built. The endpoint
-  // can take several seconds (one Comeet call per position) so we kick this
-  // off in the background and re-render the dropdown when it returns.
-  async function loadUnscreenedCounts() {
-    try {
-      const counts = await api('/api/positions/unscreened-counts');
-      if (counts && typeof counts === 'object') {
-        unscreenedByUid = counts;
-        rebuildPositions();
-      }
-    } catch (e) {
-      console.warn('unscreened-counts fetch failed:', e);
-    }
-  }
-
-  function populateRecruiters() {
-    const sel = document.getElementById('filterRecruiter');
-    const recruiters = uniqSorted(allPositions.map(p => p.leadRecruiter));
-    sel.innerHTML = '';
-    sel.appendChild(new Option('All recruiters', ''));
-    recruiters.forEach(r => sel.appendChild(new Option(r, r)));
-  }
-
-  // ─── Class dropdown ─────────────────────────────────────────────────────
-  function populateClasses() {
-    const sel = document.getElementById('posClass');
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">— select class —</option>';
-    allClasses.forEach(c => {
-      const o = new Option(c.name, c.id);
-      o.dataset.levels = JSON.stringify(c.levels || []);
-      sel.appendChild(o);
-    });
-    if (prev) sel.value = prev;
-    updateLevels();
-  }
-
-  function updateLevels() {
-    const opt = document.getElementById('posClass').selectedOptions[0];
-    const levels = opt ? JSON.parse(opt.dataset.levels || '[]') : [];
-    const wrap = document.getElementById('levelWrap');
-    const sel = document.getElementById('posLevel');
-    if (levels.length) {
-      sel.innerHTML = '<option value="">Any level</option>';
-      levels.forEach(l => sel.appendChild(new Option(l, l)));
-      wrap.style.display = '';
-    } else {
-      wrap.style.display = 'none';
-    }
-  }
-
-  // ─── Loaders ────────────────────────────────────────────────────────────
-  async function loadAll() {
-    setErr('');
-    document.getElementById('filterRecruiter').innerHTML = '<option>Loading…</option>';
-    document.getElementById('pos').innerHTML = '<option>Loading…</option>';
-    try {
-      const [positions, classes] = await Promise.all([
-        api('/api/positions'),
-        api('/api/position-classes'),
-      ]);
-      allPositions = positions || [];
-      allClasses = classes || [];
-      populateRecruiters();
-      rebuildLocations();
-      rebuildPositions();
-      populateClasses();
-      // Fire the unscreened-count fetch in the background so position labels
-      // start showing "(N)" once the data lands. Fully async — doesn't block
-      // the rest of the page.
-      loadUnscreenedCounts();
-      document.dispatchEvent(new Event('as-positions-loaded'));
-      // Deeplink support: the Chrome extension links here as `?position=<uid>`
-      // when it hits "no position class selected" so the recruiter lands
-      // directly on that position's settings.
+    function loadState() {
       try {
-        const params = new URLSearchParams(window.location.search);
-        const wantPos = params.get('position');
-        if (wantPos) {
-          const posSel = document.getElementById('pos');
-          if (posSel && Array.from(posSel.options).some(o => o.value === wantPos)) {
-            posSel.value = wantPos;
-            posSel.dispatchEvent(new Event('change'));
-            posSel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
+        const raw = sessionStorage.getItem(STATE_KEY);
+        if (!raw) return { ...INITIAL_STATE };
+        return { ...INITIAL_STATE, ...JSON.parse(raw) };
+      } catch (_) { return { ...INITIAL_STATE }; }
+    }
+    function saveState() {
+      try { sessionStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch (_) {}
+    }
+    function clearState() {
+      state = { ...INITIAL_STATE };
+      try { sessionStorage.removeItem(STATE_KEY); } catch (_) {}
+    }
+
+    // ─── DOM helpers ────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+
+    function setErr(msg) {
+      const b = $("errBanner");
+      if (!msg) { b.textContent = ""; b.classList.add("hidden"); return; }
+      b.textContent = msg;
+      b.classList.remove("hidden");
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    async function api(path, opts) {
+      const resp = await fetch(path, opts);
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        let detail = text;
+        try { detail = JSON.parse(text).detail || text; } catch (_) {}
+        throw new Error(`HTTP ${resp.status}: ${detail || resp.statusText}`);
+      }
+      return resp.json();
+    }
+
+    // ─── Step navigation ────────────────────────────────────────────
+    const STEP_IDS = { 1: "step1", 2: "step2", 3: "step3", 4: "step4", 5: "stepDone" };
+
+    function gotoStep(n) {
+      state.step = n;
+      saveState();
+      Object.values(STEP_IDS).forEach((id) => $(id).classList.remove("active"));
+      const id = STEP_IDS[n] || "step1";
+      $(id).classList.add("active");
+      renderSessionHeader();
+    }
+
+    function renderSessionHeader() {
+      // The header appears as soon as the recruiter is picked; it then
+      // grows as later steps complete.
+      const anyField = state.recruiter || state.positionUid;
+      document.body.classList.toggle("no-session", !anyField);
+
+      const showField = (fieldId, valueId, value) => {
+        const el = $(fieldId);
+        if (value) {
+          el.style.display = "block";
+          $(valueId).textContent = value;
+        } else {
+          el.style.display = "none";
         }
-      } catch (_) { /* non-fatal */ }
-    } catch (err) {
-      setErr(err.message);
+      };
+      showField("sessRecruiterField", "sessRecruiter", state.recruiter);
+      showField("sessPositionField", "sessPosition", state.positionName);
+      showField("sessClassField", "sessClass", state.className);
+      showField("sessBriefField", "sessBrief", state.brief);
     }
-  }
 
-  // ─── Position selection: pre-load saved class + schedule state ──────────
-  let scheduleEnabled = false;
-
-  // Cross-handler state used to drop stale fetches + cancel in-flight scan polls
-  // when the recruiter switches positions mid-session.
-  let activePoll = null;
-  function cancelActivePoll() {
-    if (activePoll) { clearInterval(activePoll); activePoll = null; }
-  }
-
-  document.getElementById('pos').addEventListener('change', async () => {
-    const uid = document.getElementById('pos').value;
-    setScheduleUI(false, !uid);
-    // Any scan/rescore polling was tied to the previous position — kill it
-    // so it can't overwrite the dashboard with stale data.
-    cancelActivePoll();
-    if (!uid) {
-      // No position picked yet — hide class + actions + dashboard.
-      document.getElementById('classRow').style.display = 'none';
-      document.getElementById('modesRow').style.display = 'none';
-      document.getElementById('dashPanel').style.display = 'none';
-      document.getElementById('dashPlaceholder').style.display = '';
-      // Reset visible dashboard fields so the next position doesn't briefly
-      // show the previous one's numbers/columns.
-      ['dashUnscored','dashRated','dashFeedback','dashAgreement','dashLastScan'].forEach(id => {
-        document.getElementById(id).textContent = '—';
-      });
-      const grid = document.getElementById('dashBreakdown');
-      if (grid) grid.innerHTML = '';
-      document.getElementById('dashBreakdownWrap').style.display = 'none';
-      return;
-    }
-    document.getElementById('dashPanel').style.display = 'block';
-    document.getElementById('dashPlaceholder').style.display = 'none';
-    // Reset the visible numbers + columns immediately so we don't briefly
-    // render the previous position's data before the new one loads.
-    ['dashUnscored','dashRated','dashFeedback','dashAgreement','dashLastScan'].forEach(id => {
-      document.getElementById(id).textContent = '—';
+    $("startOverBtn").addEventListener("click", () => {
+      clearState();
+      gotoStep(1);
+      // Reset any in-DOM state that survived
+      $("briefText").value = "";
+      $("step4Next").disabled = true;
+      renderRecruiters();
     });
-    {
-      const grid = document.getElementById('dashBreakdown');
-      if (grid) grid.innerHTML = '';
-      document.getElementById('dashBreakdownWrap').style.display = 'none';
-    }
-    // Reveal the class row only if no class is assigned yet. If one IS
-    // assigned, hide the picker and skip straight to the action cards.
-    let hasClass = false;
-    try {
-      const cls = await api('/api/position-class/' + encodeURIComponent(uid));
-      if (cls && cls.classId) {
-        document.getElementById('posClass').value = cls.classId;
-        updateLevels();
-        if (cls.level) document.getElementById('posLevel').value = cls.level;
-        setScheduleUI(!!cls.autoScreenEnabled, false);
-        document.getElementById('recruiterNotes').value = cls.recruiterNotes || '';
-        hasClass = true;
-      } else {
-        document.getElementById('recruiterNotes').value = '';
-      }
-    } catch (err) { /* non-fatal */ }
-    // Class picker is ALWAYS visible once a position is chosen (so the
-    // recruiter can change it later), not just when there's no assignment.
-    document.getElementById('classRow').style.display = 'flex';
-    document.getElementById('modesRow').style.display = hasClass ? 'grid' : 'none';
-    document.getElementById('notesRow').style.display = hasClass ? 'block' : 'none';
-    loadDashboard(uid);
-  });
 
-  // ─── Save recruiter notes ─────────────────────────────────────────────
-  document.getElementById('btnSaveNotes').addEventListener('click', async () => {
-    const uid = document.getElementById('pos').value;
-    if (!uid) return;
-    const notes = document.getElementById('recruiterNotes').value;
-    const statusEl = document.getElementById('notesStatus');
-    statusEl.textContent = 'Saving…';
-    statusEl.style.color = 'var(--muted)';
-    try {
-      await api('/api/position-class/notes', { position_uid: uid, notes });
-      statusEl.textContent = '✓ saved';
-      statusEl.style.color = 'var(--ok)';
-      setTimeout(() => { statusEl.textContent = ''; }, 2000);
-    } catch (e) {
-      statusEl.textContent = e.message || 'failed';
-      statusEl.style.color = 'var(--bad)';
-    }
-  });
-
-  // ─── Progressive reveal: only show each filter once the previous is touched.
-  (function progressiveReveal() {
-    const r = document.getElementById('filterRecruiter');
-    const l = document.getElementById('filterLocation');
-    const fieldL = document.getElementById('fieldLocation');
-    const fieldP = document.getElementById('fieldPosition');
-    let recruiterTouched = false;
-    let locationTouched  = false;
-
-    function refresh() {
-      fieldL.style.display = recruiterTouched ? '' : 'none';
-      fieldP.style.display = (recruiterTouched && locationTouched) ? '' : 'none';
-    }
-    r.addEventListener('change', () => { recruiterTouched = true; refresh(); });
-    l.addEventListener('change', () => { locationTouched = true; refresh(); });
-    refresh();
-  })();
-
-  // Picking (or changing) the class — persist to the backend so it sticks,
-  // then reveal the action cards + notes.
-  document.getElementById('posClass').addEventListener('change', async () => {
-    const classId = document.getElementById('posClass').value;
-    const uid = document.getElementById('pos').value;
-    if (!classId || !uid) return;
-    const level = document.getElementById('posLevel')?.value || '';
-    try {
-      await api('/api/position-class', {
-        position_uid: uid,
-        class_id: classId,
-        level: level,
-      });
-      document.getElementById('modesRow').style.display = 'grid';
-      document.getElementById('notesRow').style.display = 'block';
-      // Reload the dashboard since the class can change which rubric applies.
-      loadDashboard(uid);
-    } catch (err) {
-      setErr('Failed to save class: ' + (err.message || err));
-    }
-  });
-
-  // ─── Position dashboard loader ─────────────────────────────────────────
-  async function loadDashboard(uid) {
-    if (!uid) return;
-    try {
-      const [d, brk] = await Promise.all([
-        api('/api/position/dashboard?position_uid=' + encodeURIComponent(uid) + '&recent_limit=50'),
-        api('/api/position/breakdown?position_uid=' + encodeURIComponent(uid)).catch(() => null),
-      ]);
-      // Drop the response if the user has moved on to a different position
-      // (or cleared the picker) while this fetch was in flight.
-      if (document.getElementById('pos').value !== uid) return;
-      const ratedEl    = document.getElementById('dashRated');
-      const fbEl       = document.getElementById('dashFeedback');
-      const agEl       = document.getElementById('dashAgreement');
-      const lastEl     = document.getElementById('dashLastScan');
-      const unscoredEl = document.getElementById('dashUnscored');
-      ratedEl.textContent = (d.stats.totalScored || 0).toString();
-      fbEl.textContent    = (d.stats.feedbackCount || 0).toString();
-      // Unscored-in-step is loaded lazily via /position/in-step-counts so
-      // the dashboard doesn't block on a slow Comeet call.
-      unscoredEl.textContent = '…';
-      const ag = d.stats.agreement;
-      const agStat = agEl.closest('.dash-pair');
-      agStat.classList.remove('good', 'warn', 'bad');
-      if (ag == null) {
-        agEl.textContent = '—';
-      } else {
-        const pct = Math.round(ag * 100);
-        agEl.textContent = pct + '%';
-        if (pct >= 75) agStat.classList.add('good');
-        else if (pct >= 50) agStat.classList.add('warn');
-        else agStat.classList.add('bad');
-      }
-      lastEl.textContent = d.stats.lastScanAt
-        ? relTime(new Date(d.stats.lastScanAt))
-        : 'never';
-
-      // 5-column AI-score breakdown
-      renderBreakdown(brk);
-
-      // Lazy-load the Comeet-dependent unscored-in-step count. We keep this
-      // separate from the main dashboard fetch so the basic stats render
-      // instantly even when Comeet's API is slow.
-      api('/api/position/in-step-counts?position_uid=' + encodeURIComponent(uid))
-        .then(s => {
-          if (document.getElementById('pos').value !== uid) return;
-          const u = s.unscoredInStep;
-          const stat = unscoredEl.parentElement;
-          stat.classList.remove('good', 'warn', 'bad');
-          if (u == null) {
-            unscoredEl.textContent = '—';
-          } else {
-            unscoredEl.textContent = String(u);
-            if (u === 0) stat.classList.add('good');
-            else if (u > 20) stat.classList.add('warn');
-          }
-        })
-        .catch(() => { unscoredEl.textContent = '—'; });
-
-      // Recent rows (now in a collapsed <details>)
-      const tbody = document.getElementById('dashRecentBody');
-      const wrap  = document.getElementById('dashRecentWrap');
-      const rows  = Array.isArray(d.recent) ? d.recent : [];
-      wrap.style.display = rows.length ? 'block' : 'none';
-      document.getElementById('dashRecentCount').textContent = rows.length;
-      tbody.innerHTML = rows.map(r => {
-        const r5 = Number(r.rating) || 0;
-        const label = ratingLabel(r5);
-        const ts = r.scoredAt ? relTime(new Date(r.scoredAt)) : '';
-        const summary = (r.summary || '').slice(0, 180);
-        return `
-          <tr>
-            <td>${escapeHtml(r.candidateName || r.candidateUid || '')}</td>
-            <td>${r5 ? `<span class="pill r${r5}">${r5}/5 · ${escapeHtml(label)}</span>` : '<span class="small">—</span>'}</td>
-            <td class="small">${escapeHtml(summary)}</td>
-            <td class="small">${escapeHtml(ts)}</td>
-          </tr>`;
-      }).join('');
-    } catch (err) {
-      console.warn('dashboard load failed', err);
-    }
-  }
-
-  function renderBreakdown(brk) {
-    const wrap = document.getElementById('dashBreakdownWrap');
-    const grid = document.getElementById('dashBreakdown');
-    if (!brk || !Array.isArray(brk.columns)) {
-      wrap.style.display = 'none';
-      grid.innerHTML = '';
-      return;
-    }
-    const total = brk.columns.reduce((s, c) => s + c.withFeedback.length + c.withoutFeedback.length, 0);
-    if (!total) {
-      wrap.style.display = 'none';
-      grid.innerHTML = '';
-      return;
-    }
-    wrap.style.display = 'block';
-
-    function subList(items, hasFb, label) {
-      if (!items.length) return '';
-      // The "With feedback (3)" / "Not rated (50)" label itself is the click
-      // target — clicking it expands the candidate list. Collapsed by default.
-      return `
-        <details class="score-section">
-          <summary class="score-sub-label">${label} (${items.length})</summary>
-          <div class="score-section-body">${items.map(it => itemRow(it, hasFb)).join('')}</div>
-        </details>`;
-    }
-    const colHtml = brk.columns.map(col => {
-      const cnt = col.withFeedback.length + col.withoutFeedback.length;
-      return `
-        <div class="score-col">
-          <div class="score-col-head">
-            <span class="pill r${col.aiRating}">${col.aiRating}/5 · ${escapeHtml(col.label)}</span>
-            <span class="count">${cnt}</span>
-          </div>
-          ${subList(col.withFeedback, true, 'With feedback')}
-          ${subList(col.withoutFeedback, false, 'Not rated by recruiter')}
-          ${(!col.withFeedback.length && !col.withoutFeedback.length) ? `<div class="score-empty">no candidates</div>` : ''}
-        </div>`;
-    }).join('');
-    grid.innerHTML = colHtml;
-  }
-
-  function itemRow(it, hasFb) {
-    const name = it.candidateName || it.candidateUid || '—';
-    const href = it.profileUrl ? escapeHtml(it.profileUrl) : '';
-    const tag = href ? `a href="${href}" target="_blank" rel="noopener"` : 'div';
-    const open  = '<' + tag;
-    const close = href ? '</a>' : '</div>';
-    if (!hasFb) {
-      const tip = it.summary || '';
-      return `${open} class="score-item" title="${escapeHtml(tip)}"><span class="name">${escapeHtml(name)}</span>${close}`;
-    }
-    const r = Number(it.recruiterRating) || 0;
-    const diff = Math.abs((Number(it.aiRating) || 0) - r);
-    const cls = diff === 0 ? 'agree' : (diff === 1 ? 'near' : 'far');
-    const tip = it.recruiterNote ? `${name} — recruiter rated ${r}/5: ${it.recruiterNote}` : `${name} — recruiter rated ${r}/5`;
-    return `${open} class="score-item ${cls}" title="${escapeHtml(tip)}">
-        <span class="name">${escapeHtml(name)}</span>
-        <span class="rec">${r}/5</span>
-      ${close}`;
-  }
-
-  // ─── Bulk actions: Re-score / Clear ────────────────────────────────────
-  function setActionStatus(msg, kind) {
-    const el = document.getElementById('dashActionStatus');
-    el.textContent = msg || '';
-    el.style.color = kind === 'err' ? '#fca5a5' : (kind === 'ok' ? '#4ade80' : 'var(--muted)');
-  }
-
-  document.getElementById('btnRescoreAll').addEventListener('click', async () => {
-    const uid = document.getElementById('pos').value;
-    if (!uid) return setActionStatus('Pick a position first.', 'err');
-    const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
-    if (!confirm(`Re-score all ${cnt} already-scored candidates on this position? This will run synchronously and may take a few minutes.`)) return;
-    setActionStatus('Re-scoring CV-screening candidates… this may take a while.');
-    cancelActivePoll();
-    activePoll = setInterval(() => { loadDashboard(uid); }, 3000);
-    try {
-      const r = await api('/api/position/rescore-all', { position_uid: uid });
-      if (document.getElementById('pos').value !== uid) return;  // user moved on
-      const skipped = r.skippedNotInStep ? ` (${r.skippedNotInStep} skipped — past CV screen)` : '';
-      setActionStatus(`Re-scored ${r.rescored}/${r.eligibleInStep}${skipped} · errors: ${r.errorCount}`, 'ok');
-    } catch (err) {
-      setActionStatus(err.message || String(err), 'err');
-    } finally {
-      cancelActivePoll();
-      if (document.getElementById('pos').value === uid) loadDashboard(uid);
-    }
-  });
-
-  document.getElementById('btnClearScores').addEventListener('click', async () => {
-    const uid = document.getElementById('pos').value;
-    if (!uid) return setActionStatus('Pick a position first.', 'err');
-    const cnt = parseInt(document.getElementById('dashRated').textContent, 10) || 0;
-    if (!confirm(`Clear all AI scores AND remove AI tags/flags from Comeet for ${cnt} candidates on this position?\n\nThis is irreversible. Use only when you want to start fresh.`)) return;
-    setActionStatus('Clearing scores and tags…');
-    try {
-      const r = await api('/api/position/clear-scores', { position_uid: uid });
-      setActionStatus(`Cleared ${r.deletedScoring} score rows, ${r.deletedTags} tag rows, ${r.candidatesAffected} candidates in Comeet.`, 'ok');
-      loadDashboard(uid);
-    } catch (err) {
-      setActionStatus(err.message || String(err), 'err');
-    }
-  });
-
-  function ratingLabel(r) {
-    return ({1:'Way off',2:'Not a fit',3:'OK',4:'Great',5:'Superstar'})[r] || '';
-  }
-  function escapeHtml(s) {
-    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  }
-  function relTime(d) {
-    const sec = Math.round((Date.now() - d.getTime()) / 1000);
-    if (sec < 60) return 'just now';
-    if (sec < 3600) return Math.round(sec / 60) + 'm ago';
-    if (sec < 86400) return Math.round(sec / 3600) + 'h ago';
-    if (sec < 30 * 86400) return Math.round(sec / 86400) + 'd ago';
-    return d.toLocaleDateString();
-  }
-
-  function setScheduleUI(enabled, disabled) {
-    const btn = document.getElementById('btnSchedule');
-    const card = document.getElementById('modeSchedule');
-    scheduleEnabled = !!enabled;
-    btn.disabled = !!disabled;
-    btn.classList.toggle('scheduled-on', enabled && !disabled);
-    if (disabled) {
-      btn.textContent = 'Pick a class first';
-      card.classList.remove('active');
-    } else if (enabled) {
-      btn.textContent = '✓ On — click to turn off';
-      card.classList.add('active');
-    } else {
-      btn.textContent = 'Turn on';
-      card.classList.remove('active');
-    }
-  }
-
-  // ─── Create class inline form ────────────────────────────────────────
-  document.getElementById('btnNewClass').addEventListener('click', () => {
-    const row = document.getElementById('newClassRow');
-    const showing = row.style.display === 'flex';
-    row.style.display = showing ? 'none' : 'flex';
-    if (!showing) document.getElementById('newClassName').focus();
-  });
-  document.getElementById('btnCancelNewClass').addEventListener('click', () => {
-    document.getElementById('newClassRow').style.display = 'none';
-    document.getElementById('newClassName').value = '';
-    document.getElementById('newClassStatus').textContent = '';
-  });
-  document.getElementById('btnSaveNewClass').addEventListener('click', async () => {
-    const name = document.getElementById('newClassName').value.trim();
-    if (!name) return;
-    const status = document.getElementById('newClassStatus');
-    status.textContent = 'Creating…';
-    status.style.color = 'var(--muted)';
-    try {
-      const res = await api('/api/position-classes', { name: name, levels: [] });
-      // Refresh class list and select the newly-created one.
-      allClasses = await api('/api/position-classes');
-      populateClasses();
-      document.getElementById('posClass').value = res.id;
-      updateLevels();
-      document.getElementById('newClassRow').style.display = 'none';
-      document.getElementById('newClassName').value = '';
-      status.textContent = '';
-    } catch (err) {
-      status.textContent = err.message;
-      status.style.color = 'var(--bad)';
-    }
-  });
-
-  document.getElementById('btnSchedule').addEventListener('click', async () => {
-    const uid = document.getElementById('pos').value;
-    if (!uid) return setErr('Choose a position.');
-    if (!document.getElementById('posClass').value) return setErr('Pick a position class first.');
-    const next = !scheduleEnabled;
-    setScheduleUI(next, true);
-    try {
-      await api('/api/position-class/auto-screen', { position_uid: uid, enabled: next });
-      setScheduleUI(next, false);
-    } catch (err) {
-      setErr(err.message);
-      setScheduleUI(scheduleEnabled, false);
-    }
-  });
-
-  document.getElementById('posClass').addEventListener('change', updateLevels);
-
-  document.getElementById('clearFilters').addEventListener('click', () => {
-    document.getElementById('filterRecruiter').value = '';
-    document.getElementById('filterLocation').value = '';
-    document.getElementById('pos').value = '';
-    document.getElementById('posClass').value = '';
-    rebuildLocations(); rebuildPositions();
-    // Collapse back to the first step.
-    document.getElementById('fieldLocation').style.display = 'none';
-    document.getElementById('fieldPosition').style.display = 'none';
-    document.getElementById('classRow').style.display = 'none';
-    document.getElementById('modesRow').style.display = 'none';
-    document.getElementById('notesRow').style.display = 'none';
-    document.getElementById('recruiterNotes').value = '';
-    document.getElementById('dashPanel').style.display = 'none';
-    document.getElementById('dashPlaceholder').style.display = '';
-  });
-
-  document.getElementById('filterRecruiter').addEventListener('change', () => { rebuildLocations(); rebuildPositions(); });
-  document.getElementById('filterLocation').addEventListener('change', rebuildPositions);
-
-  // ─── Scan ───────────────────────────────────────────────────────────────
-  // Scan now: synchronous on the wire, but we poll the dashboard every 3s
-  // while we wait so the breakdown columns fill in live.
-  document.getElementById('btnScanNow').addEventListener('click', async () => {
-    const uid = document.getElementById('pos').value;
-    if (!uid) return setErr('Choose a position.');
-    if (!document.getElementById('posClass').value) return setErr('Pick a position class first.');
-    setErr('');
-    const btn = document.getElementById('btnScanNow');
-    btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = 'Scanning…';
-    document.getElementById('meta').textContent = 'Scoring candidates…';
-    // Poll while the scan runs so the breakdown fills in live.
-    cancelActivePoll();
-    activePoll = setInterval(() => { loadDashboard(uid); }, 3000);
-    try {
-      const r = await api('/api/scan/now', { position_uid: uid });
-      if (document.getElementById('pos').value !== uid) return;
-      const tagsLine = r.tagsApplied
-        ? ` · ${r.tagsApplied} tag${r.tagsApplied === 1 ? '' : 's'} applied`
-        : '';
-      const errLine = r.errors && r.errors.length
-        ? ` · ${r.errors.length} error${r.errors.length === 1 ? '' : 's'}`
-        : '';
-      document.getElementById('meta').textContent =
-        `Scan complete: ${r.scored} scored · ${r.skipped} skipped${tagsLine}${errLine}`
-        + (r.note ? ` (${r.note})` : '');
-      if (r.errors && r.errors.length) {
-        setErr('Errors: ' + r.errors.slice(0, 3).join('; ') + (r.errors.length > 3 ? `; +${r.errors.length - 3} more` : ''));
-      }
-    } catch (err) {
-      setErr(err.message);
-      document.getElementById('meta').textContent = '';
-    } finally {
-      cancelActivePoll();
-      if (document.getElementById('pos').value === uid) loadDashboard(uid);
-      btn.disabled = false;
-      btn.textContent = original;
-    }
-  });
-
-  loadAll();
-
-  // ─── Chrome extension install/version detection ─────────────────────────
-  (function extWatcher() {
-    const SERVER_VERSION = "{{ extensionVersion }}";
-    const card     = document.getElementById('extPanel');
-    const icon     = document.getElementById('extCardIcon');
-    const title    = document.getElementById('extCardTitle');
-    const sub      = document.getElementById('extCardSub');
-    const download = document.getElementById('extDownload');
-    const body     = document.getElementById('extPanelBody');
-    const toggle   = document.getElementById('btnExtToggle');
-    let installed = null;
-
-    function cmpVersions(a, b) {
-      const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
-      const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
-      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const x = pa[i] || 0, y = pb[i] || 0;
-        if (x !== y) return x - y;
-      }
-      return 0;
+    // ─── Data loading ───────────────────────────────────────────────
+    async function loadPositionsOnce() {
+      if (allPositions.length) return allPositions;
+      const list = await api("/api/positions");
+      allPositions = list || [];
+      return allPositions;
     }
 
-    function setState(kind, opts) {
-      card.classList.remove('installed', 'outdated', 'missing');
-      card.classList.add(kind);
-      icon.textContent  = opts.icon;
-      title.textContent = opts.title;
-      sub.textContent   = opts.sub;
-      download.textContent = opts.cta;
-      download.style.display = opts.hideCta ? 'none' : '';
-    }
-
-    function applyState() {
-      if (!installed) {
-        setState('missing', {
-          icon: '✗',
-          title: 'Chrome extension not installed',
-          sub: '',
-          cta: 'Download',
+    // ─── Step 1: recruiter picker ───────────────────────────────────
+    async function renderRecruiters() {
+      const wrap = $("recruiterList");
+      wrap.innerHTML = '<div class="working"><div class="spinner"></div> Loading recruiters…</div>';
+      try {
+        const positions = await loadPositionsOnce();
+        const recruiters = [...new Set(positions.map((p) => p.leadRecruiter).filter(Boolean))].sort();
+        if (!recruiters.length) {
+          wrap.innerHTML = '<div class="hint">No open positions found in Comeet right now.</div>';
+          return;
+        }
+        wrap.innerHTML = "";
+        recruiters.forEach((name) => {
+          const card = document.createElement("button");
+          card.className = "recruiter-card";
+          card.type = "button";
+          card.textContent = name;
+          if (state.recruiter === name) card.classList.add("selected");
+          card.addEventListener("click", () => {
+            document.querySelectorAll(".recruiter-card").forEach((c) => c.classList.remove("selected"));
+            card.classList.add("selected");
+            state.recruiter = name;
+            // Picking a new recruiter invalidates any later state.
+            state.positionUid = "";
+            state.positionName = "";
+            state.classId = "";
+            state.className = "";
+            state.brief = "";
+            $("step1Next").disabled = false;
+            saveState();
+            renderSessionHeader();
+          });
+          wrap.appendChild(card);
         });
-        // Auto-expand the install steps when nothing is installed yet.
-        body.hidden = false;
-        toggle.textContent = '▴';
-        return;
-      }
-      const cmp = cmpVersions(installed, SERVER_VERSION);
-      if (cmp >= 0) {
-        setState('installed', {
-          icon: '✓',
-          title: 'Extension installed (v' + installed + ')',
-          sub: '',
-          cta: 'Re-download',
-        });
-      } else {
-        setState('outdated', {
-          icon: '!',
-          title: 'Update available (v' + installed + ' → v' + SERVER_VERSION + ')',
-          sub: 'After download, hit refresh on the extension tile in chrome://extensions/.',
-          cta: 'Download',
-        });
+        $("step1Next").disabled = !state.recruiter;
+      } catch (e) {
+        setErr(e.message || String(e));
       }
     }
 
-    window.addEventListener('message', (event) => {
-      if (event.source !== window) return;
-      const data = event.data;
-      if (data && data.source === 'auto-screener-extension' && data.type === 'hello') {
-        installed = data.version || '0.0.0';
-        applyState();
+    $("step1Next").addEventListener("click", () => {
+      if (!state.recruiter) return;
+      gotoStep(2);
+      renderPositions();
+    });
+
+    // ─── Step 2: position picker ────────────────────────────────────
+    async function renderPositions() {
+      const wrap = $("positionList");
+      wrap.innerHTML = '<div class="working"><div class="spinner"></div> Loading positions…</div>';
+      try {
+        const positions = await loadPositionsOnce();
+        const mine = positions
+          .filter((p) => p.leadRecruiter === state.recruiter)
+          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        if (!mine.length) {
+          wrap.innerHTML = '<div class="hint">No open positions for ' + escapeHtml(state.recruiter) + '.</div>';
+          return;
+        }
+        wrap.innerHTML = "";
+        mine.forEach((p) => {
+          const card = document.createElement("button");
+          card.className = "position-card";
+          card.type = "button";
+          card.innerHTML =
+            '<span class="pos-name">' + escapeHtml(p.name || p.uid) + "</span>" +
+            '<span class="pos-meta">' + escapeHtml(p.location || "") + "</span>";
+          card.addEventListener("click", () => {
+            state.positionUid = p.uid;
+            state.positionName = p.name || p.uid;
+            // Picking a new position invalidates the class + brief.
+            state.classId = "";
+            state.className = "";
+            state.brief = "";
+            saveState();
+            renderSessionHeader();
+            gotoStep(3);
+            doAutoClass();
+          });
+          wrap.appendChild(card);
+        });
+      } catch (e) {
+        setErr(e.message || String(e));
+      }
+    }
+
+    // ─── Step 3: auto-class ─────────────────────────────────────────
+    async function doAutoClass() {
+      $("classStatus").innerHTML =
+        '<div class="spinner"></div> Looking at your existing classes…';
+      try {
+        const res = await api("/api/onboarding/auto-class", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position_uid: state.positionUid }),
+        });
+        const cls = res.class || {};
+        state.classId = cls.id || "";
+        state.className = cls.name || "";
+        saveState();
+        renderSessionHeader();
+        // Briefly show what we picked, then advance.
+        const sourceLabel = {
+          existing: "already assigned",
+          heuristic: "matched by name",
+          claude: "picked by AI",
+          created: "new class created",
+        }[res.source] || "selected";
+        $("classStatus").innerHTML =
+          '<span style="color: var(--ok); font-size: 1.1rem;">✓</span> ' +
+          '<strong>' + escapeHtml(state.className) + "</strong> " +
+          '<span style="color: var(--text-muted); font-size: 0.85rem;">(' + escapeHtml(sourceLabel) + ')</span>';
+        setTimeout(() => gotoStep(4), 800);
+      } catch (e) {
+        $("classStatus").innerHTML =
+          '<span style="color: var(--err);">✕ ' + escapeHtml(e.message || String(e)) + "</span>";
+      }
+    }
+
+    // ─── Step 4: brief ──────────────────────────────────────────────
+    $("briefText").addEventListener("input", (e) => {
+      $("step4Next").disabled = !e.target.value.trim();
+    });
+
+    $("step4Next").addEventListener("click", async () => {
+      const text = $("briefText").value.trim();
+      if (!text) return;
+      const btn = $("step4Next");
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        await api("/api/onboarding/brief", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position_uid: state.positionUid, brief: text }),
+        });
+        state.brief = text;
+        saveState();
+        renderSessionHeader();
+        gotoStep(5);
+      } catch (e) {
+        setErr(e.message || String(e));
+        btn.disabled = false;
+        btn.textContent = "Start session →";
       }
     });
 
-    function ping() {
-      window.postMessage({ source: 'auto-screener-page', type: 'ping' }, window.location.origin);
+    // ─── Extension detection (only shows card if missing/outdated) ──
+    function setupExtensionDetect() {
+      let installedVersion = null;
+      const onMsg = (ev) => {
+        if (ev.source !== window) return;
+        const d = ev.data;
+        if (d && d.source === "auto-screener-extension" && d.type === "hello") {
+          installedVersion = d.version;
+        }
+      };
+      window.addEventListener("message", onMsg);
+      // Ping the extension's content script (if loaded) so it re-broadcasts.
+      window.postMessage(
+        { source: "auto-screener-page", type: "ping" },
+        window.location.origin,
+      );
+      // Decide what to show after a short window. The bridge re-broadcasts
+      // at 0/250/1000 ms, so 1500 ms is enough.
+      setTimeout(() => {
+        const card = $("extensionCard");
+        const title = $("extCardTitle");
+        const body = $("extCardBody");
+        if (!installedVersion) {
+          title.textContent = "Install the Chrome extension";
+          body.textContent =
+            "The screening flow uses a small Chrome extension that overlays AI scores onto Comeet candidate pages. Install it once and you're done.";
+          card.classList.remove("hidden");
+        } else if (installedVersion !== SERVER_EXTENSION_VERSION) {
+          title.textContent =
+            "Update the Chrome extension (you're on " + installedVersion +
+            ", latest is " + SERVER_EXTENSION_VERSION + ")";
+          body.textContent =
+            "Re-download and reload the extension to pick up the latest fixes.";
+          card.classList.remove("hidden");
+        } else {
+          card.classList.add("hidden");
+        }
+      }, 1500);
     }
-    setTimeout(ping, 100);
-    setTimeout(ping, 500);
-    setTimeout(() => { if (installed === null) applyState(); }, 1500);
-  })();
 
-  // Toggle the install panel body.
-  document.getElementById('btnExtToggle').addEventListener('click', () => {
-    const body = document.getElementById('extPanelBody');
-    const btn  = document.getElementById('btnExtToggle');
-    const show = body.hidden;
-    body.hidden = !show;
-    btn.textContent = show ? '▴' : '▾';
-  });
-
-  // Copy the chrome://extensions/ URL (Chrome blocks direct linking to it).
-  document.getElementById('btnCopyExtUrl').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    try {
-      await navigator.clipboard.writeText('chrome://extensions/');
-      const original = btn.textContent;
-      btn.textContent = 'Copied ✓';
-      setTimeout(() => { btn.textContent = original; }, 1500);
-    } catch (_) {
-      btn.textContent = 'Copy failed';
+    // ─── Boot ───────────────────────────────────────────────────────
+    async function boot() {
+      setupExtensionDetect();
+      // Restore the textarea if we had one stored.
+      if (state.brief) $("briefText").value = state.brief;
+      $("step4Next").disabled = !($("briefText").value || "").trim();
+      // Render whichever step was last active.
+      gotoStep(state.step || 1);
+      try {
+        await renderRecruiters();
+        if (state.step >= 2 && state.recruiter) await renderPositions();
+        if (state.step === 3 && state.positionUid) doAutoClass();
+      } catch (e) {
+        setErr(e.message || String(e));
+      }
     }
-  });
-</script>
+    boot();
+  </script>
 </body>
 </html>

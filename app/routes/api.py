@@ -987,6 +987,186 @@ def extension_create_class(body: ExtensionCreateClassBody) -> dict[str, Any]:
         raise HTTPException(400, str(exc))
 
 
+# ─── Onboarding flow (entrance wizard on the home page) ──────────────────────
+class AutoClassBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+
+
+def _pick_class_via_claude(position_name: str, position_jd: str, classes: list[dict[str, Any]]) -> str | None:
+    """Ask Claude which existing class best fits this position, or 'none' to
+    indicate that we should create a new one. Returns the class_id picked,
+    or None if Claude doesn't see a good match.
+
+    Kept deliberately small: short prompt, low temperature, single short
+    response. Adds ~2-3s to onboarding so we only call it when the cheap
+    heuristic comes up empty.
+    """
+    if not classes:
+        return None
+    try:
+        from anthropic import Anthropic  # local import keeps cold-start fast
+        from ..config import settings
+        client = Anthropic(api_key=settings.anthropic_api_key)
+        class_lines = "\n".join(f"  - {c['id']}: {c['name']}" for c in classes)
+        prompt = (
+            "You're a recruiting-ops assistant. Given the position below and a "
+            "list of existing screening rubric 'classes', pick the single class "
+            "whose rubric is the closest fit, OR answer 'none' if none of them "
+            "are a meaningfully good match.\n\n"
+            f"POSITION NAME: {position_name}\n"
+            f"POSITION DESCRIPTION (first 2000 chars):\n{(position_jd or '')[:2000]}\n\n"
+            "EXISTING CLASSES:\n"
+            f"{class_lines}\n\n"
+            "Reply with just the class id (e.g. 'backend') on its own line, "
+            "or the literal word 'none'. No explanation."
+        )
+        msg = client.messages.create(
+            model=settings.claude_model,
+            max_tokens=40,
+            temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(
+            b.text for b in msg.content if getattr(b, "type", "") == "text"
+        ).strip().splitlines()[0].strip().strip("'\"`")
+        if not text or text.lower() == "none":
+            return None
+        # Validate against the actual class list — Claude occasionally invents.
+        valid_ids = {c["id"] for c in classes}
+        if text in valid_ids:
+            return text
+        # Case-insensitive fallback (Claude sometimes capitalises).
+        lower_map = {c["id"].lower(): c["id"] for c in classes}
+        return lower_map.get(text.lower())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("auto-class: Claude pick failed, falling through: %s", exc)
+        return None
+
+
+@router.post("/onboarding/auto-class")
+def onboarding_auto_class(body: AutoClassBody) -> dict[str, Any]:
+    """Pick (or create) a class for a position with zero recruiter input.
+
+    Decision tree:
+      1. If the position already has a class assigned, return that. Fast path.
+      2. Try the heuristic name+alias matcher against existing classes.
+      3. If the heuristic returns nothing, ask Claude to pick from the list
+         (or say 'none').
+      4. If Claude also can't pick, create a new class named after the
+         position and assign that.
+
+    Always returns the assigned class plus a `source` field describing how
+    we got there, so the UI can be transparent about it.
+    """
+    from ..comeet_client import ComeetClient, position_jd_text as _jd_text
+    from ..position_classes import (
+        get_position_class as _get_class,
+    )
+
+    pos_uid = body.position_uid.strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    # 1. Already assigned? Reuse — recruiters expect persistent decisions.
+    existing = _get_class(pos_uid)
+    if existing and existing.get("classId"):
+        classes = list_all_classes()
+        cls = next((c for c in classes if c["id"] == existing["classId"]), None)
+        return {
+            "positionUid": pos_uid,
+            "class": cls or {"id": existing["classId"], "name": existing.get("className", "")},
+            "source": "existing",
+        }
+
+    # Pull position name + JD once; we may need both for Claude.
+    position_name = ""
+    position_jd = ""
+    try:
+        with ComeetClient() as pub:
+            pos = pub.get_position(pos_uid)
+            if pos:
+                position_name = str(pos.get("name") or "")
+                # Position JD text — fall back gracefully if helper errors.
+                try:
+                    position_jd = _jd_text(pos) or ""
+                except Exception:  # noqa: BLE001
+                    position_jd = ""
+    except Exception as exc:  # noqa: BLE001
+        log.warning("auto-class: couldn't fetch position %s: %s", pos_uid, exc)
+
+    classes = list_all_classes()
+
+    # 2. Cheap heuristic first.
+    chosen_id = _suggest_class_for(position_name, classes)
+    source = "heuristic"
+
+    # 3. Claude fallback only if the heuristic punted.
+    if not chosen_id:
+        chosen_id = _pick_class_via_claude(position_name, position_jd, classes)
+        if chosen_id:
+            source = "claude"
+
+    # 4. Create a new class as last resort.
+    if not chosen_id:
+        new_name = (position_name or "Custom").strip()[:120]
+        # Avoid clobbering an existing class with the same name.
+        existing_names = {c["name"].lower() for c in classes}
+        if new_name.lower() in existing_names:
+            new_name = f"{new_name} (custom)"
+        try:
+            created = create_custom_class(new_name, [])
+            chosen_id = created["id"]
+            source = "created"
+        except ValueError as exc:
+            raise HTTPException(500, f"could not create class: {exc}")
+
+    # Assign and return.
+    try:
+        assigned = assign_position_class(pos_uid, chosen_id, "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    refreshed_classes = list_all_classes()
+    cls = next((c for c in refreshed_classes if c["id"] == chosen_id), None)
+    return {
+        "positionUid": pos_uid,
+        "positionName": position_name,
+        "class": cls or {"id": chosen_id, "name": assigned.get("className", "")},
+        "source": source,
+    }
+
+
+class OnboardingBriefBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    brief: str = Field(max_length=10000)
+
+
+@router.post("/onboarding/brief")
+def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
+    """Save the recruiter's free-text brief for a position. Persisted to
+    the position_classes.recruiter_notes column so future scans include it
+    in the scoring prompt automatically.
+    """
+    from ..position_classes import set_recruiter_notes
+
+    pos_uid = body.position_uid.strip()
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+
+    try:
+        set_recruiter_notes(pos_uid, body.brief)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc))
+    return {"positionUid": pos_uid, "saved": True}
+
+
 # ─── Scan flow ───────────────────────────────────────────────────────────────
 class ScanNowBody(BaseModel):
     position_uid: str = Field(min_length=1)
