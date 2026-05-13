@@ -65,6 +65,7 @@ def _empty(candidate_uid: str, error: str | None = None) -> dict[str, Any]:
     return {
         "candidateUid": candidate_uid,
         "linkedinUrl": None,
+        "profileUrl": None,
         "careerTimeline": [],
         "education": [],
         "error": error,
@@ -84,6 +85,7 @@ def _read_cache(candidate_uid: str) -> dict[str, Any] | None:
         return {
             "candidateUid": candidate_uid,
             "linkedinUrl": row.linkedin_url,
+            "profileUrl": row.profile_url,
             "careerTimeline": row.career_timeline_json or [],
             "education": row.education_json or [],
             "error": row.extraction_error,
@@ -102,6 +104,7 @@ def _write_cache(candidate_uid: str, payload: dict[str, Any]) -> None:
             row = CandidateEnrichment(candidate_uid=candidate_uid)
             ses.add(row)
         row.linkedin_url = payload.get("linkedinUrl")
+        row.profile_url = payload.get("profileUrl")
         row.career_timeline_json = payload.get("careerTimeline") or []
         row.education_json = payload.get("education") or []
         row.extraction_error = payload.get("error")
@@ -123,6 +126,11 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
         return _empty(candidate_uid, error=f"comeet fetch failed: {exc}")
 
     linkedin_url = _clean_linkedin(candidate.get("linkedin_url"))
+    # Capture Comeet's working web URL while we have the candidate object —
+    # it's the only format that navigates inside app.comeet.co, and the
+    # whole point of caching it here is to avoid a per-render Comeet round-
+    # trip from the calibration queue later.
+    profile_url = (candidate.get("URL") or "").strip() or None
     resume_obj = candidate.get("resume") or {}
     resume_url = resume_obj.get("url") if isinstance(resume_obj, dict) else None
 
@@ -135,6 +143,7 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
         return {
             "candidateUid": candidate_uid,
             "linkedinUrl": linkedin_url,
+            "profileUrl": profile_url,
             "careerTimeline": [],
             "education": [],
             "error": "no resume PDF available" if fetch_failed else "candidate has no CV on file",
@@ -149,6 +158,7 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
         return {
             "candidateUid": candidate_uid,
             "linkedinUrl": linkedin_url,
+            "profileUrl": profile_url,
             "careerTimeline": [],
             "education": [],
             "error": f"timeline extraction failed: {exc}",
@@ -163,6 +173,7 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
     return {
         "candidateUid": candidate_uid,
         "linkedinUrl": linkedin_url,
+        "profileUrl": profile_url,
         "careerTimeline": _normalize_timeline(parsed.get("career_timeline")),
         "education": _normalize_education(parsed.get("education")),
         "error": None,

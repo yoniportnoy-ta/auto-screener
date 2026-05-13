@@ -478,6 +478,22 @@ def get_calibration_queue(
     )
 
     pool = eligible[:n]
+    # Look up cached enrichment profile_urls for any rows that don't have a
+    # profile_url on their scoring row (older rows from before the column
+    # existed). One bulk query keeps this O(1) per queue request.
+    enrichment_urls: dict[str, str] = {}
+    missing = [r.candidate_uid for r in pool if r.candidate_uid and not getattr(r, "profile_url", None)]
+    if missing:
+        with db_session() as ses:
+            from .models import CandidateEnrichment as _CE  # local to avoid cycle on first import
+            enr_rows = ses.execute(
+                select(_CE.candidate_uid, _CE.profile_url).where(
+                    _CE.candidate_uid.in_(missing),
+                    _CE.profile_url.is_not(None),
+                )
+            ).all()
+        enrichment_urls = {uid: url for uid, url in enr_rows if uid and url}
+
     candidates = [
         {
             "candidateUid": r.candidate_uid,
@@ -490,6 +506,11 @@ def get_calibration_queue(
             "gaps": r.gaps_json or [],
             "scoredAt": r.timestamp.isoformat() if r.timestamp else None,
             "bucket": bucket_for(r.final_rating, threshold),
+            "profileUrl": (
+                getattr(r, "profile_url", None)
+                or enrichment_urls.get(r.candidate_uid or "")
+                or None
+            ),
         }
         for r in pool
     ]
@@ -504,6 +525,32 @@ def get_calibration_queue(
         "remainingInPool": max(0, len(eligible) - len(pool)),
         "scoredThisCall": scored_this_call,
     }
+
+
+def get_threshold_for_tagging(position_uid: str) -> int | None:
+    """Position-level threshold used to gate auto-tagging in Comeet.
+
+    Returns None if no recruiter has calibrated for this position yet —
+    callers should treat None as "don't auto-tag, we don't know the bar".
+
+    When multiple recruiters have calibrated the same position, we pick the
+    *strictest* thumbs_up_min (max) so the auto-tag only fires on
+    candidates strong enough that the most demanding recruiter on the
+    position would 👍. Conservative-by-default avoids polluting Comeet
+    with tags the picky recruiter disagrees with.
+    """
+    if not position_uid:
+        return None
+    with db_session() as ses:
+        rows = ses.scalars(
+            select(RecruiterThreshold.thumbs_up_min_rating).where(
+                RecruiterThreshold.position_uid == position_uid,
+                RecruiterThreshold.thumbs_up_min_rating.is_not(None),
+            )
+        ).all()
+    if not rows:
+        return None
+    return max(rows)
 
 
 def get_session_state(recruiter_name: str, position_uid: str) -> dict[str, Any]:
@@ -527,6 +574,7 @@ __all__ = [
     "Threshold",
     "bucket_for",
     "get_threshold",
+    "get_threshold_for_tagging",
     "record_verdict",
     "get_agreement",
     "get_calibration_queue",

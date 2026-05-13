@@ -186,7 +186,39 @@ def apply_rating_tag(
     if not settings.auto_tag_enabled and not force:
         log.debug("apply_rating_tag: AUTO_TAG_ENABLED=0; skipping")
         return None
-    if int(rating) < settings.tag_rating_threshold and not force:
+
+    # Calibration gate: don't tag anything on a position until a recruiter
+    # has actually calibrated for it. Without that signal, we don't know
+    # where the recruiter's 👍 line is and would be guessing with the
+    # global default — exactly the noise this whole calibration workflow
+    # was built to eliminate. When calibration exists, use the strictest
+    # recruiter's thumbs_up_min as the bar.
+    calibrated_threshold: int | None = None
+    if position_uid and not force:
+        try:
+            from . import calibration as cal
+            calibrated_threshold = cal.get_threshold_for_tagging(position_uid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "apply_rating_tag: calibration lookup failed for %s: %s — "
+                "skipping tag to be safe", position_uid, exc,
+            )
+            return None
+        if calibrated_threshold is None:
+            log.info(
+                "apply_rating_tag: position %s has no recruiter calibration yet; "
+                "skipping tag", position_uid,
+            )
+            return None
+        if int(rating) < calibrated_threshold:
+            log.debug(
+                "apply_rating_tag: rating %s < calibrated threshold %s; skipping",
+                rating, calibrated_threshold,
+            )
+            return None
+    elif int(rating) < settings.tag_rating_threshold and not force:
+        # Force path or missing position_uid — fall back to the legacy global
+        # threshold so manual tag invocations still respect *some* bar.
         log.debug("apply_rating_tag: rating %s < threshold %s; skipping", rating, settings.tag_rating_threshold)
         return None
 
@@ -244,11 +276,17 @@ def apply_rating_tag(
     )
     log.info("tagged candidate=%s person_id=%s with %s", candidate_uid, person_id, tag_name)
 
-    # Flag management: candidates at or above flag_rating_threshold get
-    # is_favorite=true; on a re-score that drops below the threshold we ALSO
-    # clear the flag so it actually reflects the current rating.
+    # Flag management: candidates at or above the recruiter-calibrated bar
+    # (or the legacy global threshold when no calibration is available, e.g.
+    # in force/manual-tag flows) get is_favorite=true. On a re-score that
+    # drops them below the bar we ALSO clear the flag so it reflects reality.
     if settings.auto_flag_enabled:
-        should_flag = int(rating) >= int(settings.flag_rating_threshold)
+        flag_bar = (
+            calibrated_threshold
+            if calibrated_threshold is not None
+            else int(settings.flag_rating_threshold)
+        )
+        should_flag = int(rating) >= flag_bar
         numeric_id = numeric_candidate_id_from_url(candidate_url)
         if not numeric_id:
             # Fallback: derive from a fresh public-API fetch.

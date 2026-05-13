@@ -1249,6 +1249,30 @@ def calibration_state(recruiter: str, position_uid: str) -> dict[str, Any]:
     return cal.get_session_state(recruiter.strip(), pos)
 
 
+class CalibrationPrewarmBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    n: int = 15
+
+
+@router.post("/calibration/prewarm")
+def calibration_prewarm(body: CalibrationPrewarmBody) -> dict[str, Any]:
+    """Fire-and-forget: kick off background scoring of the next N unscored
+    candidates for this position. Called from the frontend the moment a
+    recruiter picks a position — by the time they're done picking class +
+    typing the brief, the calibration queue is likely pre-warmed and the
+    first batch loads in <1s instead of 1-2 min.
+
+    Returns immediately (HTTP 200) regardless of whether the prewarm thread
+    completes successfully; this is a hint, not a contract.
+    """
+    from .. import prewarm
+    pos = _resolve_pos(body.position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    n = max(1, min(int(body.n or 15), 50))
+    return prewarm.prewarm_position(pos, n=n)
+
+
 @router.get("/candidate/enrichment")
 def candidate_enrichment(candidate_uid: str) -> dict[str, Any]:
     """Structured profile (career timeline, LinkedIn, education) for one candidate.

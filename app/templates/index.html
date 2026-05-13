@@ -1014,12 +1014,33 @@
             renderSessionHeader();
             gotoStep(3);
             doAutoClass();
+            // Kick off background pre-scoring so the calibration queue is
+            // likely pre-warmed by the time the recruiter finishes class +
+            // brief. Fire-and-forget; we never await this.
+            kickPrewarm(p.uid);
           });
           wrap.appendChild(card);
         });
       } catch (e) {
         setErr(e.message || String(e));
       }
+    }
+
+    // Fire-and-forget: tell the backend to start pre-scoring the next 15
+    // unscored candidates for this position. Server spawns a daemon thread
+    // and returns immediately. We never await — by the time the recruiter
+    // walks through class + brief (10-30s), there's a good chance the
+    // calibration queue is already warm.
+    function kickPrewarm(positionUid) {
+      if (!positionUid) return;
+      api("/api/calibration/prewarm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position_uid: positionUid, n: 15 }),
+      }).catch((e) => {
+        // Non-blocking; the calibration queue's lazy-fill is the safety net.
+        console.warn("prewarm kick failed:", e && e.message);
+      });
     }
 
     // ─── Step 3: auto-class ─────────────────────────────────────────
@@ -1172,11 +1193,11 @@
       if (!c) return;
       const pros = (c.strengths || []).filter(Boolean);
       const cons = (c.gaps || []).filter(Boolean);
-      // Comeet candidate page deeplink — uses the alphanumeric uid; the
-      // recruiter can click through to do a deeper review off-platform.
-      const comeetUrl = "https://app.comeet.co/app/req/" +
-        encodeURIComponent(state.positionUid) + "/can/" +
-        encodeURIComponent(c.candidateUid);
+      // Use Comeet's own profile URL (captured at scoring time from
+      // candidate.URL) — only that format navigates inside app.comeet.co.
+      // If for some reason it's missing (very old scoring rows), the
+      // enrichment fetch will resolve one and patch the anchor below.
+      const comeetUrl = c.profileUrl || "";
       const scoredAt = c.scoredAt
         ? new Date(c.scoredAt).toLocaleString()
         : "—";
@@ -1234,7 +1255,13 @@
 
         <div class="cal-meta-row" id="calMetaRow">
           <span>Scored ${escapeHtml(scoredAt)}</span>
-          <a href="${comeetUrl}" target="_blank" rel="noopener">Open in Comeet ↗</a>
+          <a id="calComeetLink"
+             href="${comeetUrl || '#'}"
+             target="_blank"
+             rel="noopener"
+             ${comeetUrl ? '' : 'style="opacity:0.5; pointer-events:none;"'}>
+            Open in Comeet ↗
+          </a>
           <span id="calLinkedinSlot"></span>
         </div>
 
@@ -1298,6 +1325,20 @@
         // Race guard: did the recruiter advance to a different candidate?
         const cur = calQueue[calCurrentIdx];
         if (!cur || cur.candidateUid !== reqUid) return;
+
+        // If the Comeet link wasn't on the queue payload (older scoring
+        // rows, before profile_url was captured), enrichment is the lazy
+        // fallback. Patch the anchor in place so the recruiter can now
+        // click through.
+        if (res.profileUrl && !cur.profileUrl) {
+          cur.profileUrl = res.profileUrl;
+          const a = document.getElementById("calComeetLink");
+          if (a) {
+            a.href = res.profileUrl;
+            a.style.opacity = "";
+            a.style.pointerEvents = "";
+          }
+        }
 
         const tl = res.careerTimeline || [];
         const ed = res.education || [];

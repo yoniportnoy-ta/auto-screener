@@ -115,6 +115,50 @@ services:
       - key: AUTO_TAG_ENABLED
         value: "1"
 
+  # Background prewarm: score the next 15 candidates across every open
+  # position so calibration sessions usually open onto a pre-scored batch.
+  # Unlike auto-screener-scan, this is NOT gated on auto-screen opt-in and
+  # never applies tags — the goal is just to warm the calibration queue.
+  - type: cron
+    name: auto-screener-prewarm
+    runtime: python
+    plan: starter
+    region: frankfurt
+    branch: main
+    rootDir: .
+    buildCommand: pip install -e .
+    schedule: "30 * * * *"   # hourly at :30, offset from scan-all
+    startCommand: python -m app.cli prewarm-all
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: auto-screener-db
+          property: connectionString
+      - key: SCREENER_API_TOKEN
+        sync: false
+      - key: COMEET_API_KEY
+        sync: false
+      - key: COMEET_API_SECRET
+        sync: false
+      - key: COMEET_APP_EMAIL
+        sync: false
+      - key: COMEET_APP_PASSWORD
+        sync: false
+      - key: CAPTCHA_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SCREENER_DEBUG_LOGGING
+        value: "1"
+      # Critical: never apply tags during prewarm. Tagging is gated on
+      # recruiter calibration via the auto-screener-scan cron path.
+      - key: AUTO_TAG_ENABLED
+        value: "0"
+
   # Tag-change feedback poller: detects when a recruiter swapped one of our
   # AI rating tags for a different one and records that as auto-feedback.
   - type: cron

@@ -46,6 +46,7 @@ def append_debug_log(
     summary: str,
     strengths: list[str] | None,
     gaps: list[str] | None,
+    profile_url: str | None = None,
 ) -> None:
     """Best-effort insert. Never raises — debug logging is non-critical."""
     if not is_debug_logging_enabled():
@@ -71,6 +72,7 @@ def append_debug_log(
                 summary=_truncate(summary, MAX_SUMMARY_CHARS),
                 strengths_json=list(strengths or []),
                 gaps_json=list(gaps or []),
+                profile_url=(profile_url or None),
             )
             session.add(row)
     except Exception as exc:  # noqa: BLE001

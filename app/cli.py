@@ -32,6 +32,30 @@ async def cmd_scan_all() -> int:
     return 0
 
 
+async def cmd_prewarm_all() -> int:
+    """Pre-score the next N candidates across every open position.
+
+    Wired to the hourly `auto-screener-prewarm` cron. Unlike scan-all (which
+    only walks opted-in positions), this runs against *every* open position
+    so calibration sessions opened on any position have a good chance of
+    landing on already-scored candidates.
+
+    Doesn't apply tags — tagging is gated separately on whether the lead
+    recruiter has calibrated for the position.
+    """
+    from .prewarm import prewarm_all_open_positions
+
+    res = prewarm_all_open_positions(n_per_position=15, time_budget_s=900.0)
+    if res.get("error"):
+        log.error("prewarm-all: %s", res["error"])
+        return 1
+    log.info(
+        "prewarm-all done: scanned=%d elapsed=%ss",
+        res.get("scanned", 0), res.get("elapsed_s", 0),
+    )
+    return 0
+
+
 async def cmd_refresh_rubrics() -> int:
     """Force-regenerate learned rubrics for every class with enough feedback."""
     from .position_classes import list_all_classes
@@ -179,6 +203,7 @@ async def cmd_backfill_tags(position_uid: str | None = None) -> int:
 
 COMMANDS = {
     "scan-all": cmd_scan_all,
+    "prewarm-all": cmd_prewarm_all,
     "refresh-rubrics": cmd_refresh_rubrics,
     "refresh-comeet-session": cmd_refresh_comeet_session,
     "poll-feedback": cmd_poll_feedback,

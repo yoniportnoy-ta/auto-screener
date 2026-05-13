@@ -207,6 +207,10 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
         arithmetic_applied = True
 
     # 6) Debug log (no-op when disabled)
+    # candidate.URL is Comeet's canonical web URL in the form
+    # https://app.comeet.co/app/req/<numericPos>/can/<numericCand> — the
+    # only format that actually navigates inside the app. We store it so
+    # the calibration UI can link straight to the recruiter's view.
     append_debug_log(
         candidate_uid=candidate_uid,
         candidate_name=_full_name(candidate),
@@ -226,6 +230,7 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
         summary=pass_result.summary,
         strengths=pass_result.strengths,
         gaps=pass_result.gaps,
+        profile_url=(candidate.get("URL") or None),
     )
 
     return ScoreResult(

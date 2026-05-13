@@ -165,6 +165,12 @@ class DebugScoring(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     strengths_json: Mapped[list[str] | None] = mapped_column(JSON)
     gaps_json: Mapped[list[str] | None] = mapped_column(JSON)
+    # Canonical Comeet web URL for this candidate
+    # (https://app.comeet.co/app/req/.../can/...). We capture it from the
+    # candidate.URL field at scoring time because Comeet's alphanumeric API
+    # uids don't navigate inside the app — only the numeric URL it ships in
+    # the candidate object works.
+    profile_url: Mapped[str | None] = mapped_column(String(500))
 
 
 class ComeetAppSession(Base):
@@ -313,6 +319,9 @@ class CandidateEnrichment(Base):
 
     candidate_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
+    # Canonical Comeet web URL (the one that actually works inside app.comeet.co).
+    # Populated from candidate.URL on first enrichment.
+    profile_url: Mapped[str | None] = mapped_column(String(500))
     career_timeline_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     education_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
     extraction_error: Mapped[str | None] = mapped_column(String(200))
