@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <!-- Black background -->
+  <rect width="64" height="64" rx="10" fill="#000"/>
+  <!-- Magnifying glass handle (drawn first so the lens covers its top) -->
+  <rect x="40" y="40.5" width="6" height="22"
+        rx="3" transform="rotate(-45 43 51.5)" fill="#fff"/>
+  <!-- Lens ring -->
+  <circle cx="26" cy="26" r="17" fill="none" stroke="#fff" stroke-width="5"/>
+  <!-- Tilde / wave inside the lens -->
+  <path d="M16 28
+           C 19 21, 23 21, 26 26
+           C 29 31, 33 31, 36 24"
+        fill="none" stroke="#fff" stroke-width="4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
