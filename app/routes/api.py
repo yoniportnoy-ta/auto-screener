@@ -1241,6 +1241,22 @@ def calibration_state(recruiter: str, position_uid: str) -> dict[str, Any]:
     return cal.get_session_state(recruiter.strip(), pos)
 
 
+@router.get("/candidate/enrichment")
+def candidate_enrichment(candidate_uid: str) -> dict[str, Any]:
+    """Structured profile (career timeline, LinkedIn, education) for one candidate.
+
+    Cache-first: returns instantly if we've extracted this candidate before;
+    otherwise fetches their CV from Comeet, runs a focused Claude extraction
+    pass (~2-3s, ~$0.01), caches the result. Errors cache too — a candidate
+    with no CV on file won't get re-tried on every refresh.
+    """
+    from .. import enrichment as enr
+    cuid = (candidate_uid or "").strip()
+    if not cuid:
+        raise HTTPException(400, "candidate_uid required")
+    return enr.get_or_extract(cuid)
+
+
 # ─── Scan flow ───────────────────────────────────────────────────────────────
 class ScanNowBody(BaseModel):
     position_uid: str = Field(min_length=1)

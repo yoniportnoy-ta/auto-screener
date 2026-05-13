@@ -443,6 +443,96 @@
       margin-bottom: 1.2rem;
     }
 
+    /* Career timeline (extracted lazily per candidate via Claude) */
+    .cal-timeline {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      border-left: 2px solid var(--border);
+      padding-left: 0.9rem;
+    }
+    .cal-timeline li {
+      position: relative;
+      padding: 0.1rem 0 0.9rem 0;
+    }
+    .cal-timeline li:last-child { padding-bottom: 0; }
+    .cal-timeline li::before {
+      content: "";
+      position: absolute;
+      left: -1.06rem;
+      top: 0.45rem;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid var(--bg);
+    }
+    .cal-job-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.8rem;
+      align-items: baseline;
+      margin-bottom: 0.15rem;
+    }
+    .cal-job-role {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text);
+    }
+    .cal-job-role .at {
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+    .cal-job-dates {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .cal-job-highlights {
+      list-style: none;
+      padding: 0;
+      margin: 0.3rem 0 0;
+    }
+    .cal-job-highlights li {
+      padding: 0.2rem 0 0.2rem 0.9rem;
+      position: relative;
+      font-size: 0.85rem;
+      line-height: 1.4;
+      color: var(--text-muted);
+    }
+    .cal-job-highlights li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: var(--text-muted);
+    }
+    .cal-timeline-loading {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .cal-timeline-error {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-style: italic;
+    }
+
+    /* Education + LinkedIn link */
+    .cal-edu {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+    .cal-edu li { padding: 0.15rem 0; }
+    .cal-edu .school { font-weight: 500; }
+    .cal-edu .degree { color: var(--text-muted); margin-left: 0.3rem; }
+    .cal-edu .year { color: var(--text-muted); margin-left: 0.3rem; font-variant-numeric: tabular-nums; }
+
     /* Round summary modal */
     .cal-summary {
       padding: 2rem;
@@ -1026,6 +1116,20 @@
           &middot; Candidate ${calCurrentIdx + 1} of ${calQueue.length} this round
         </p>
 
+        <!-- Career timeline + education + LinkedIn — populated by enrichment fetch -->
+        <div class="cal-section">
+          <h4>Career timeline</h4>
+          <div id="calTimeline">
+            <div class="cal-timeline-loading">
+              <div class="spinner"></div> Reading the CV…
+            </div>
+          </div>
+        </div>
+        <div class="cal-section" id="calEduSection" style="display:none;">
+          <h4>Education</h4>
+          <ul class="cal-edu" id="calEdu"></ul>
+        </div>
+
         ${c.summary ? `
           <div class="cal-section">
             <h4>AI summary</h4>
@@ -1047,9 +1151,10 @@
           </div>
         ` : ""}
 
-        <div class="cal-meta-row">
+        <div class="cal-meta-row" id="calMetaRow">
           <span>Scored ${escapeHtml(scoredAt)}</span>
           <a href="${comeetUrl}" target="_blank" rel="noopener">Open in Comeet ↗</a>
+          <span id="calLinkedinSlot"></span>
         </div>
 
         <div class="cal-thumbs" style="margin-top:1.4rem;">
@@ -1071,6 +1176,84 @@
       $("calCard").querySelectorAll(".cal-thumb").forEach((btn) => {
         btn.addEventListener("click", () => submitVerdict(btn.dataset.verdict));
       });
+      // Lazy-load enrichment for this candidate.
+      loadEnrichment(c.candidateUid);
+    }
+
+    // Fetch + render career timeline / education / LinkedIn for one candidate.
+    // Snapshots the candidate uid we asked for so a fast-moving recruiter
+    // who thumbs through 2-3 cards before the response arrives doesn't
+    // get stale data painted into the wrong card.
+    async function loadEnrichment(candidateUid) {
+      const reqUid = candidateUid;
+      try {
+        const res = await api(
+          "/api/candidate/enrichment?candidate_uid=" + encodeURIComponent(candidateUid)
+        );
+        // Race guard: did the recruiter advance to a different candidate?
+        const cur = calQueue[calCurrentIdx];
+        if (!cur || cur.candidateUid !== reqUid) return;
+
+        const tl = res.careerTimeline || [];
+        const ed = res.education || [];
+        const slot = document.getElementById("calTimeline");
+        if (!slot) return;
+
+        if (!tl.length) {
+          slot.innerHTML =
+            '<div class="cal-timeline-error">' +
+            escapeHtml(res.error || "No career history extracted from CV.") +
+            "</div>";
+        } else {
+          slot.innerHTML = '<ul class="cal-timeline">' + tl.map((job) => {
+            const dates = [job.start, job.end].filter(Boolean).join(" – ");
+            const hl = (job.highlights || []).filter(Boolean);
+            const company = escapeHtml(job.company || "");
+            const role = escapeHtml(job.role || "");
+            const headerLine = company
+              ? `${role}<span class="at"> at ${company}</span>`
+              : role;
+            return `
+              <li>
+                <div class="cal-job-header">
+                  <span class="cal-job-role">${headerLine}</span>
+                  <span class="cal-job-dates">${escapeHtml(dates)}</span>
+                </div>
+                ${hl.length ? '<ul class="cal-job-highlights">' +
+                  hl.map((h) => "<li>" + escapeHtml(h) + "</li>").join("") +
+                  "</ul>" : ""}
+              </li>
+            `;
+          }).join("") + "</ul>";
+        }
+
+        if (ed.length) {
+          document.getElementById("calEdu").innerHTML = ed.map((e) => {
+            const parts = [];
+            if (e.school) parts.push('<span class="school">' + escapeHtml(e.school) + "</span>");
+            if (e.degree) parts.push('<span class="degree">' + escapeHtml(e.degree) + "</span>");
+            if (e.year) parts.push('<span class="year">' + escapeHtml(e.year) + "</span>");
+            return "<li>" + parts.join("") + "</li>";
+          }).join("");
+          document.getElementById("calEduSection").style.display = "";
+        }
+
+        if (res.linkedinUrl) {
+          const slot2 = document.getElementById("calLinkedinSlot");
+          if (slot2) {
+            slot2.innerHTML =
+              '<a href="' + escapeHtml(res.linkedinUrl) +
+              '" target="_blank" rel="noopener">LinkedIn ↗</a>';
+          }
+        }
+      } catch (e) {
+        const slot = document.getElementById("calTimeline");
+        if (slot) {
+          slot.innerHTML =
+            '<div class="cal-timeline-error">Couldn\'t load timeline: ' +
+            escapeHtml(e.message || String(e)) + "</div>";
+        }
+      }
     }
 
     async function submitVerdict(verdict) {

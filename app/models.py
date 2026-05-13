@@ -291,6 +291,32 @@ class CalibrationVerdict(Base):
     )
 
 
+class CandidateEnrichment(Base):
+    """Cached structured profile per candidate.
+
+    Populated lazily the first time a recruiter views a candidate in the
+    calibration UI. Holds:
+      - LinkedIn URL (from Comeet candidate object or extracted from CV)
+      - career_timeline_json: [{company, role, start, end, highlights[]}]
+      - education_json: [{school, degree, year}]
+
+    extraction_error is non-null when extraction failed (no CV, Claude
+    error, etc.); we still write a row so we don't retry on every queue
+    refresh. The row can be deleted to force a fresh extraction.
+    """
+
+    __tablename__ = "candidate_enrichment"
+
+    candidate_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500))
+    career_timeline_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    education_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    extraction_error: Mapped[str | None] = mapped_column(String(200))
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 __all__ = [
     "Base",
     "CandidateLock",
@@ -304,4 +330,5 @@ __all__ = [
     "AppliedTag",
     "RecruiterThreshold",
     "CalibrationVerdict",
+    "CandidateEnrichment",
 ]
