@@ -255,15 +255,16 @@
       cursor: not-allowed;
     }
 
-    /* ─── Done state ─── */
-    .done-card {
+    /* ─── Done state (legacy / finished card shell) ─── */
+    .done-card,
+    .cal-finished {
       padding: 2.5rem;
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
       text-align: center;
     }
-    .done-card .checkmark {
+    .checkmark {
       width: 56px;
       height: 56px;
       border-radius: 50%;
@@ -276,14 +277,196 @@
       font-size: 1.7rem;
       margin: 0 auto 1.2rem;
     }
-    .done-card h1 { margin: 0 0 0.6rem; font-size: 1.4rem; }
-    .done-card p {
+    .done-card h1, .cal-finished h2 { margin: 0 0 0.6rem; font-size: 1.4rem; }
+    .done-card p, .cal-finished p {
       color: var(--text-muted);
       font-size: 0.9rem;
       line-height: 1.55;
       max-width: 480px;
-      margin: 0 auto;
+      margin: 0.4rem auto;
     }
+    .cal-finished.hidden { display: none; }
+
+    /* ─── Calibration step ─── */
+    .calibration { max-width: 720px; }
+    .calibration .hidden { display: none; }
+
+    .cal-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.6rem 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+    .cal-round {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .cal-round span { color: var(--accent); }
+    .cal-agreement {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .cal-agreement .label {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .cal-agreement .value {
+      color: var(--text);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Profile card */
+    .cal-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.8rem;
+      margin-bottom: 1.25rem;
+    }
+    .cal-name {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.3rem;
+    }
+    .cal-subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin: 0 0 1.4rem;
+    }
+    .cal-section {
+      margin-bottom: 1.2rem;
+    }
+    .cal-section h4 {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      margin: 0 0 0.4rem;
+      font-weight: 600;
+    }
+    .cal-summary-text {
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: var(--text);
+      margin: 0;
+    }
+    .cal-pros, .cal-cons {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .cal-pros li, .cal-cons li {
+      padding: 0.35rem 0 0.35rem 1.4rem;
+      position: relative;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .cal-pros li::before {
+      content: "+";
+      position: absolute;
+      left: 0;
+      color: var(--ok);
+      font-weight: 700;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+    .cal-cons li::before {
+      content: "−";
+      position: absolute;
+      left: 0;
+      color: var(--err);
+      font-weight: 700;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+    .cal-meta-row {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      margin-top: 1.2rem;
+    }
+    .cal-meta-row a { color: var(--accent); text-decoration: none; }
+    .cal-meta-row a:hover { text-decoration: underline; }
+
+    /* Thumb buttons */
+    .cal-thumbs {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.6rem;
+    }
+    .cal-thumb {
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.3rem;
+      transition: border-color 0.15s, background 0.15s, transform 0.05s;
+    }
+    .cal-thumb:hover { border-color: var(--accent); background: var(--panel-2); }
+    .cal-thumb:active { transform: scale(0.98); }
+    .cal-thumb:disabled { opacity: 0.5; cursor: not-allowed; }
+    .cal-thumb .icon { font-size: 1.8rem; line-height: 1; }
+    .cal-thumb.up:hover { border-color: var(--ok); }
+    .cal-thumb.down:hover { border-color: var(--err); }
+    .cal-thumb.question:hover { border-color: var(--warn); }
+
+    /* Round summary modal */
+    .cal-summary {
+      padding: 2rem;
+      background: var(--panel);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      text-align: center;
+    }
+    .cal-summary.hidden { display: none; }
+    .cal-summary h2 { margin: 0 0 0.5rem; font-size: 1.3rem; }
+    .cal-summary p {
+      color: var(--text);
+      font-size: 0.95rem;
+      line-height: 1.55;
+      margin: 0.4rem auto;
+      max-width: 480px;
+    }
+    .cal-summary .hint {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: 1rem;
+    }
+    .btn-secondary {
+      padding: 0.7rem 1.5rem;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
 
     /* ─── Extension install / update card ─── */
     #extensionCard {
@@ -414,15 +597,50 @@
       </div>
     </section>
 
-    <!-- ──────────────── Done ──────────────── -->
-    <section class="step" id="stepDone">
-      <div class="done-card">
-        <div class="checkmark">✓</div>
-        <h1>Session active</h1>
+    <!-- ──────────────── Calibration ──────────────── -->
+    <section class="step calibration" id="stepDone">
+      <!-- Top bar: round number + agreement % + nothing-found state -->
+      <div class="cal-toolbar" id="calToolbar">
+        <div class="cal-round">Round <span id="calRoundNum">1</span></div>
+        <div class="cal-agreement" id="calAgreement">
+          <span class="label">Agreement so far</span>
+          <span class="value" id="calAgreementValue">—</span>
+        </div>
+      </div>
+
+      <!-- The candidate card itself. Replaced on every navigation. -->
+      <div class="cal-card" id="calCard">
+        <div class="working"><div class="spinner"></div> Loading next candidate…</div>
+      </div>
+
+      <!-- Round-summary modal: shown after every 5 verdicts -->
+      <div class="cal-summary hidden" id="calSummary">
+        <h2>Round complete</h2>
         <p>
-          You're all set. The full screening view is coming next — for now,
-          everything you set up is saved on the position record, so any scan
-          (Chrome extension, scheduled cron) will use it automatically.
+          You agreed with the AI on
+          <strong id="summaryAgreement">—</strong> of the candidates this round.
+          <span id="summaryDelta"></span>
+        </p>
+        <p class="hint">
+          Want to keep calibrating with a fresh set of 5, or stop here?
+        </p>
+        <div class="button-row">
+          <button class="btn-secondary" id="calStopBtn" type="button">I'm done</button>
+          <button class="btn-primary" id="calContinueBtn" type="button">Next round →</button>
+        </div>
+      </div>
+
+      <!-- Final state: queue exhausted OR recruiter clicked Stop -->
+      <div class="cal-finished hidden" id="calFinished">
+        <div class="checkmark">✓</div>
+        <h2>Calibration complete</h2>
+        <p>
+          Your personal threshold for this role is locked in. From here, the
+          AI's 👍 / 👎 / ❓ buckets for this position will match your taste.
+        </p>
+        <p class="hint">
+          The "Flag candidates" button (applies your 👍s as Comeet tags) and
+          the full screening dashboard are coming in the next slice.
         </p>
       </div>
     </section>
@@ -691,12 +909,224 @@
         saveState();
         renderSessionHeader();
         gotoStep(5);
+        startCalibration();
       } catch (e) {
         setErr(e.message || String(e));
         btn.disabled = false;
         btn.textContent = "Start session →";
       }
     });
+
+    // ─── Step 5: Calibration loop ───────────────────────────────────
+    // Per session: we pull a fresh batch of 5 candidates the recruiter
+    // hasn't verdicted yet, render them one at a time, and after 5
+    // verdicts show the round summary so they can choose to continue
+    // or stop. Threshold updates happen server-side after every click.
+    const VERDICTS_PER_ROUND = 5;
+    let calQueue = [];          // current batch of candidates to review
+    let calCurrentIdx = 0;      // pointer within calQueue
+    let calVerdictsThisRound = 0;
+    let calLastRoundAgreement = null;
+
+    async function startCalibration() {
+      // Fresh state each entry; if the recruiter reloaded mid-round, we'll
+      // re-fetch from the server and pick up where the verdicts left off.
+      calQueue = [];
+      calCurrentIdx = 0;
+      calVerdictsThisRound = 0;
+      calLastRoundAgreement = null;
+      $("calFinished").classList.add("hidden");
+      $("calSummary").classList.add("hidden");
+      await refreshCalibrationToolbar();
+      await loadNextBatch();
+    }
+
+    async function refreshCalibrationToolbar() {
+      try {
+        const s = await api(
+          "/api/calibration/state?recruiter=" +
+          encodeURIComponent(state.recruiter) +
+          "&position_uid=" + encodeURIComponent(state.positionUid)
+        );
+        $("calRoundNum").textContent = String(s.roundNum || 1);
+        const a = s.agreement && s.agreement.overall;
+        $("calAgreementValue").textContent =
+          a == null ? "—" : Math.round(a * 100) + "%";
+      } catch (_) {
+        // Non-blocking; toolbar will refresh on next verdict anyway.
+      }
+    }
+
+    async function loadNextBatch() {
+      $("calCard").innerHTML =
+        '<div class="working"><div class="spinner"></div> Loading next 5 candidates…</div>';
+      try {
+        const res = await api(
+          "/api/calibration/queue?recruiter=" +
+          encodeURIComponent(state.recruiter) +
+          "&position_uid=" + encodeURIComponent(state.positionUid) +
+          "&n=" + VERDICTS_PER_ROUND
+        );
+        calQueue = res.candidates || [];
+        calCurrentIdx = 0;
+        calVerdictsThisRound = 0;
+        if (!calQueue.length) {
+          showFinished("No more 👍-bucket candidates to review on this position. Nice work.");
+          return;
+        }
+        renderCurrentCandidate();
+      } catch (e) {
+        $("calCard").innerHTML =
+          '<div class="err-banner" style="margin:0">' +
+          escapeHtml(e.message || String(e)) + "</div>";
+      }
+    }
+
+    function renderCurrentCandidate() {
+      const c = calQueue[calCurrentIdx];
+      if (!c) return;
+      const pros = (c.strengths || []).filter(Boolean);
+      const cons = (c.gaps || []).filter(Boolean);
+      // Comeet candidate page deeplink — uses the alphanumeric uid; the
+      // recruiter can click through to do a deeper review off-platform.
+      const comeetUrl = "https://app.comeet.co/app/req/" +
+        encodeURIComponent(state.positionUid) + "/can/" +
+        encodeURIComponent(c.candidateUid);
+      const scoredAt = c.scoredAt
+        ? new Date(c.scoredAt).toLocaleString()
+        : "—";
+      $("calCard").innerHTML = `
+        <h2 class="cal-name">${escapeHtml(c.candidateName || c.candidateUid)}</h2>
+        <p class="cal-subtitle">
+          ${escapeHtml(c.positionName || state.positionName || "")}
+          &middot; Candidate ${calCurrentIdx + 1} of ${calQueue.length} this round
+        </p>
+
+        ${c.summary ? `
+          <div class="cal-section">
+            <h4>AI summary</h4>
+            <p class="cal-summary-text">${escapeHtml(c.summary)}</p>
+          </div>
+        ` : ""}
+
+        ${pros.length ? `
+          <div class="cal-section">
+            <h4>Why this looks like a fit</h4>
+            <ul class="cal-pros">${pros.map(s => "<li>" + escapeHtml(s) + "</li>").join("")}</ul>
+          </div>
+        ` : ""}
+
+        ${cons.length ? `
+          <div class="cal-section">
+            <h4>Concerns / gaps</h4>
+            <ul class="cal-cons">${cons.map(s => "<li>" + escapeHtml(s) + "</li>").join("")}</ul>
+          </div>
+        ` : ""}
+
+        <div class="cal-meta-row">
+          <span>Scored ${escapeHtml(scoredAt)}</span>
+          <a href="${comeetUrl}" target="_blank" rel="noopener">Open in Comeet ↗</a>
+        </div>
+
+        <div class="cal-thumbs" style="margin-top:1.4rem;">
+          <button class="cal-thumb down" type="button" data-verdict="down">
+            <span class="icon">👎</span>
+            <span>Not a fit</span>
+          </button>
+          <button class="cal-thumb question" type="button" data-verdict="question">
+            <span class="icon">❓</span>
+            <span>Not sure</span>
+          </button>
+          <button class="cal-thumb up" type="button" data-verdict="up">
+            <span class="icon">👍</span>
+            <span>Good fit</span>
+          </button>
+        </div>
+      `;
+      // Bind thumb handlers.
+      $("calCard").querySelectorAll(".cal-thumb").forEach((btn) => {
+        btn.addEventListener("click", () => submitVerdict(btn.dataset.verdict));
+      });
+    }
+
+    async function submitVerdict(verdict) {
+      const c = calQueue[calCurrentIdx];
+      if (!c) return;
+      // Disable all thumbs while we round-trip.
+      $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = true);
+      try {
+        const res = await api("/api/calibration/verdict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recruiter: state.recruiter,
+            position_uid: state.positionUid,
+            candidate_uid: c.candidateUid,
+            verdict: verdict,
+            ai_rating: c.rating,
+            ai_confidence: c.confidence,
+          }),
+        });
+        // Refresh toolbar with new agreement number.
+        const a = res.agreement && res.agreement.overall;
+        $("calAgreementValue").textContent =
+          a == null ? "—" : Math.round(a * 100) + "%";
+        $("calRoundNum").textContent = String(res.roundNum || 1);
+        calVerdictsThisRound += 1;
+        // Per-round agreement for the summary modal: from the latest byRound entry.
+        const byRound = (res.agreement && res.agreement.byRound) || [];
+        const thisRound = byRound[byRound.length - 1];
+        if (thisRound && thisRound.agreement != null) {
+          calLastRoundAgreement = thisRound.agreement;
+        }
+        calCurrentIdx += 1;
+        if (calVerdictsThisRound >= VERDICTS_PER_ROUND || calCurrentIdx >= calQueue.length) {
+          showRoundSummary();
+        } else {
+          renderCurrentCandidate();
+        }
+      } catch (e) {
+        setErr(e.message || String(e));
+        $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = false);
+      }
+    }
+
+    function showRoundSummary() {
+      const a = calLastRoundAgreement;
+      $("summaryAgreement").textContent =
+        a == null ? "—" : Math.round(a * 100) + "%";
+      // If this isn't the first round, show whether agreement moved.
+      // (For Slice 1, we just show the round's number; growth charting
+      // comes later when we have multiple rounds in the byRound history.)
+      $("summaryDelta").textContent = "";
+      $("calCard").innerHTML = "";  // clear stale candidate card
+      $("calSummary").classList.remove("hidden");
+    }
+
+    $("calContinueBtn").addEventListener("click", () => {
+      $("calSummary").classList.add("hidden");
+      loadNextBatch();
+    });
+
+    $("calStopBtn").addEventListener("click", () => {
+      $("calSummary").classList.add("hidden");
+      showFinished(
+        "Stopped after " + (calVerdictsThisRound || "the first") +
+        " verdict(s) this round. Your threshold is saved."
+      );
+    });
+
+    function showFinished(extraMsg) {
+      $("calCard").innerHTML = "";
+      $("calSummary").classList.add("hidden");
+      const f = $("calFinished");
+      f.querySelector("p.hint")?.remove();
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = extraMsg || "";
+      f.appendChild(note);
+      f.classList.remove("hidden");
+    }
 
     // ─── Extension detection (only shows card if missing/outdated) ──
     function setupExtensionDetect() {
@@ -750,6 +1180,9 @@
         await renderRecruiters();
         if (state.step >= 2 && state.recruiter) await renderPositions();
         if (state.step === 3 && state.positionUid) doAutoClass();
+        if (state.step === 5 && state.recruiter && state.positionUid) {
+          startCalibration();
+        }
       } catch (e) {
         setErr(e.message || String(e));
       }

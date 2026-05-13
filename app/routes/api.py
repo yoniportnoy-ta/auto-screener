@@ -1167,6 +1167,79 @@ def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
     return {"positionUid": pos_uid, "saved": True}
 
 
+# ─── Calibration (thumbs UI) ─────────────────────────────────────────────────
+def _resolve_pos(uid: str) -> str:
+    """Normalize a position uid: numeric Comeet URL form → alphanumeric."""
+    uid = (uid or "").strip()
+    if uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(uid)
+        if resolved:
+            return resolved
+    return uid
+
+
+@router.get("/calibration/queue")
+def calibration_queue(
+    recruiter: str,
+    position_uid: str,
+    n: int = 5,
+) -> dict[str, Any]:
+    """Next batch of candidates the recruiter should review.
+
+    Filtered to candidates currently bucketed as 👍 by the recruiter's
+    threshold, minus anyone they've already verdicted this session.
+    """
+    from .. import calibration as cal
+    recruiter = (recruiter or "").strip()
+    if not recruiter:
+        raise HTTPException(400, "recruiter required")
+    pos = _resolve_pos(position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    items = cal.get_calibration_queue(recruiter, pos, n=max(1, min(n, 20)))
+    return {
+        "positionUid": pos,
+        "candidates": items,
+        "state": cal.get_session_state(recruiter, pos),
+    }
+
+
+class CalibrationVerdictBody(BaseModel):
+    recruiter: str = Field(min_length=1, max_length=200)
+    position_uid: str = Field(min_length=1)
+    candidate_uid: str = Field(min_length=1)
+    verdict: str = Field(pattern=r"^(up|down|question)$")
+    ai_rating: int | None = None
+    ai_confidence: float | None = None
+
+
+@router.post("/calibration/verdict")
+def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
+    """Record a 👍 / 👎 / ❓ verdict and update the recruiter's threshold."""
+    from .. import calibration as cal
+    pos = _resolve_pos(body.position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    result = cal.record_verdict(
+        recruiter_name=body.recruiter.strip(),
+        position_uid=pos,
+        candidate_uid=body.candidate_uid.strip(),
+        verdict=body.verdict,  # type: ignore[arg-type]
+        ai_rating=body.ai_rating,
+        ai_confidence=body.ai_confidence,
+    )
+    return result
+
+
+@router.get("/calibration/state")
+def calibration_state(recruiter: str, position_uid: str) -> dict[str, Any]:
+    """Snapshot of where this recruiter is in calibration for this position."""
+    from .. import calibration as cal
+    pos = _resolve_pos(position_uid)
+    return cal.get_session_state(recruiter.strip(), pos)
+
+
 # ─── Scan flow ───────────────────────────────────────────────────────────────
 class ScanNowBody(BaseModel):
     position_uid: str = Field(min_length=1)

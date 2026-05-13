@@ -221,6 +221,76 @@ class AppliedTag(Base):
     )
 
 
+class RecruiterThreshold(Base):
+    """Per-(recruiter, position) 👍/👎 cutoffs.
+
+    Recruiter X may consider rating-4 a definite 👍 for an iOS role but
+    only rating-5 a 👍 for an EM role; recruiter Y may use different
+    cutoffs entirely. We store both ends:
+
+    - `thumbs_up_min_rating`: lowest AI rating this recruiter has ever
+      👍'd for this position. Anything >= that gets bucketed as 👍.
+    - `thumbs_down_max_rating`: highest AI rating they've ever 👎'd.
+      Anything <= that is 👎.
+
+    The strictly-between range is ❓. Either end can be NULL when the
+    recruiter hasn't given that verdict on this position yet — in that
+    case the bucketizer falls back to safe defaults (>= 4 → 👍, <= 2 → 👎).
+    """
+
+    __tablename__ = "recruiter_thresholds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recruiter_name: Mapped[str] = mapped_column(String(200), index=True)
+    position_uid: Mapped[str] = mapped_column(String(64), index=True)
+    thumbs_up_min_rating: Mapped[int | None] = mapped_column(Integer)
+    thumbs_down_max_rating: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "recruiter_name", "position_uid",
+            name="uq_recruiter_threshold_pair",
+        ),
+    )
+
+
+class CalibrationVerdict(Base):
+    """One row per thumb click during calibration.
+
+    Drives threshold computation, agreement tracking, and the "don't show
+    me a candidate I already verdicted" filter on the calibration queue.
+    """
+
+    __tablename__ = "calibration_verdicts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    recruiter_name: Mapped[str] = mapped_column(String(200), index=True)
+    position_uid: Mapped[str] = mapped_column(String(64), index=True)
+    candidate_uid: Mapped[str] = mapped_column(String(64), index=True)
+    verdict: Mapped[str] = mapped_column(String(16))  # 'up' | 'down' | 'question'
+    # Snapshot of the AI's view at verdict time. Frozen so threshold logic
+    # doesn't need to re-look-up DebugScoring later.
+    ai_rating: Mapped[int | None] = mapped_column(Integer)
+    ai_confidence: Mapped[float | None] = mapped_column(Float)
+    # Was the recruiter's thumb in agreement with the AI's bucket at this
+    # moment? Lets us compute round-by-round agreement without re-running
+    # bucketization after the fact.
+    agreed_at_time: Mapped[bool | None] = mapped_column(Boolean)
+    # 1-indexed calibration round number for plotting agreement growth.
+    round_num: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint(
+            "verdict IN ('up', 'down', 'question')",
+            name="ck_calibration_verdict_value",
+        ),
+    )
+
+
 __all__ = [
     "Base",
     "CandidateLock",
@@ -232,4 +302,6 @@ __all__ = [
     "ComeetAppSession",
     "TagCatalog",
     "AppliedTag",
+    "RecruiterThreshold",
+    "CalibrationVerdict",
 ]
