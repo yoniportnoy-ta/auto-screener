@@ -195,8 +195,16 @@ def record_verdict(
     verdict: Verdict,
     ai_rating: int | None,
     ai_confidence: float | None,
+    feedback_text: str | None = None,
 ) -> dict[str, Any]:
     """Persist a thumb click and recompute the recruiter's threshold.
+
+    `feedback_text` is the optional free-form reason the recruiter typed —
+    e.g. "Too senior" / "Great match on the data stack". Stored on the
+    verdict row for later review. We deliberately don't try to map it to a
+    1-5 Feedback row here: the existing Feedback flow expects a numeric
+    rating, and the thumb-trichotomy doesn't map cleanly enough that the
+    AI's scoring rubric should learn from it without supervision.
 
     Returns the updated threshold + the new agreement % + the round number
     this verdict belongs to, so the UI can update headers in one round-trip.
@@ -205,6 +213,11 @@ def record_verdict(
     bucket_at_time = bucket_for(ai_rating, threshold_before)
     agreed = bucket_at_time == verdict if bucket_at_time is not None else None
     round_num = _current_round_num(recruiter_name, position_uid)
+
+    # Trim conservatively. The column is TEXT so there's no DB cap, but
+    # nothing useful tends to live past ~2 KB and we don't want a recruiter
+    # paste-bombing the prompt later.
+    cleaned_text = (feedback_text or "").strip()[:2000] or None
 
     with db_session() as ses:
         ses.add(CalibrationVerdict(
@@ -216,6 +229,7 @@ def record_verdict(
             ai_confidence=ai_confidence,
             agreed_at_time=agreed,
             round_num=round_num,
+            feedback_text=cleaned_text,
         ))
         ses.commit()
 

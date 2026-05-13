@@ -1217,6 +1217,9 @@ class CalibrationVerdictBody(BaseModel):
     verdict: str = Field(pattern=r"^(up|down|question)$")
     ai_rating: int | None = None
     ai_confidence: float | None = None
+    # Optional free-text reason the recruiter typed alongside the thumb.
+    # Caps at ~2 KB server-side; UI suggests a one-liner.
+    feedback_text: str | None = Field(default=None, max_length=4000)
 
 
 @router.post("/calibration/verdict")
@@ -1233,6 +1236,7 @@ def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
         verdict=body.verdict,  # type: ignore[arg-type]
         ai_rating=body.ai_rating,
         ai_confidence=body.ai_confidence,
+        feedback_text=body.feedback_text,
     )
     return result
 

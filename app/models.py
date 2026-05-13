@@ -282,6 +282,10 @@ class CalibrationVerdict(Base):
     agreed_at_time: Mapped[bool | None] = mapped_column(Boolean)
     # 1-indexed calibration round number for plotting agreement growth.
     round_num: Mapped[int | None] = mapped_column(Integer)
+    # Optional free-text reason the recruiter typed alongside their thumb.
+    # E.g. "Too senior", "Great stack match but no ML". Captured here for
+    # review and ultimately to flow into the scoring prompt as context.
+    feedback_text: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(

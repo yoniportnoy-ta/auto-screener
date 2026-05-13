@@ -456,6 +456,44 @@
     .cal-thumb.down:hover { border-color: var(--err); }
     .cal-thumb.question:hover { border-color: var(--warn); }
 
+    /* Free-text feedback box that sits above the thumbs */
+    .cal-feedback-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .cal-feedback-label {
+      font-size: 0.85rem;
+      color: var(--text);
+      font-weight: 500;
+    }
+    .cal-feedback-opt {
+      color: var(--text-muted);
+      font-weight: 400;
+      font-size: 0.78rem;
+    }
+    .cal-feedback-input {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.92rem;
+      line-height: 1.4;
+      resize: vertical;
+      transition: border-color 0.15s;
+    }
+    .cal-feedback-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .cal-feedback-input:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .cal-fallback-banner {
       padding: 0.7rem 0.9rem;
       background: rgba(251, 191, 36, 0.08);
@@ -1200,7 +1238,20 @@
           <span id="calLinkedinSlot"></span>
         </div>
 
-        <div class="cal-thumbs" style="margin-top:1.4rem;">
+        <div class="cal-feedback-wrap" style="margin-top:1.4rem;">
+          <label class="cal-feedback-label" for="calFeedbackText">
+            Why? <span class="cal-feedback-opt">(optional — one line is plenty)</span>
+          </label>
+          <textarea
+            id="calFeedbackText"
+            class="cal-feedback-input"
+            placeholder="e.g. Too senior, wrong stack, great DS background"
+            rows="2"
+            maxlength="2000"
+          ></textarea>
+        </div>
+
+        <div class="cal-thumbs" style="margin-top:0.9rem;">
           <button class="cal-thumb down" type="button" data-verdict="down">
             <span class="icon">👎</span>
             <span>Not a fit</span>
@@ -1219,6 +1270,17 @@
       $("calCard").querySelectorAll(".cal-thumb").forEach((btn) => {
         btn.addEventListener("click", () => submitVerdict(btn.dataset.verdict));
       });
+      // Cmd/Ctrl+Enter inside the textarea = 👍 (the most common click).
+      // Keeps power-users keyboard-only when they're rapid-fire on a thin pool.
+      const fb = $("calFeedbackText");
+      if (fb) {
+        fb.addEventListener("keydown", (ev) => {
+          if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
+            ev.preventDefault();
+            submitVerdict("up");
+          }
+        });
+      }
       // Lazy-load enrichment for this candidate.
       loadEnrichment(c.candidateUid);
     }
@@ -1302,8 +1364,13 @@
     async function submitVerdict(verdict) {
       const c = calQueue[calCurrentIdx];
       if (!c) return;
-      // Disable all thumbs while we round-trip.
+      // Snapshot textarea contents before disabling — disabling can clear
+      // the focused field's transient value in some browsers.
+      const fbEl = $("calFeedbackText");
+      const feedbackText = (fbEl && fbEl.value || "").trim();
+      // Disable all thumbs + textarea while we round-trip.
       $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = true);
+      if (fbEl) fbEl.disabled = true;
       try {
         const res = await api("/api/calibration/verdict", {
           method: "POST",
@@ -1315,6 +1382,7 @@
             verdict: verdict,
             ai_rating: c.rating,
             ai_confidence: c.confidence,
+            feedback_text: feedbackText || null,
           }),
         });
         // Refresh toolbar with new agreement number.
@@ -1338,6 +1406,7 @@
       } catch (e) {
         setErr(e.message || String(e));
         $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = false);
+        if (fbEl) fbEl.disabled = false;
       }
     }
 
