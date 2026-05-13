@@ -37,20 +37,24 @@ log = logging.getLogger(__name__)
 
 Verdict = Literal["up", "down", "question"]
 
-# Defaults used when a recruiter hasn't given any verdicts yet for a
-# position. Picked to roughly match the previous AI-rating-to-tag mapping
-# (4-5 = top, 1-2 = reject) so the recruiter's first calibration round
-# starts from a sensible baseline.
-DEFAULT_THUMBS_UP_MIN = 4
-DEFAULT_THUMBS_DOWN_MAX = 2
-
 
 @dataclass
 class Threshold:
-    """A recruiter's 👍/👎 cutoffs for a single position."""
-    thumbs_up_min_rating: int
-    thumbs_down_max_rating: int
-    has_calibration: bool  # False until the recruiter has verdicted at least once
+    """A recruiter's 👍/👎 cutoffs for a single position.
+
+    Both bounds are optional and start as None: the threshold emerges
+    entirely from this recruiter's verdicts on this position. There's no
+    hardcoded "rating-4 means 👍" — that turned out to be the exact source
+    of recruiter confusion ("what's the threshold?"). The bucket is
+    explicitly *unknown* until the recruiter has clicked anything.
+    """
+    thumbs_up_min_rating: int | None
+    thumbs_down_max_rating: int | None
+
+    @property
+    def has_calibration(self) -> bool:
+        return (self.thumbs_up_min_rating is not None
+                or self.thumbs_down_max_rating is not None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,22 +67,34 @@ class Threshold:
 def bucket_for(rating: int | None, threshold: Threshold) -> Verdict | None:
     """Map an AI rating to a verdict bucket using the recruiter's cutoffs.
 
-    Returns None when there's no rating to bucket (unscored candidate).
+    Returns None when:
+      - the candidate has no rating yet, or
+      - the recruiter hasn't given a relevant verdict yet (so we genuinely
+        don't know which bucket they'd put this candidate in).
+
+    A partial calibration (only 👍 given, never 👎) still works: anything
+    at-or-above the 👍 minimum is "up"; everything else is "question" until
+    the recruiter establishes a 👎 ceiling.
     """
     if rating is None:
         return None
-    if rating >= threshold.thumbs_up_min_rating:
+    up_min = threshold.thumbs_up_min_rating
+    down_max = threshold.thumbs_down_max_rating
+    if up_min is None and down_max is None:
+        return None  # uncalibrated
+    if up_min is not None and rating >= up_min:
         return "up"
-    if rating <= threshold.thumbs_down_max_rating:
+    if down_max is not None and rating <= down_max:
         return "down"
     return "question"
 
 
 def get_threshold(recruiter_name: str, position_uid: str) -> Threshold:
-    """Read the recruiter's current threshold, or return defaults.
+    """Read the recruiter's current threshold.
 
-    Defaults apply until the recruiter has given at least one verdict; once
-    they've thumb-clicked anything, the stored row takes over.
+    Both bounds start as None (no calibration). They become concrete as
+    the recruiter gives 👍/👎 verdicts: the 👍 minimum is the lowest rating
+    they've ever 👍'd; the 👎 maximum is the highest rating they've ever 👎'd.
     """
     with db_session() as ses:
         row = ses.scalar(
@@ -88,21 +104,10 @@ def get_threshold(recruiter_name: str, position_uid: str) -> Threshold:
             )
         )
         if not row:
-            return Threshold(
-                thumbs_up_min_rating=DEFAULT_THUMBS_UP_MIN,
-                thumbs_down_max_rating=DEFAULT_THUMBS_DOWN_MAX,
-                has_calibration=False,
-            )
-        # NULL columns fall back to defaults — useful when the recruiter has
-        # 👎'd things but never 👍'd (or vice versa) yet.
+            return Threshold(thumbs_up_min_rating=None, thumbs_down_max_rating=None)
         return Threshold(
-            thumbs_up_min_rating=(row.thumbs_up_min_rating
-                                  if row.thumbs_up_min_rating is not None
-                                  else DEFAULT_THUMBS_UP_MIN),
-            thumbs_down_max_rating=(row.thumbs_down_max_rating
-                                    if row.thumbs_down_max_rating is not None
-                                    else DEFAULT_THUMBS_DOWN_MAX),
-            has_calibration=True,
+            thumbs_up_min_rating=row.thumbs_up_min_rating,
+            thumbs_down_max_rating=row.thumbs_down_max_rating,
         )
 
 
@@ -293,26 +298,32 @@ def get_calibration_queue(
     recruiter_name: str,
     position_uid: str,
     n: int = 5,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Return the next batch of candidates for this recruiter to verdict.
 
-    Logic:
-      1. Pull all DebugScoring rows for this position (latest per candidate).
-      2. Bucket each one with the recruiter's current threshold.
-      3. Filter to bucket='up' AND not already verdicted by this recruiter.
-      4. Sort by AI rating DESC, then confidence DESC.
-      5. Return the top N as candidate-profile dicts.
+    No bucket filtering. We always rank by AI score and hand the recruiter
+    the top N they haven't already verdicted. The thumbs they click then
+    teach this position's threshold — there's no hardcoded "rating-4 is 👍"
+    rule (that was the source of "but what's the threshold?" confusion
+    in the first place).
 
-    Returns [] when calibration is exhausted (no more 👍 candidates left
-    that this recruiter hasn't already reviewed).
+    The per-candidate `bucket` field is included so the UI *can* show how
+    the AI would currently classify each one given the recruiter's learned
+    threshold, but it's a display hint, not a queue filter. While the
+    recruiter is still uncalibrated, that bucket field is null.
+
+    Returns:
+        {
+          "candidates": [...],   # up to N profiles, top-rated first
+          "isCalibrated": bool,  # whether the recruiter has verdicted yet
+        }
     """
     threshold = get_threshold(recruiter_name, position_uid)
     already = get_already_verdicted_uids(recruiter_name, position_uid)
 
     with db_session() as ses:
-        # Latest scoring row per candidate. The DebugScoring table can have
-        # multiple rows per candidate (one per scan/rescore); we want the
-        # most recent for the current AI judgment.
+        # Latest scoring row per candidate. DebugScoring may have several
+        # rows per candidate (one per scan/rescore); we want the most recent.
         rows = ses.execute(
             select(DebugScoring).where(
                 DebugScoring.position_uid == position_uid,
@@ -321,17 +332,25 @@ def get_calibration_queue(
         ).scalars().all()
 
     seen: set[str] = set()
-    candidates: list[dict[str, Any]] = []
+    eligible: list[DebugScoring] = []
     for r in rows:
         uid = r.candidate_uid or ""
         if not uid or uid in seen or uid in already:
             continue
         seen.add(uid)
-        bucket = bucket_for(r.final_rating, threshold)
-        if bucket != "up":
-            continue
-        candidates.append({
-            "candidateUid": uid,
+        eligible.append(r)
+
+    eligible.sort(
+        key=lambda r: (
+            -(r.final_rating or 0),
+            -(r.confidence or 0.0),
+        )
+    )
+
+    pool = eligible[:n]
+    candidates = [
+        {
+            "candidateUid": r.candidate_uid,
             "candidateName": r.candidate_name or "",
             "positionName": r.position_name or "",
             "rating": r.final_rating,
@@ -340,19 +359,14 @@ def get_calibration_queue(
             "strengths": r.strengths_json or [],
             "gaps": r.gaps_json or [],
             "scoredAt": r.timestamp.isoformat() if r.timestamp else None,
-            "bucket": bucket,
-        })
-        if len(candidates) >= n:
-            break
-
-    # Sort already-filtered list by rating DESC, then confidence DESC.
-    candidates.sort(
-        key=lambda c: (
-            -(c["rating"] or 0),
-            -(c["confidence"] or 0.0),
-        )
-    )
-    return candidates
+            "bucket": bucket_for(r.final_rating, threshold),
+        }
+        for r in pool
+    ]
+    return {
+        "candidates": candidates,
+        "isCalibrated": threshold.has_calibration,
+    }
 
 
 def get_session_state(recruiter_name: str, position_uid: str) -> dict[str, Any]:
@@ -380,6 +394,4 @@ __all__ = [
     "get_agreement",
     "get_calibration_queue",
     "get_session_state",
-    "DEFAULT_THUMBS_UP_MIN",
-    "DEFAULT_THUMBS_DOWN_MAX",
 ]

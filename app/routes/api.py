@@ -1197,10 +1197,11 @@ def calibration_queue(
     pos = _resolve_pos(position_uid)
     if not pos:
         raise HTTPException(400, "position_uid required")
-    items = cal.get_calibration_queue(recruiter, pos, n=max(1, min(n, 20)))
+    q = cal.get_calibration_queue(recruiter, pos, n=max(1, min(n, 20)))
     return {
         "positionUid": pos,
-        "candidates": items,
+        "candidates": q["candidates"],
+        "isCalibrated": q["isCalibrated"],
         "state": cal.get_session_state(recruiter, pos),
     }
 

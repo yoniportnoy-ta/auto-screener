@@ -432,6 +432,17 @@
     .cal-thumb.down:hover { border-color: var(--err); }
     .cal-thumb.question:hover { border-color: var(--warn); }
 
+    .cal-fallback-banner {
+      padding: 0.7rem 0.9rem;
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px solid var(--warn);
+      border-radius: 6px;
+      color: var(--warn);
+      font-size: 0.8rem;
+      line-height: 1.45;
+      margin-bottom: 1.2rem;
+    }
+
     /* Round summary modal */
     .cal-summary {
       padding: 2rem;
@@ -957,6 +968,8 @@
       }
     }
 
+    let calIsCalibrated = false;
+
     async function loadNextBatch() {
       $("calCard").innerHTML =
         '<div class="working"><div class="spinner"></div> Loading next 5 candidates…</div>';
@@ -968,10 +981,11 @@
           "&n=" + VERDICTS_PER_ROUND
         );
         calQueue = res.candidates || [];
+        calIsCalibrated = !!res.isCalibrated;
         calCurrentIdx = 0;
         calVerdictsThisRound = 0;
         if (!calQueue.length) {
-          showFinished("No more 👍-bucket candidates to review on this position. Nice work.");
+          showFinished("No more candidates left to review on this position. Nice work.");
           return;
         }
         renderCurrentCandidate();
@@ -995,7 +1009,17 @@
       const scoredAt = c.scoredAt
         ? new Date(c.scoredAt).toLocaleString()
         : "—";
+      // Until the recruiter has clicked anything for this position, the
+      // bucket assignment is genuinely "we don't know yet" — show a
+      // small hint so they understand they're teaching the AI right now.
+      const calibrationHint = !calIsCalibrated ? `
+        <div class="cal-fallback-banner">
+          Setting your personal 👍 / 👎 line for this role. Your first few
+          thumbs are what teach the AI where to draw it.
+        </div>
+      ` : "";
       $("calCard").innerHTML = `
+        ${calibrationHint}
         <h2 class="cal-name">${escapeHtml(c.candidateName || c.candidateUid)}</h2>
         <p class="cal-subtitle">
           ${escapeHtml(c.positionName || state.positionName || "")}
