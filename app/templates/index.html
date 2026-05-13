@@ -203,6 +203,14 @@
       color: var(--text-muted);
       font-size: 0.95rem;
       padding: 1rem 0;
+      flex-wrap: wrap;
+    }
+    .working-hint {
+      flex-basis: 100%;
+      margin-left: 2.4rem;
+      color: var(--text-muted);
+      opacity: 0.75;
+      font-size: 0.82rem;
     }
     .spinner {
       flex-shrink: 0;
@@ -286,6 +294,22 @@
       margin: 0.4rem auto;
     }
     .cal-finished.hidden { display: none; }
+    .cal-finished .button-row {
+      justify-content: center;
+      margin-top: 1.2rem;
+    }
+    .cal-finished .button-row.hidden { display: none; }
+    .cal-thin-pill {
+      display: inline-block;
+      padding: 0.05rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.18);
+      color: var(--text);
+      font-size: 0.82rem;
+      font-weight: 500;
+      margin: 0 0.15rem;
+      white-space: nowrap;
+    }
 
     /* ─── Calibration step ─── */
     .calibration { max-width: 720px; }
@@ -731,18 +755,22 @@
         </div>
       </div>
 
-      <!-- Final state: queue exhausted OR recruiter clicked Stop -->
+      <!-- Final state: queue exhausted, calibration done, or recruiter clicked Stop.
+           The icon / title / body are all populated dynamically by showFinished()
+           so the same panel covers three quite different end states. -->
       <div class="cal-finished hidden" id="calFinished">
-        <div class="checkmark">✓</div>
-        <h2>Calibration complete</h2>
-        <p>
+        <div class="checkmark" id="calFinishedIcon">✓</div>
+        <h2 id="calFinishedTitle">Calibration complete</h2>
+        <p id="calFinishedBody">
           Your personal threshold for this role is locked in. From here, the
           AI's 👍 / 👎 / ❓ buckets for this position will match your taste.
         </p>
-        <p class="hint">
-          The "Flag candidates" button (applies your 👍s as Comeet tags) and
-          the full screening dashboard are coming in the next slice.
-        </p>
+        <p class="hint" id="calFinishedHint"></p>
+        <div class="button-row hidden" id="calFinishedActions">
+          <button class="btn-secondary" id="calScanMoreBtn" type="button">
+            Run a scan now to score more
+          </button>
+        </div>
       </div>
     </section>
 
@@ -1061,8 +1089,14 @@
     let calIsCalibrated = false;
 
     async function loadNextBatch() {
+      // The backend may need to score fresh CVs synchronously when the
+      // DebugScoring pool is thin, so the first call on a new position can
+      // legitimately take 1-2 minutes. Be honest about that in the spinner.
       $("calCard").innerHTML =
-        '<div class="working"><div class="spinner"></div> Loading next 5 candidates…</div>';
+        '<div class="working"><div class="spinner"></div>' +
+        ' Lining up your next 5 candidates…' +
+        ' <span class="working-hint">If this is a fresh position, the AI is reading their CVs first — give it a minute or two.</span>' +
+        '</div>';
       try {
         const res = await api(
           "/api/calibration/queue?recruiter=" +
@@ -1075,7 +1109,16 @@
         calCurrentIdx = 0;
         calVerdictsThisRound = 0;
         if (!calQueue.length) {
-          showFinished("No more candidates left to review on this position. Nice work.");
+          // Differentiate "you've truly calibrated through many rounds" from
+          // "we've only scored a couple candidates so far for this position".
+          // verdictCount lives in the state payload returned alongside the queue.
+          const verdictCount =
+            (res.state && res.state.agreement && res.state.agreement.verdictCount) || 0;
+          showFinished({
+            verdictCount,
+            totalScored: res.totalScored || 0,
+            totalVerdicted: res.totalVerdicted || 0,
+          });
           return;
         }
         renderCurrentCandidate();
@@ -1317,22 +1360,118 @@
 
     $("calStopBtn").addEventListener("click", () => {
       $("calSummary").classList.add("hidden");
-      showFinished(
-        "Stopped after " + (calVerdictsThisRound || "the first") +
-        " verdict(s) this round. Your threshold is saved."
-      );
+      showFinished({ mode: "stopped" });
     });
 
-    function showFinished(extraMsg) {
+    // Wire the "Scan more" CTA once (handler reads state.positionUid each click).
+    $("calScanMoreBtn").addEventListener("click", async () => {
+      const btn = $("calScanMoreBtn");
+      const origLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Scanning… (this can take a couple of minutes)";
+      try {
+        const res = await api("/api/scan/now", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ position_uid: state.positionUid }),
+        });
+        const scored = (res && res.scored) || 0;
+        if (scored > 0) {
+          // We've got new DebugScoring rows — drop the finished card and
+          // reload the queue so they show up.
+          $("calFinished").classList.add("hidden");
+          await refreshCalibrationToolbar();
+          await loadNextBatch();
+        } else {
+          btn.textContent = origLabel;
+          btn.disabled = false;
+          $("calFinishedHint").textContent =
+            "Scan finished but didn't surface new candidates. " +
+            "There may be no fresh ones in the CV-screening step right now.";
+        }
+      } catch (e) {
+        btn.textContent = origLabel;
+        btn.disabled = false;
+        $("calFinishedHint").textContent =
+          "Scan failed: " + (e.message || String(e));
+      }
+    });
+
+    /**
+     * Render the finished/empty state. Distinguishes three modes:
+     *
+     *   - "stopped": recruiter hit "I'm done" mid-session. Threshold is saved,
+     *     but we don't claim calibration is "complete".
+     *   - "queue-empty-but-thin" (ctx.verdictCount < 5): the queue ran dry
+     *     after very few verdicts — usually because the background scan
+     *     hasn't scored many candidates yet. Offer a "Scan more" button so
+     *     they're not stuck waiting.
+     *   - "complete" (ctx.verdictCount >= 5): genuine end-of-pool after
+     *     enough verdicts to actually have a personal threshold.
+     *
+     * Accepting a plain string is kept as a back-compat shortcut.
+     */
+    function showFinished(ctx) {
+      if (typeof ctx === "string") ctx = { mode: "complete", hint: ctx };
+      ctx = ctx || {};
       $("calCard").innerHTML = "";
       $("calSummary").classList.add("hidden");
-      const f = $("calFinished");
-      f.querySelector("p.hint")?.remove();
-      const note = document.createElement("p");
-      note.className = "hint";
-      note.textContent = extraMsg || "";
-      f.appendChild(note);
-      f.classList.remove("hidden");
+
+      const verdictCount = ctx.verdictCount || 0;
+      const totalScored = ctx.totalScored || 0;
+      let mode = ctx.mode;
+      if (!mode) {
+        mode = verdictCount >= 5 ? "complete" : "queue-empty-but-thin";
+      }
+
+      const icon = $("calFinishedIcon");
+      const title = $("calFinishedTitle");
+      const body = $("calFinishedBody");
+      const hint = $("calFinishedHint");
+      const actions = $("calFinishedActions");
+      const scanBtn = $("calScanMoreBtn");
+      scanBtn.disabled = false;
+      scanBtn.textContent = "Run a scan now to score more";
+
+      if (mode === "stopped") {
+        icon.textContent = "✓";
+        title.textContent = "Saved — stopped for now";
+        body.innerHTML =
+          "Your threshold is saved. Come back anytime to pick up " +
+          "where you left off; the AI's 👍 / 👎 / ❓ buckets already " +
+          "reflect your verdicts so far.";
+        hint.textContent =
+          "Stopped after " + (calVerdictsThisRound || "the first") +
+          " verdict(s) this round.";
+        actions.classList.add("hidden");
+      } else if (mode === "queue-empty-but-thin") {
+        icon.textContent = "·";
+        title.textContent = "That's all we've scored — for now";
+        body.innerHTML =
+          "You've reviewed every candidate we've AI-scored for this " +
+          "position so far <span class=\"cal-thin-pill\">" +
+          (totalScored || verdictCount) +
+          " in total</span>. " +
+          "The hourly background scan will surface more, or you can " +
+          "trigger a scan right now.";
+        hint.textContent =
+          "A scan takes ~1–2 minutes per position and pulls every " +
+          "candidate currently sitting in the CV-screening step.";
+        actions.classList.remove("hidden");
+      } else {
+        icon.textContent = "✓";
+        title.textContent = "Calibration complete";
+        body.innerHTML =
+          "Your personal threshold for this role is locked in. From " +
+          "here, the AI's 👍 / 👎 / ❓ buckets for this position will " +
+          "match your taste.";
+        hint.textContent =
+          ctx.hint ||
+          "No more candidates left to review on this position. Nice work.";
+        actions.classList.add("hidden");
+      }
+
+      $("calFinished").classList.remove("hidden");
     }
 
     // ─── Extension detection (only shows card if missing/outdated) ──

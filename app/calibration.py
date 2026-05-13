@@ -294,6 +294,114 @@ def get_already_verdicted_uids(recruiter_name: str, position_uid: str) -> set[st
     return set(rows)
 
 
+def _read_scored_pool(
+    position_uid: str,
+    *,
+    exclude_uids: set[str],
+) -> tuple[list[DebugScoring], set[str]]:
+    """Read DebugScoring rows for this position and split them into
+    (eligible_for_calibration, all_scored_uids).
+
+    `eligible` is dedup'd to the most-recent row per candidate, with
+    `exclude_uids` (typically: already-verdicted uids) stripped out.
+    `all_scored_uids` is the unfiltered set of every candidate who has any
+    scoring row at all — used for empty-state messaging.
+    """
+    with db_session() as ses:
+        rows = ses.execute(
+            select(DebugScoring).where(
+                DebugScoring.position_uid == position_uid,
+                DebugScoring.candidate_uid.is_not(None),
+            ).order_by(desc(DebugScoring.id))
+        ).scalars().all()
+
+    all_scored: set[str] = set()
+    eligible: list[DebugScoring] = []
+    seen: set[str] = set()
+    for r in rows:
+        uid = r.candidate_uid or ""
+        if not uid:
+            continue
+        all_scored.add(uid)
+        if uid in seen or uid in exclude_uids:
+            continue
+        seen.add(uid)
+        eligible.append(r)
+    return eligible, all_scored
+
+
+def _lazy_score_to_fill(
+    position_uid: str,
+    *,
+    needed: int,
+    exclude_uids: set[str],
+) -> int:
+    """Score up to `needed` unscored candidates for this position right now,
+    so the calibration queue always returns a full batch.
+
+    Synchronous — the recruiter sees a longer spinner on the first call, but
+    every subsequent queue request hits the cache. Best-effort: any error on
+    an individual candidate is logged and skipped; we never fail the whole
+    queue load because of one bad CV.
+
+    Returns the number actually scored (may be 0 if Comeet has nothing left
+    to offer in the active CV-screening step).
+    """
+    if needed <= 0:
+        return 0
+
+    # Lazy import: scan.py is heavyweight and pulls in Comeet + Claude. The
+    # only callers of this helper are queue requests, so paying that import
+    # cost here keeps app boot fast.
+    try:
+        from .scan import (
+            begin_scan_batch,
+            finish_scan_batch,
+            score_candidate_in_session,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("calibration: scan module import failed: %s", exc)
+        return 0
+
+    try:
+        batch = begin_scan_batch(position_uid)
+    except Exception as exc:  # noqa: BLE001
+        log.info("calibration: begin_scan_batch failed for %s: %s", position_uid, exc)
+        return 0
+
+    if batch.empty or not batch.uids:
+        return 0
+
+    # `begin_scan_batch` may return up to SCREENER_MAX_PER_RUN UIDs; we only
+    # need `needed`. Trim to keep the spinner time bounded.
+    uids_to_score = [u for u in batch.uids if u not in exclude_uids][:needed]
+    if not uids_to_score:
+        # Nothing useful — close out the empty session so we don't leak a
+        # row in Postgres.
+        try:
+            finish_scan_batch(batch.session_id, [])
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
+
+    scored = 0
+    for uid in uids_to_score:
+        try:
+            summary = score_candidate_in_session(batch.session_id, uid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("calibration: lazy score failed for %s: %s", uid, exc)
+            continue
+        if not getattr(summary, "error", None):
+            scored += 1
+
+    try:
+        finish_scan_batch(batch.session_id, uids_to_score)
+    except Exception as exc:  # noqa: BLE001
+        log.info("calibration: finish_scan_batch failed for %s: %s", position_uid, exc)
+
+    return scored
+
+
 def get_calibration_queue(
     recruiter_name: str,
     position_uid: str,
@@ -307,6 +415,11 @@ def get_calibration_queue(
     rule (that was the source of "but what's the threshold?" confusion
     in the first place).
 
+    If we don't have enough scored candidates to fill the batch, we lazily
+    score fresh ones from Comeet *right now* so the recruiter never sees a
+    half-empty batch. First call on a thin position can take a minute or
+    two; subsequent calls hit the cache.
+
     The per-candidate `bucket` field is included so the UI *can* show how
     the AI would currently classify each one given the recruiter's learned
     threshold, but it's a display hint, not a queue filter. While the
@@ -316,29 +429,32 @@ def get_calibration_queue(
         {
           "candidates": [...],   # up to N profiles, top-rated first
           "isCalibrated": bool,  # whether the recruiter has verdicted yet
+          "totalScored": int,    # distinct candidates with any scoring row
+          "totalVerdicted": int, # this recruiter's verdicts so far
+          "remainingInPool": int,# extras beyond the returned batch
+          "scoredThisCall": int, # how many fresh candidates we scored just now
         }
     """
     threshold = get_threshold(recruiter_name, position_uid)
     already = get_already_verdicted_uids(recruiter_name, position_uid)
 
-    with db_session() as ses:
-        # Latest scoring row per candidate. DebugScoring may have several
-        # rows per candidate (one per scan/rescore); we want the most recent.
-        rows = ses.execute(
-            select(DebugScoring).where(
-                DebugScoring.position_uid == position_uid,
-                DebugScoring.candidate_uid.is_not(None),
-            ).order_by(desc(DebugScoring.id))
-        ).scalars().all()
+    eligible, all_scored = _read_scored_pool(position_uid, exclude_uids=already)
 
-    seen: set[str] = set()
-    eligible: list[DebugScoring] = []
-    for r in rows:
-        uid = r.candidate_uid or ""
-        if not uid or uid in seen or uid in already:
-            continue
-        seen.add(uid)
-        eligible.append(r)
+    # Top up the pool with fresh scoring if we're below `n`. The recruiter's
+    # expectation is "always 5 per round" — we honor that by paying the
+    # scoring tokens just-in-time instead of waiting on a cron.
+    scored_this_call = 0
+    if len(eligible) < n:
+        needed = n - len(eligible)
+        exclude = already | {r.candidate_uid for r in eligible if r.candidate_uid}
+        scored_this_call = _lazy_score_to_fill(
+            position_uid, needed=needed, exclude_uids=exclude,
+        )
+        if scored_this_call > 0:
+            # Re-read to pull the fresh DebugScoring rows into the pool.
+            eligible, all_scored = _read_scored_pool(
+                position_uid, exclude_uids=already
+            )
 
     eligible.sort(
         key=lambda r: (
@@ -363,9 +479,16 @@ def get_calibration_queue(
         }
         for r in pool
     ]
+    # Context for the empty-queue UX: distinguish between "truly calibrated"
+    # and "ran out of scored candidates after only a couple of verdicts" so
+    # the UI can show the right message + offer a "scan more" CTA.
     return {
         "candidates": candidates,
         "isCalibrated": threshold.has_calibration,
+        "totalScored": len(all_scored),
+        "totalVerdicted": len(already),
+        "remainingInPool": max(0, len(eligible) - len(pool)),
+        "scoredThisCall": scored_this_call,
     }
 
 

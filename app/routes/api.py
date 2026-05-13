@@ -1202,6 +1202,10 @@ def calibration_queue(
         "positionUid": pos,
         "candidates": q["candidates"],
         "isCalibrated": q["isCalibrated"],
+        "totalScored": q.get("totalScored", 0),
+        "totalVerdicted": q.get("totalVerdicted", 0),
+        "remainingInPool": q.get("remainingInPool", 0),
+        "scoredThisCall": q.get("scoredThisCall", 0),
         "state": cal.get_session_state(recruiter, pos),
     }
 
