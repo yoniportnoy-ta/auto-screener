@@ -278,6 +278,60 @@ def _single_pass(
             "errors you have been making historically.\n\n"
         )
 
+    # Pre-rating checklist — forces the model to actually evaluate the
+    # structured signals it tends to skip (location, company tier,
+    # university tier, career progression). Without this it over-rates
+    # candidates from mismatched locations, unknown employers, and
+    # candidates whose career has been flat for years.
+    #
+    # The company-tier reference (positive-signal lists, ~190 named
+    # companies) is appended so Claude has concrete benchmarks instead
+    # of guessing from vibes.
+    from .company_tiers import format_company_tiers_block as _tiers_block
+
+    pre_rating_checklist = (
+        "\n=== PRE-RATING CHECKLIST (work through these BEFORE picking a rating) ===\n"
+        "For each of these axes, write a one-line internal assessment, then let "
+        "the combined picture inform your rating. Do not just consider technical depth.\n\n"
+
+        "1) LOCATION MATCH — Compare the role's expected location to the candidate's "
+        "current location (city / country from CV, LinkedIn, or employer locations). "
+        "If they're in a different country and the CV does NOT explicitly say they're "
+        "willing to relocate, this is a strong negative signal. Do not assume relocation.\n\n"
+
+        "2) COMPANY TIER (for each of their last 3-5 roles) — Categorise each employer "
+        "using the COMPANY TIER REFERENCE below:\n"
+        "   - TIER-1 (global FAANG/unicorns OR top Israeli scale-up): strong positive\n"
+        "   - TIER-2 PRODUCT (smaller-but-known shipping their own product): neutral-to-positive\n"
+        "   - UNKNOWN LOCAL: weaker signal unless concrete scale evidence (real product/DAUs/revenue)\n\n"
+
+        "3) UNIVERSITY TIER — Categorise the highest-degree institution:\n"
+        "   - TIER-1: Technion, Tel Aviv University, Hebrew University, Weizmann Institute, "
+        "MIT, Stanford, CMU, Berkeley, Harvard, Princeton, Yale, Cambridge, Oxford, ETH Zürich, "
+        "EPFL, IIT (top campuses), Tsinghua, NUS.\n"
+        "   - TIER-2: respected national universities (Ben-Gurion, Bar-Ilan, IDC Herzliya / "
+        "Reichman, Open University of Israel, top European/Asian technical universities).\n"
+        "   - OTHER: bootcamps, lesser-known regional universities. Not disqualifying, "
+        "but contributes negatively when other signals are weak.\n\n"
+
+        "4) CAREER PROGRESSION — Look at title + scope across the timeline:\n"
+        "   HEALTHY: Junior → Mid → Senior → Lead → Manager / Staff over 6-10 years, with "
+        "scope or team-size growing alongside the titles.\n"
+        "   RED FLAGS (strong negative):\n"
+        "   - Same title 5+ years with no scope growth (flat trajectory).\n"
+        "   - Title regression (e.g. Senior → Mid at a new company without a clear reason).\n"
+        "   - Lateral company-hops every 12-18 months with no level escalation.\n"
+        "   - Very slow progression (8+ years to reach Senior at non-elite shops).\n\n"
+
+        "5) BAND IMPACT — Combine the above with the role-specific evidence. Strong "
+        "tier-1 product + tier-1 university + location match + healthy progression = "
+        "candidate for 4-5. Unknown employers + mismatched location + flat progression "
+        "= should be 1-2 unless the candidate has truly exceptional individual "
+        "achievements that outweigh the tier signal.\n"
+        + _tiers_block()
+        + "\n\nThen proceed to the rating.\n\n"
+    )
+
     base_prompt = (
         "You are an expert recruiter. Compare this applicant to the open position. "
         "Be concise, evidence-based, and balanced. If information is missing, lower confidence "
@@ -285,6 +339,7 @@ def _single_pass(
         + (anchors_block or "")
         + rubric_block
         + (criteria_block or "")
+        + pre_rating_checklist
         + "\nPOSITION CONTEXT:\n"
         + inputs.position_jd
         + "\n\nAPPLICANT METADATA:\n"

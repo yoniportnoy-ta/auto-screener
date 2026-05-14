@@ -32,6 +32,108 @@ async def cmd_scan_all() -> int:
     return 0
 
 
+async def cmd_rescore_all(position_uid: str | None = None) -> int:
+    """Re-score previously-scored candidates with the *current* prompt.
+
+    Usage:
+        python -m app.cli rescore-all                 # every open position
+        python -m app.cli rescore-all DC.E45          # one position only
+
+    Why: when the scoring prompt changes (new pre-rating checklist,
+    company tier reference, location signal, etc.) every existing
+    DebugScoring row is stale. This walks every open position, finds
+    candidates we've scored before who are still in the CV-screening
+    step, and re-runs the pipeline so their rating reflects the new
+    prompt. Skipped candidates: anyone who moved past CV screening
+    (in interviews / hired / rejected) — no point spending tokens
+    re-rating someone already decided.
+
+    Long-running: ~5-30 s per candidate × N candidates × M positions.
+    Print progress every 10 candidates so the recruiter watching the
+    Render shell knows we're alive.
+    """
+    from sqlalchemy import select as _select
+    from .comeet_client import ComeetClient, candidate_in_allowed_step
+    from .db import db_session
+    from .models import DebugScoring
+    from .scan import _resolve_numeric_position_uid, score_one_candidate_now
+
+    # Build the list of positions to walk.
+    target_uid = (position_uid or "").strip()
+    if target_uid and target_uid.isdigit():
+        target_uid = _resolve_numeric_position_uid(target_uid) or target_uid
+
+    if target_uid:
+        positions_to_walk = [{"uid": target_uid, "name": target_uid}]
+    else:
+        try:
+            with ComeetClient() as client:
+                positions_to_walk = client.list_open_positions()
+        except Exception as exc:  # noqa: BLE001
+            log.error("rescore-all: list_open_positions failed: %s", exc)
+            return 1
+
+    total_rescored = 0
+    total_skipped = 0
+    total_errors = 0
+
+    for pos in positions_to_walk:
+        pos_uid = str(pos.get("uid") or "")
+        pos_name = str(pos.get("name") or pos_uid)
+        if not pos_uid:
+            continue
+
+        # Find previously-scored candidates for this position.
+        with db_session() as ses:
+            scored_uids = set(ses.scalars(
+                _select(DebugScoring.candidate_uid)
+                .where(DebugScoring.position_uid == pos_uid)
+                .distinct()
+            ).all()) - {None, ""}
+
+        if not scored_uids:
+            log.info("rescore-all: %s — no scored candidates, skipping", pos_name)
+            continue
+
+        # Filter to ones still in the allowed CV-screening step.
+        try:
+            with ComeetClient() as client:
+                current = client.list_candidates_for_position(pos_uid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rescore-all: %s — Comeet fetch failed: %s", pos_name, exc)
+            total_errors += 1
+            continue
+
+        eligible = [
+            str(c["uid"]) for c in current
+            if c.get("uid")
+            and str(c["uid"]) in scored_uids
+            and candidate_in_allowed_step(c)
+        ]
+        skipped = len(scored_uids) - len(eligible)
+        log.info(
+            "rescore-all: %s — %d eligible, %d skipped (moved past CV step)",
+            pos_name, len(eligible), skipped,
+        )
+        total_skipped += skipped
+
+        for i, uid in enumerate(eligible, start=1):
+            try:
+                score_one_candidate_now(pos_uid, candidate_uid=uid)
+                total_rescored += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("rescore-all: %s/%s failed: %s", pos_name, uid, exc)
+                total_errors += 1
+            if i % 10 == 0:
+                log.info("  ... %d/%d on %s", i, len(eligible), pos_name)
+
+    log.info(
+        "rescore-all done: rescored=%d skipped=%d errors=%d (positions=%d)",
+        total_rescored, total_skipped, total_errors, len(positions_to_walk),
+    )
+    return 0
+
+
 async def cmd_reset_for_launch() -> int:
     """One-shot pre-launch cleanup. Clears the three tables that contain
     pre-launch noise and leaves the expensive/historical ones alone:
@@ -284,10 +386,11 @@ COMMANDS = {
     "clear-score-locks": cmd_clear_score_locks,
     "reset-thresholds": cmd_reset_thresholds,
     "reset-for-launch": cmd_reset_for_launch,
+    "rescore-all": cmd_rescore_all,
 }
 
 # Commands that accept an optional position_uid positional arg.
-COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks", "reset-thresholds"}
+COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks", "reset-thresholds", "rescore-all"}
 
 
 def main() -> int:

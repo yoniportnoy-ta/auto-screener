@@ -47,6 +47,11 @@ class ScanSession:
     batch_size: int = 0
     jd_text: str = ""
     feedback_context: str = ""
+    # Position's expected location, surfaced into the scoring prompt as a
+    # hard signal so the AI down-rates candidates from elsewhere unless
+    # they explicitly state willingness to relocate.
+    position_country: str = ""
+    position_full_location: str = ""
     position_notes: str = ""
     recruiter_notes: str = ""
     created_at: float = field(default_factory=lambda: time.time())
