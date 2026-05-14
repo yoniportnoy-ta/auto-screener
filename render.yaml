@@ -10,10 +10,9 @@ databases:
   - name: auto-screener-db
     databaseName: auto_screener
     user: auto_screener
-    plan: free           # 1 GB storage, 256 MB RAM. Free Postgres expires after 30 days
-                         # (changed from 90 in May 2024). Render emails warnings; there's
-                         # a 14-day grace period to upgrade after expiry. Fine for the
-                         # smoke test — upgrade via dashboard before going live for recruiters.
+    plan: basic_256mb    # Upgraded from free in May 2026. Render's Blueprint sync
+                         # will refuse to downgrade, so this must mirror whatever
+                         # plan is actually live in the dashboard.
     region: frankfurt    # Match the web service + cron region so the internal DB
                          # hostname (dpg-…-a) resolves. Cross-region uses the external
                          # hostname which adds ~150 ms per query.
@@ -22,7 +21,9 @@ services:
   - type: web
     name: auto-screener
     runtime: python
-    plan: starter        # $7/mo.
+    plan: standard       # $25/mo, 2 GB RAM. Upgraded from starter (512 MB) to
+                         # fix OOMs during prewarm + concurrent scans. Mirror
+                         # whatever is live — Blueprint sync refuses downgrades.
     region: frankfurt    # match Comeet's likely region; closer to recruiters in EU.
     branch: main
     rootDir: .
