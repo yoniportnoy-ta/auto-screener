@@ -66,9 +66,7 @@ services:
       - key: AUTO_TAG_ENABLED
         value: "1"   # apply rating tags from both UI scans and the cron
       - key: TAG_RATING_THRESHOLD
-        value: "1"   # tag every score (1-5); set to 3+ to only tag promising candidates
-      - key: TAG_RATING_THRESHOLD
-        value: "3"
+        value: "3"   # only tag rating 3+ — calibration may tighten this per-position
       # Comma-separated list of recruiter names allowed to edit admin
       # settings (global threshold floor + global brief). Match the same
       # "First Last" format used everywhere else.
