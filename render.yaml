@@ -10,9 +10,11 @@ databases:
   - name: auto-screener-db
     databaseName: auto_screener
     user: auto_screener
-    plan: basic_256mb    # Upgraded from free in May 2026. Render's Blueprint sync
+    plan: basic-256mb    # Upgraded from free in May 2026. Render's Blueprint sync
                          # will refuse to downgrade, so this must mirror whatever
-                         # plan is actually live in the dashboard.
+                         # plan is actually live in the dashboard. Note: YAML wants
+                         # hyphens (basic-256mb), the API returns underscores
+                         # (basic_256mb) — same plan, different serialization.
     region: frankfurt    # Match the web service + cron region so the internal DB
                          # hostname (dpg-…-a) resolves. Cross-region uses the external
                          # hostname which adds ~150 ms per query.
