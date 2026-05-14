@@ -280,13 +280,14 @@ def _single_pass(
 
     # Pre-rating checklist — forces the model to actually evaluate the
     # structured signals it tends to skip (location, company tier,
-    # university tier, career progression). Without this it over-rates
-    # candidates from mismatched locations, unknown employers, and
+    # university tier, product-vs-agency career arc, career progression).
+    # Without this it over-rates candidates from mismatched locations,
+    # service/staffing-agency career arcs, unknown employers, and
     # candidates whose career has been flat for years.
     #
-    # The company-tier reference (positive-signal lists, ~190 named
-    # companies) is appended so Claude has concrete benchmarks instead
-    # of guessing from vibes.
+    # The company-tier reference includes both POSITIVE (tier-1 product)
+    # and NEGATIVE (service / outsourcing / HR staffing) lists, ~280 names,
+    # so Claude has concrete benchmarks both directions.
     from .company_tiers import format_company_tiers_block as _tiers_block
 
     pre_rating_checklist = (
@@ -301,8 +302,13 @@ def _single_pass(
 
         "2) COMPANY TIER (for each of their last 3-5 roles) — Categorise each employer "
         "using the COMPANY TIER REFERENCE below:\n"
-        "   - TIER-1 (global FAANG/unicorns OR top Israeli scale-up): strong positive\n"
+        "   - TIER-1 (global FAANG/unicorns OR top Israeli scale-up): STRONG POSITIVE\n"
         "   - TIER-2 PRODUCT (smaller-but-known shipping their own product): neutral-to-positive\n"
+        "   - SERVICE / OUTSOURCING / CONSULTING (Tata, Wipro, EPAM, Synamedia, Matrix IT, "
+        "etc.): STRONG NEGATIVE even if titles look senior — work is per-client, not own product\n"
+        "   - HR / STAFFING / RECRUITMENT AGENCIES (Manpower, Adecco, Atid, Milam HR, "
+        "Allstars, etc.): STRONG NEGATIVE for senior recruiter / TA / HR roles — recruiting "
+        "AT an agency is much weaker signal than recruiting in-house at a tier-1 product co\n"
         "   - UNKNOWN LOCAL: weaker signal unless concrete scale evidence (real product/DAUs/revenue)\n\n"
 
         "3) UNIVERSITY TIER — Categorise the highest-degree institution:\n"
@@ -314,28 +320,39 @@ def _single_pass(
         "   - OTHER: bootcamps, lesser-known regional universities. Not disqualifying, "
         "but contributes negatively when other signals are weak.\n\n"
 
-        "4) CAREER PROGRESSION — Look at title + scope across the timeline:\n"
+        "4) PRODUCT vs AGENCY CAREER ARC — Is the *recent* career trajectory at product "
+        "companies or service / staffing shops? Weight the last 3-5 years more than older "
+        "roles. A career that started in product and drifted into agency = warning. A career "
+        "entirely at service shops or staffing/HR agencies = strong negative regardless of title.\n\n"
+
+        "5) CAREER PROGRESSION — Look at title + scope across the timeline:\n"
         "   HEALTHY: Junior → Mid → Senior → Lead → Manager / Staff over 6-10 years, with "
         "scope or team-size growing alongside the titles.\n"
         "   RED FLAGS (strong negative):\n"
         "   - Same title 5+ years with no scope growth (flat trajectory).\n"
         "   - Title regression (e.g. Senior → Mid at a new company without a clear reason).\n"
         "   - Lateral company-hops every 12-18 months with no level escalation.\n"
-        "   - Very slow progression (8+ years to reach Senior at non-elite shops).\n\n"
+        "   - Very slow progression (8+ years to reach Senior at non-elite shops).\n"
+        "   A flat or slow arc at service / staffing companies stacks negatively with axis 4.\n\n"
 
-        "5) BAND IMPACT — Combine the above with the role-specific evidence. Strong "
-        "tier-1 product + tier-1 university + location match + healthy progression = "
-        "candidate for 4-5. Unknown employers + mismatched location + flat progression "
-        "= should be 1-2 unless the candidate has truly exceptional individual "
-        "achievements that outweigh the tier signal.\n"
+        "6) BAND IMPACT — Combine the above with the role-specific evidence. Strong "
+        "tier-1 product + tier-1 university + location match + product career arc + "
+        "healthy progression = candidate for 4-5. Service/staffing/agency career + "
+        "unknown employers + mismatched location + flat progression = should be 1-2 "
+        "unless the candidate has truly exceptional individual achievements that "
+        "outweigh the tier signal.\n"
         + _tiers_block()
         + "\n\nThen proceed to the rating.\n\n"
     )
 
     base_prompt = (
         "You are an expert recruiter. Compare this applicant to the open position. "
-        "Be concise, evidence-based, and balanced. If information is missing, lower confidence "
-        "rather than penalising the rating — prefer 3 with low confidence over 1 or 2 when evidence is sparse.\n\n"
+        "Be concise, evidence-based, and selective. Your job is to filter for the team — "
+        "default toward 2-3 unless there is concrete positive evidence to justify 4-5. "
+        "Most candidates in a typical pool are NOT a strong fit; your ratings should "
+        "reflect that. Sparse evidence is itself a negative signal, not a reason to "
+        "park the rating at 3 — if you cannot find concrete positive evidence the "
+        "candidate clears the bar, rate 2 with low confidence rather than 3.\n\n"
         + (anchors_block or "")
         + rubric_block
         + (criteria_block or "")
@@ -358,13 +375,26 @@ def _single_pass(
         "- gaps: array of up to 2 short strings (only those that materially affect the rating)\n"
         "- comeet_comment_html: short extra HTML/plain for the note (server allows only b, i, u)\n"
         "- linkedin_url: full linkedin.com/in/ URL if visible in the resume; otherwise null\n\n"
-        "Rating scale:\n"
-        "- 5 (Superstar): rare; clearly exceeds the bar across all key criteria.\n"
-        "- 4 (Great): solid fit; minor gaps that are acceptable.\n"
-        "- 3 (OK): reasonable fit; an interview may clarify.\n"
-        "- 2 (Not a fit): notable gaps or meaningful misalignment.\n"
-        "- 1 (Way off): clear mismatch or missing must-haves — use ONLY with concrete evidence. "
-        "Use 3 with low confidence when info is sparse; do NOT use 1 just because the resume is thin.\n"
+        "Rating scale — calibrated so the distribution of ratings across a TYPICAL pool "
+        "should roughly look like: ~5% at 5, ~15% at 4, ~30% at 3, ~35% at 2, ~15% at 1. "
+        "If most of your ratings are landing at 3-4, you are being too generous.\n\n"
+        "- 5 (Superstar — top ~5%): RARE. Tier-1 product company veteran with strong "
+        "progression AND tier-1 university AND location match AND clear achievements "
+        "that map directly to the role. Hire-on-paper.\n"
+        "- 4 (Strong — top ~15%): TIER-1 OR strong tier-2 PRODUCT background, clear "
+        "progression, location match, no major red flags. Definitely worth a screen.\n"
+        "- 3 (OK — ~30%): Reasonable signals but with notable gaps OR all-mid signals "
+        "(known-but-not-top-tier employer, normal progression, no standout achievements). "
+        "Maybe worth a screen; an interview would clarify.\n"
+        "- 2 (Weak — ~35%, the DEFAULT for typical applicants): Multiple negative signals "
+        "— EITHER unknown / agency / staffing employers, OR flat / slow career progression, "
+        "OR mismatched location with no relocation statement, OR no concrete evidence of "
+        "the skills the role requires. Sparse-resume candidates land here by default.\n"
+        "- 1 (No fit — ~15%): Hard blockers — wrong country with no relocation, "
+        "completely wrong skill set, entire career at service/staffing shops, or "
+        "obvious title/level mismatch.\n\n"
+        "IMPORTANT: Sparse evidence is itself a negative signal. 'I can't tell from this CV' "
+        "= 2, not 3. Only land at 3 when there ARE real signals but they're middling.\n"
     )
 
     if inputs.resume_pdf_b64:
