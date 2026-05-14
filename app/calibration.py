@@ -37,6 +37,14 @@ log = logging.getLogger(__name__)
 
 Verdict = Literal["up", "down", "question"]
 
+# Hard floor on the recruiter's 👍 minimum. Rating 2 and below should never
+# count as "good fit" no matter what a recruiter accidentally clicked — the
+# 1-5 scale puts 1-2 in "weak / probably not a fit" territory and using
+# those as the up-bar produces absurd buckets like "AI says 👍 because 2/5
+# ≥ your 👍 floor of 2". The floor doesn't fire if the recruiter never 👍'd
+# anything; it only clamps after-the-fact when the computed min is below 3.
+MIN_THUMBS_UP_FLOOR = 3
+
 
 @dataclass
 class Threshold:
@@ -95,6 +103,10 @@ def get_threshold(recruiter_name: str, position_uid: str) -> Threshold:
     Both bounds start as None (no calibration). They become concrete as
     the recruiter gives 👍/👎 verdicts: the 👍 minimum is the lowest rating
     they've ever 👍'd; the 👎 maximum is the highest rating they've ever 👎'd.
+
+    The global admin 👍 floor (when set) is applied on top so a 👍 bucket
+    can never drop below the admin's policy bar even if a recruiter
+    accidentally clicked something low.
     """
     with db_session() as ses:
         row = ses.scalar(
@@ -103,12 +115,26 @@ def get_threshold(recruiter_name: str, position_uid: str) -> Threshold:
                 RecruiterThreshold.position_uid == position_uid,
             )
         )
-        if not row:
-            return Threshold(thumbs_up_min_rating=None, thumbs_down_max_rating=None)
-        return Threshold(
-            thumbs_up_min_rating=row.thumbs_up_min_rating,
-            thumbs_down_max_rating=row.thumbs_down_max_rating,
-        )
+    up_min = row.thumbs_up_min_rating if row else None
+    down_max = row.thumbs_down_max_rating if row else None
+
+    # Stack the admin floor (if configured). The threshold algorithm
+    # already clamps to MIN_THUMBS_UP_FLOOR in _recompute_threshold; the
+    # admin floor is an additional, runtime-tunable lever for the team
+    # lead to tighten things further without a code change.
+    try:
+        from .admin_settings import get_thumbs_up_floor
+        admin_floor = get_thumbs_up_floor()
+    except Exception as exc:  # noqa: BLE001
+        log.info("admin floor lookup failed: %s", exc)
+        admin_floor = None
+    if admin_floor is not None:
+        if up_min is None:
+            up_min = admin_floor
+        else:
+            up_min = max(up_min, admin_floor)
+
+    return Threshold(thumbs_up_min_rating=up_min, thumbs_down_max_rating=down_max)
 
 
 def _recompute_threshold(
@@ -148,6 +174,12 @@ def _recompute_threshold(
 
         thumbs_up_min = min(ups) if ups else None
         thumbs_down_max = max(downs) if downs else None
+
+        # Apply the 👍 floor: if the recruiter accidentally 👍'd a low-rated
+        # candidate, don't let that pull the bar down into nonsense territory.
+        # A 2/5 should never be auto-tagged as "good fit" on a fresh candidate.
+        if thumbs_up_min is not None and thumbs_up_min < MIN_THUMBS_UP_FLOOR:
+            thumbs_up_min = MIN_THUMBS_UP_FLOOR
 
         row = ses.scalar(
             select(RecruiterThreshold).where(
@@ -559,7 +591,18 @@ def get_threshold_for_tagging(position_uid: str) -> int | None:
         ).all()
     if not rows:
         return None
-    return max(rows)
+    strictest = max(rows)
+    # Stack the admin floor on top so the tag bar can be tightened
+    # across all positions without per-position recalibration.
+    try:
+        from .admin_settings import get_thumbs_up_floor
+        admin_floor = get_thumbs_up_floor()
+    except Exception as exc:  # noqa: BLE001
+        log.info("admin floor lookup failed (tagging): %s", exc)
+        admin_floor = None
+    if admin_floor is not None:
+        strictest = max(strictest, admin_floor)
+    return strictest
 
 
 def get_session_state(recruiter_name: str, position_uid: str) -> dict[str, Any]:

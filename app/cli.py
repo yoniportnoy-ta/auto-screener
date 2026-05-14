@@ -32,6 +32,79 @@ async def cmd_scan_all() -> int:
     return 0
 
 
+async def cmd_reset_for_launch() -> int:
+    """One-shot pre-launch cleanup. Clears the three tables that contain
+    pre-launch noise and leaves the expensive/historical ones alone:
+
+      WIPED:
+        - feedback                (old 1-5 ratings + notes — pre-calibration era)
+        - recruiter_thresholds    (so the new MIN_THUMBS_UP_FLOOR is enforced)
+        - calibration_verdicts    (pre-launch test thumbs from internal QA)
+
+      KEPT:
+        - debug_scoring           (the scoring pool — Claude tokens already paid)
+        - applied_tags            (bookkeeping of tags pushed to Comeet)
+
+    Idempotent — safe to re-run if something goes wrong mid-launch.
+    """
+    from sqlalchemy import delete
+    from .db import db_session
+    from .models import (
+        CalibrationVerdict,
+        Feedback,
+        RecruiterThreshold,
+    )
+
+    counts: dict[str, int] = {}
+    with db_session() as ses:
+        for label, model in [
+            ("feedback", Feedback),
+            ("recruiter_thresholds", RecruiterThreshold),
+            ("calibration_verdicts", CalibrationVerdict),
+        ]:
+            res = ses.execute(delete(model))
+            counts[label] = res.rowcount or 0
+        ses.commit()
+
+    summary = ", ".join(f"{k}={v}" for k, v in counts.items())
+    log.info("reset-for-launch done: %s", summary)
+    return 0
+
+
+async def cmd_reset_thresholds(position_uid: str | None = None) -> int:
+    """Wipe RecruiterThreshold rows so calibration restarts from scratch.
+
+    Usage:
+        python -m app.cli reset-thresholds                # all positions
+        python -m app.cli reset-thresholds DC.E45         # one position only
+
+    Why this is sometimes needed: the threshold algorithm is monotonic —
+    once a recruiter has 👍'd a low-rated candidate, `thumbs_up_min` stays
+    at that rating forever, producing absurd buckets ("AI says 👍 because
+    2/5 ≥ your 👍 floor of 2"). Resetting lets the recruiter start over
+    with the new floor logic in place. Verdicts in calibration_verdicts
+    are kept — they're history and feed the scoring prompt.
+    """
+    from sqlalchemy import delete
+    from .db import db_session
+    from .models import RecruiterThreshold
+
+    pos = (position_uid or "").strip()
+    with db_session() as ses:
+        stmt = delete(RecruiterThreshold)
+        if pos:
+            stmt = stmt.where(RecruiterThreshold.position_uid == pos)
+        result = ses.execute(stmt)
+        deleted = result.rowcount or 0
+        ses.commit()
+    log.info(
+        "reset-thresholds done: deleted %d row(s)%s",
+        deleted,
+        f" for position {pos}" if pos else " (all positions)",
+    )
+    return 0
+
+
 async def cmd_prewarm_all() -> int:
     """Pre-score the next N candidates across every open position.
 
@@ -209,10 +282,12 @@ COMMANDS = {
     "poll-feedback": cmd_poll_feedback,
     "backfill-tags": cmd_backfill_tags,
     "clear-score-locks": cmd_clear_score_locks,
+    "reset-thresholds": cmd_reset_thresholds,
+    "reset-for-launch": cmd_reset_for_launch,
 }
 
 # Commands that accept an optional position_uid positional arg.
-COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks"}
+COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks", "reset-thresholds"}
 
 
 def main() -> int:

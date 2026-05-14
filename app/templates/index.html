@@ -106,6 +106,77 @@
     }
     .start-over-btn:hover { color: var(--text); border-color: var(--accent); }
 
+    /* Admin entry button — same style as start-over but smaller and less prominent */
+    .admin-btn {
+      margin-top: 0.4rem;
+      padding: 0.4rem 0.7rem;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      text-align: left;
+    }
+    .admin-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .admin-btn.hidden { display: none; }
+
+    /* Admin modal */
+    .admin-modal { position: fixed; inset: 0; z-index: 100; }
+    .admin-modal.hidden { display: none; }
+    .admin-modal-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(8, 12, 20, 0.65);
+      backdrop-filter: blur(4px);
+    }
+    .admin-modal-panel {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(560px, 92vw);
+      max-height: 86vh;
+      overflow-y: auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.4rem 1.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    .admin-modal-header {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .admin-modal-header h2 { margin: 0; font-size: 1.2rem; }
+    .admin-modal-close {
+      background: transparent; border: none; color: var(--text-muted);
+      cursor: pointer; font-size: 1.1rem; padding: 0.25rem 0.5rem;
+    }
+    .admin-modal-close:hover { color: var(--text); }
+    .admin-field-label {
+      display: flex; flex-direction: column; gap: 0.15rem;
+      font-size: 0.88rem; font-weight: 600; color: var(--text);
+      margin-top: 0.4rem;
+    }
+    .admin-field-label .hint-inline {
+      font-weight: 400; color: var(--text-muted); font-size: 0.78rem;
+    }
+    .admin-select, .admin-brief {
+      width: 100%;
+      padding: 0.55rem 0.7rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.92rem;
+    }
+    .admin-brief { resize: vertical; line-height: 1.5; }
+    .admin-select:focus, .admin-brief:focus {
+      outline: none; border-color: var(--accent);
+    }
+
     /* ─── Main wizard area ─── */
     main {
       padding: 4rem 2rem 3rem;
@@ -238,6 +309,59 @@
       resize: vertical;
     }
     textarea.brief-input:focus { outline: none; border-color: var(--accent); }
+
+    /* Locked view for an already-saved position brief */
+    .brief-locked {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .brief-locked.hidden,
+    .brief-edit.hidden,
+    #briefLoading.hidden { display: none; }
+    .brief-locked-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .brief-locked-badge {
+      color: var(--ok);
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .brief-locked-text {
+      color: var(--text);
+      font-size: 0.94rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      padding: 0.7rem 0.85rem;
+      background: var(--panel-2);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .btn-tertiary {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-tertiary:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
     .button-row {
       margin-top: 1rem;
       display: flex;
@@ -789,7 +913,49 @@
       </div>
     </div>
     <button class="start-over-btn" id="startOverBtn" type="button">↺ Start over</button>
+    <!-- Admin entry point — hidden by default, shown when the picked
+         recruiter is in the ADMIN_RECRUITERS env list -->
+    <button class="admin-btn hidden" id="adminBtn" type="button">⚙ Admin</button>
   </aside>
+
+  <!-- Admin drawer: global threshold floor + global brief.
+       Hidden by default. Shown via the ⚙ Admin button. -->
+  <div class="admin-modal hidden" id="adminModal">
+    <div class="admin-modal-backdrop" id="adminModalBackdrop"></div>
+    <div class="admin-modal-panel">
+      <div class="admin-modal-header">
+        <h2>Admin controls</h2>
+        <button class="admin-modal-close" id="adminModalClose" type="button">✕</button>
+      </div>
+      <p class="hint">
+        These settings apply to <strong>every position</strong>, stacked
+        on top of per-recruiter calibration.
+      </p>
+
+      <label class="admin-field-label" for="adminFloor">
+        Global 👍 floor
+        <span class="hint-inline">No candidate below this rating can ever be tagged as a fit.</span>
+      </label>
+      <select class="admin-select" id="adminFloor">
+        <option value="0">— no floor (use per-recruiter calibration only) —</option>
+        <option value="3">3 — let through 3, 4, and 5</option>
+        <option value="4">4 — only 4 and 5 (recommended)</option>
+        <option value="5">5 — only 5 (very strict)</option>
+      </select>
+
+      <label class="admin-field-label" for="adminBrief">
+        Global brief
+        <span class="hint-inline">Free-text policy injected into every scoring prompt.</span>
+      </label>
+      <textarea class="admin-brief" id="adminBrief" rows="6"
+        placeholder="e.g. All hires must be IC, not management. Skip any candidate currently at a direct competitor. Default to 'no' if uncertain about location."></textarea>
+
+      <div class="button-row">
+        <button class="btn-secondary" id="adminCancel" type="button">Cancel</button>
+        <button class="btn-primary" id="adminSave" type="button">Save</button>
+      </div>
+    </div>
+  </div>
 
   <main>
     <div id="errBanner" class="err-banner hidden"></div>
@@ -825,6 +991,12 @@
     </section>
 
     <!-- ──────────────── Step 4: brief ──────────────── -->
+    <!-- Two modes inside this step:
+         (a) "locked" — a brief already exists for this position. We show
+             it read-only with a Re-enter button. The brief is global to
+             the position, so writing one is a one-time act per role.
+         (b) "edit"   — no brief yet (or recruiter clicked Re-enter). The
+             textarea + Save button. -->
     <section class="step" id="step4">
       <h1>What are you looking for?</h1>
       <p class="hint">
@@ -833,10 +1005,35 @@
         description. Be specific — "5+ yrs senior PM at consumer-scale
         companies" is much more useful than "great PM".
       </p>
-      <textarea class="brief-input" id="briefText"
-        placeholder="e.g. Looking for an iOS engineer with 4+ yrs at high-traffic consumer apps. Must have led at least one feature end-to-end. Prefer candidates with experience in real-time / media-heavy products. Hard rejects: agency-only background, no team-lead experience."></textarea>
-      <div class="button-row">
-        <button class="btn-primary" id="step4Next" disabled>Start session →</button>
+
+      <!-- Locked view: shown when a brief is already saved -->
+      <div id="briefLocked" class="brief-locked hidden">
+        <div class="brief-locked-header">
+          <span class="brief-locked-badge">✓ Saved brief for this position</span>
+          <button class="btn-tertiary" id="briefReenterBtn" type="button">
+            Re-enter brief
+          </button>
+        </div>
+        <div class="brief-locked-text" id="briefLockedText"></div>
+        <div class="button-row">
+          <button class="btn-primary" id="step4Continue" type="button">
+            Start session →
+          </button>
+        </div>
+      </div>
+
+      <!-- Edit view: textarea + save -->
+      <div id="briefEdit" class="brief-edit hidden">
+        <textarea class="brief-input" id="briefText"
+          placeholder="e.g. Looking for an iOS engineer with 4+ yrs at high-traffic consumer apps. Must have led at least one feature end-to-end. Prefer candidates with experience in real-time / media-heavy products. Hard rejects: agency-only background, no team-lead experience."></textarea>
+        <div class="button-row">
+          <button class="btn-primary" id="step4Next" disabled>Save & start session →</button>
+        </div>
+      </div>
+
+      <!-- Loading skeleton while we fetch the existing brief -->
+      <div id="briefLoading" class="working">
+        <div class="spinner"></div> Loading saved brief…
       </div>
     </section>
 
@@ -1052,6 +1249,7 @@
             $("step1Next").disabled = false;
             saveState();
             renderSessionHeader();
+            refreshAdminVisibility();
           });
           wrap.appendChild(card);
         });
@@ -1154,7 +1352,7 @@
           '<span style="color: var(--ok); font-size: 1.1rem;">✓</span> ' +
           '<strong>' + escapeHtml(state.className) + "</strong> " +
           '<span style="color: var(--text-muted); font-size: 0.85rem;">(' + escapeHtml(sourceLabel) + ')</span>';
-        setTimeout(() => gotoStep(4), 800);
+        setTimeout(() => { gotoStep(4); loadBriefStep(); }, 800);
       } catch (e) {
         $("classStatus").innerHTML =
           '<span style="color: var(--err);">✕ ' + escapeHtml(e.message || String(e)) + "</span>";
@@ -1162,10 +1360,76 @@
     }
 
     // ─── Step 4: brief ──────────────────────────────────────────────
+    //
+    // The brief is global to a position — once written, every recruiter
+    // on that role sees the same scoring context. So instead of asking
+    // for it at the start of every session, we fetch what's saved and:
+    //   - if a brief exists → show it locked with a "Re-enter" button
+    //   - if it's blank     → show the textarea like a fresh setup
+    //
+    // The Re-enter button drops back into edit mode (textarea pre-filled)
+    // so updates are explicit, not accidental.
+
+    async function loadBriefStep() {
+      $("briefLoading").classList.remove("hidden");
+      $("briefLocked").classList.add("hidden");
+      $("briefEdit").classList.add("hidden");
+      try {
+        const res = await api(
+          "/api/onboarding/brief?position_uid=" +
+          encodeURIComponent(state.positionUid)
+        );
+        const brief = (res && res.brief) || "";
+        if (brief) {
+          renderBriefLocked(brief);
+        } else {
+          renderBriefEdit("");
+        }
+      } catch (_) {
+        // On error, just show the edit view so the recruiter isn't stuck.
+        renderBriefEdit("");
+      } finally {
+        $("briefLoading").classList.add("hidden");
+      }
+    }
+
+    function renderBriefLocked(text) {
+      $("briefLockedText").textContent = text;
+      $("briefLocked").classList.remove("hidden");
+      $("briefEdit").classList.add("hidden");
+      // Stash it in session state so the sidebar can show it too.
+      state.brief = text;
+      saveState();
+      renderSessionHeader();
+    }
+
+    function renderBriefEdit(prefill) {
+      $("briefText").value = prefill || "";
+      $("step4Next").disabled = !((prefill || "").trim());
+      $("briefEdit").classList.remove("hidden");
+      $("briefLocked").classList.add("hidden");
+      // Focus so they can start typing immediately.
+      setTimeout(() => $("briefText").focus(), 50);
+    }
+
     $("briefText").addEventListener("input", (e) => {
       $("step4Next").disabled = !e.target.value.trim();
     });
 
+    $("briefReenterBtn").addEventListener("click", () => {
+      // Re-enter with current value pre-filled so they can tweak instead
+      // of retyping from scratch.
+      renderBriefEdit($("briefLockedText").textContent || "");
+    });
+
+    // "Start session" when a saved brief already exists — skip the POST,
+    // the brief is unchanged.
+    $("step4Continue").addEventListener("click", () => {
+      gotoStep(5);
+      startCalibration();
+    });
+
+    // "Save & start session" — write the new brief, then proceed.
     $("step4Next").addEventListener("click", async () => {
       const text = $("briefText").value.trim();
       if (!text) return;
@@ -1186,7 +1450,7 @@
       } catch (e) {
         setErr(e.message || String(e));
         btn.disabled = false;
-        btn.textContent = "Start session →";
+        btn.textContent = "Save & start session →";
       }
     });
 
@@ -1798,18 +2062,95 @@
       }, 1500);
     }
 
+    // ─── Admin panel ────────────────────────────────────────────────
+    // Visibility of the ⚙ Admin button is decided by the server: the
+    // /api/admin/settings endpoint returns isAdmin based on whether the
+    // current recruiter is in ADMIN_RECRUITERS env. We re-check whenever
+    // the recruiter changes (Start over flow, page load, recruiter pick).
+    async function refreshAdminVisibility() {
+      const recruiter = (state.recruiter || "").trim();
+      if (!recruiter) {
+        $("adminBtn").classList.add("hidden");
+        return;
+      }
+      try {
+        const res = await api(
+          "/api/admin/settings?recruiter=" + encodeURIComponent(recruiter)
+        );
+        if (res && res.isAdmin) {
+          $("adminBtn").classList.remove("hidden");
+        } else {
+          $("adminBtn").classList.add("hidden");
+        }
+      } catch (_) {
+        $("adminBtn").classList.add("hidden");
+      }
+    }
+
+    async function openAdminModal() {
+      try {
+        const res = await api(
+          "/api/admin/settings?recruiter=" + encodeURIComponent(state.recruiter || "")
+        );
+        if (!res.isAdmin) {
+          setErr("You don't have admin permissions.");
+          return;
+        }
+        $("adminFloor").value = String(res.thumbsUpFloor || 0);
+        $("adminBrief").value = res.brief || "";
+        $("adminModal").classList.remove("hidden");
+      } catch (e) {
+        setErr(e.message || String(e));
+      }
+    }
+
+    function closeAdminModal() {
+      $("adminModal").classList.add("hidden");
+    }
+
+    $("adminBtn").addEventListener("click", openAdminModal);
+    $("adminModalClose").addEventListener("click", closeAdminModal);
+    $("adminModalBackdrop").addEventListener("click", closeAdminModal);
+    $("adminCancel").addEventListener("click", closeAdminModal);
+    $("adminSave").addEventListener("click", async () => {
+      const btn = $("adminSave");
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        const floor = parseInt($("adminFloor").value, 10);
+        const brief = $("adminBrief").value;
+        await api("/api/admin/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recruiter: state.recruiter,
+            thumbs_up_floor: isNaN(floor) ? null : floor,
+            brief: brief,
+          }),
+        });
+        closeAdminModal();
+      } catch (e) {
+        setErr(e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Save";
+      }
+    });
+
     // ─── Boot ───────────────────────────────────────────────────────
     async function boot() {
       setupExtensionDetect();
-      // Restore the textarea if we had one stored.
-      if (state.brief) $("briefText").value = state.brief;
-      $("step4Next").disabled = !($("briefText").value || "").trim();
       // Render whichever step was last active.
       gotoStep(state.step || 1);
+      refreshAdminVisibility();
       try {
         await renderRecruiters();
         if (state.step >= 2 && state.recruiter) await renderPositions();
         if (state.step === 3 && state.positionUid) doAutoClass();
+        // Step 4: re-fetch the brief so a reload always shows the right
+        // mode (locked vs edit). Don't rely on session state alone — the
+        // brief might have been edited by another teammate.
+        if (state.step === 4 && state.positionUid) loadBriefStep();
         if (state.step === 5 && state.recruiter && state.positionUid) {
           startCalibration();
         }

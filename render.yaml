@@ -69,6 +69,11 @@ services:
         value: "1"   # tag every score (1-5); set to 3+ to only tag promising candidates
       - key: TAG_RATING_THRESHOLD
         value: "3"
+      # Comma-separated list of recruiter names allowed to edit admin
+      # settings (global threshold floor + global brief). Match the same
+      # "First Last" format used everywhere else.
+      - key: ADMIN_RECRUITERS
+        value: "Yoni Portnoy"
       - key: NOTE_RATING_THRESHOLD
         value: "3"
       - key: SCREENER_MAX_PER_RUN

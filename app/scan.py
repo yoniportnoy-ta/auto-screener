@@ -653,6 +653,23 @@ def _feedback_context(
     from .feedback import list_feedback_for_candidate, list_feedback_for_class
     parts: list[str] = []
 
+    # ─── Section -1: admin-level global brief (applies to ALL positions) ─
+    # Comes FIRST so Claude treats it as overarching policy. Per-position
+    # briefs in process_ctx remain too — admin brief stacks on top, it
+    # doesn't replace anything.
+    try:
+        from .admin_settings import get_admin_brief
+        admin_brief = get_admin_brief()
+    except Exception as exc:  # noqa: BLE001
+        log.info("feedback_context: admin brief lookup failed: %s", exc)
+        admin_brief = ""
+    if admin_brief:
+        parts.append(
+            "[GLOBAL ADMIN GUIDANCE — applies to every position. "
+            "Treat as binding hiring policy from the team lead.]"
+        )
+        parts.append(admin_brief.strip())
+
     # ─── Section 0: calibration verdicts (max-weight block) ─────────────
     if position_uid:
         try:

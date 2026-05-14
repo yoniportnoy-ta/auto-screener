@@ -330,6 +330,24 @@ class CandidateEnrichment(Base):
     )
 
 
+class AdminSetting(Base):
+    """Global admin-level controls. Tiny k/v table.
+
+    Keys we use:
+      - admin_thumbs_up_floor : minimum 👍 rating, applied across every
+        position. Stacked with per-recruiter calibration via max(...).
+      - admin_brief : free-text guidance appended to every scoring prompt.
+    """
+
+    __tablename__ = "admin_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 __all__ = [
     "Base",
     "CandidateLock",
@@ -344,4 +362,5 @@ __all__ = [
     "RecruiterThreshold",
     "CalibrationVerdict",
     "CandidateEnrichment",
+    "AdminSetting",
 ]

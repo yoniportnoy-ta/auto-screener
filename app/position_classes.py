@@ -125,6 +125,19 @@ def set_recruiter_notes(position_uid: str, notes: str) -> dict:
     return {"positionUid": uid, "recruiterNotes": n}
 
 
+def get_recruiter_notes(position_uid: str) -> str:
+    """Read back the saved recruiter brief for a position. Empty string if
+    none / no class assigned yet."""
+    uid = (position_uid or "").strip()
+    if not uid:
+        return ""
+    with db_session() as session:
+        row = session.scalar(select(PositionClass).where(PositionClass.position_uid == uid))
+        if not row:
+            return ""
+        return (row.recruiter_notes or "").strip()
+
+
 def list_auto_screen_positions() -> list[str]:
     """Position UIDs the cron should walk. Order is stable (alpha by class then uid)."""
     with db_session() as session:

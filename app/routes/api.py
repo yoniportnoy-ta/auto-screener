@@ -1167,6 +1167,19 @@ def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
     return {"positionUid": pos_uid, "saved": True}
 
 
+@router.get("/onboarding/brief")
+def get_onboarding_brief(position_uid: str) -> dict[str, Any]:
+    """Read back the saved brief for a position so the wizard can show a
+    locked/readonly view when one already exists (vs an empty textarea)."""
+    from ..position_classes import get_recruiter_notes
+
+    pos = _resolve_pos(position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    brief = get_recruiter_notes(pos)
+    return {"positionUid": pos, "brief": brief, "hasBrief": bool(brief)}
+
+
 # ─── Calibration (thumbs UI) ─────────────────────────────────────────────────
 def _resolve_pos(uid: str) -> str:
     """Normalize a position uid: numeric Comeet URL form → alphanumeric."""
@@ -1271,6 +1284,46 @@ def calibration_prewarm(body: CalibrationPrewarmBody) -> dict[str, Any]:
         raise HTTPException(400, "position_uid required")
     n = max(1, min(int(body.n or 15), 50))
     return prewarm.prewarm_position(pos, n=n)
+
+
+# ─── Admin global controls ───────────────────────────────────────────────
+@router.get("/admin/settings")
+def admin_get_settings(recruiter: str = "") -> dict[str, Any]:
+    """Return the current admin levers (👍 floor + global brief), plus a
+    flag telling the UI whether the caller is allowed to edit them.
+
+    Anyone can READ — the values affect everyone's scoring anyway, so
+    transparency is fine. Only ADMIN_RECRUITERS can WRITE.
+    """
+    from .. import admin_settings as admin
+    s = admin.get_settings()
+    s["isAdmin"] = admin.is_admin((recruiter or "").strip())
+    return s
+
+
+class AdminSettingsBody(BaseModel):
+    recruiter: str = Field(min_length=1, max_length=200)
+    # 1-5 sets the floor, 0 clears it, None leaves it alone.
+    thumbs_up_floor: int | None = Field(default=None, ge=0, le=5)
+    # Empty string clears, None leaves alone.
+    brief: str | None = Field(default=None, max_length=10000)
+
+
+@router.post("/admin/settings")
+def admin_set_settings(body: AdminSettingsBody) -> dict[str, Any]:
+    """Write admin levers. Gated on recruiter being in ADMIN_RECRUITERS."""
+    from .. import admin_settings as admin
+    if not admin.is_admin(body.recruiter.strip()):
+        raise HTTPException(403, "Admin permission required")
+    try:
+        s = admin.set_settings(
+            thumbs_up_floor=body.thumbs_up_floor,
+            brief=body.brief,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    s["isAdmin"] = True
+    return s
 
 
 @router.get("/candidate/enrichment")
