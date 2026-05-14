@@ -32,6 +32,30 @@ async def cmd_scan_all() -> int:
     return 0
 
 
+async def cmd_reset_and_rescore() -> int:
+    """One-shot: wipe all feedback/thresholds/verdicts AND rescore every
+    candidate with the current prompt.
+
+    Equivalent to running:
+        python -m app.cli reset-for-launch
+        python -m app.cli rescore-all
+
+    Used during prompt iteration: change the prompt, push, then run this
+    to clear stale data and refresh every score so you can see the new
+    distribution immediately instead of waiting for the next prewarm.
+
+    Long-running: same cost as rescore-all (~10-30 min, $1-$5 in tokens
+    depending on pool size).
+    """
+    log.info("reset-and-rescore: step 1/2 — clearing feedback/thresholds/verdicts")
+    rc = await cmd_reset_for_launch()
+    if rc != 0:
+        log.error("reset-and-rescore: reset step failed (rc=%d), aborting rescore", rc)
+        return rc
+    log.info("reset-and-rescore: step 2/2 — rescoring all open positions")
+    return await cmd_rescore_all(None)
+
+
 async def cmd_rescore_all(position_uid: str | None = None) -> int:
     """Re-score previously-scored candidates with the *current* prompt.
 
@@ -387,6 +411,7 @@ COMMANDS = {
     "reset-thresholds": cmd_reset_thresholds,
     "reset-for-launch": cmd_reset_for_launch,
     "rescore-all": cmd_rescore_all,
+    "reset-and-rescore": cmd_reset_and_rescore,
 }
 
 # Commands that accept an optional position_uid positional arg.
