@@ -211,7 +211,16 @@ def record_verdict(
     """
     threshold_before = get_threshold(recruiter_name, position_uid)
     bucket_at_time = bucket_for(ai_rating, threshold_before)
-    agreed = bucket_at_time == verdict if bucket_at_time is not None else None
+    # ❓ ("not sure") is deliberately excluded from the agreement metric —
+    # it isn't really "the AI was wrong", it's "the recruiter didn't pick
+    # a side". Counting it as disagreement when the AI said up/down would
+    # drag the headline number down for reasons unrelated to AI quality.
+    if verdict == "question":
+        agreed = None
+    elif bucket_at_time is None:
+        agreed = None
+    else:
+        agreed = (bucket_at_time == verdict)
     round_num = _current_round_num(recruiter_name, position_uid)
 
     # Trim conservatively. The column is TEXT so there's no DB cap, but

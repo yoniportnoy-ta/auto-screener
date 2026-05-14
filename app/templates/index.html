@@ -348,6 +348,28 @@
       font-weight: 600;
       font-variant-numeric: tabular-nums;
     }
+    .cal-trend {
+      font-size: 0.72rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .cal-trend.hidden { display: none; }
+    .cal-trend.up {
+      background: rgba(74, 222, 128, 0.14);
+      color: var(--ok);
+    }
+    .cal-trend.down {
+      background: rgba(239, 68, 68, 0.14);
+      color: var(--err);
+    }
+    .cal-trend.flat {
+      background: rgba(148, 163, 184, 0.14);
+      color: var(--text-muted);
+    }
 
     /* Profile card */
     .cal-card {
@@ -762,12 +784,17 @@
 
     <!-- ──────────────── Calibration ──────────────── -->
     <section class="step calibration" id="stepDone">
-      <!-- Top bar: round number + agreement % + nothing-found state -->
+      <!-- Top bar: round number + per-round agreement growth.
+           We show the CURRENT round's agreement (not lifetime) so the number
+           visibly climbs as the recruiter teaches the AI — that's the whole
+           pitch for letting auto-tagging kick in. A small trend pill on the
+           right shows the previous round's number for direct comparison. -->
       <div class="cal-toolbar" id="calToolbar">
         <div class="cal-round">Round <span id="calRoundNum">1</span></div>
         <div class="cal-agreement" id="calAgreement">
-          <span class="label">Agreement so far</span>
+          <span class="label">Agreement this round</span>
           <span class="value" id="calAgreementValue">—</span>
+          <span class="cal-trend hidden" id="calAgreementTrend"></span>
         </div>
       </div>
 
@@ -1137,11 +1164,38 @@
           "&position_uid=" + encodeURIComponent(state.positionUid)
         );
         $("calRoundNum").textContent = String(s.roundNum || 1);
-        const a = s.agreement && s.agreement.overall;
-        $("calAgreementValue").textContent =
-          a == null ? "—" : Math.round(a * 100) + "%";
+        updateAgreementDisplay((s.agreement && s.agreement.byRound) || []);
       } catch (_) {
         // Non-blocking; toolbar will refresh on next verdict anyway.
+      }
+    }
+
+    // Render the toolbar agreement number + a trend pill comparing this
+    // round to the previous one. The whole point of switching from a
+    // lifetime % to per-round is so the recruiter sees the line move up
+    // as they teach the AI — that's the trust-builder for auto-tagging.
+    function updateAgreementDisplay(byRound) {
+      const valEl = $("calAgreementValue");
+      const trendEl = $("calAgreementTrend");
+      if (!Array.isArray(byRound) || byRound.length === 0) {
+        valEl.textContent = "—";
+        trendEl.classList.add("hidden");
+        return;
+      }
+      const current = byRound[byRound.length - 1];
+      const prev = byRound.length >= 2 ? byRound[byRound.length - 2] : null;
+      const a = current && current.agreement;
+      valEl.textContent = a == null ? "—" : Math.round(a * 100) + "%";
+      if (prev && prev.agreement != null && a != null) {
+        const delta = Math.round((a - prev.agreement) * 100);
+        let label, cls;
+        if (delta > 0) { label = "▲ +" + delta + "%"; cls = "up"; }
+        else if (delta < 0) { label = "▼ " + delta + "%"; cls = "down"; }
+        else { label = "= last round"; cls = "flat"; }
+        trendEl.textContent = label + " vs round " + prev.roundNum;
+        trendEl.className = "cal-trend " + cls;
+      } else {
+        trendEl.classList.add("hidden");
       }
     }
 
@@ -1426,14 +1480,14 @@
             feedback_text: feedbackText || null,
           }),
         });
-        // Refresh toolbar with new agreement number.
-        const a = res.agreement && res.agreement.overall;
-        $("calAgreementValue").textContent =
-          a == null ? "—" : Math.round(a * 100) + "%";
+        // Refresh toolbar — show the CURRENT round's agreement (not
+        // lifetime). This number climbs as the recruiter teaches the AI,
+        // which is the trust signal we want them looking at.
         $("calRoundNum").textContent = String(res.roundNum || 1);
+        const byRound = (res.agreement && res.agreement.byRound) || [];
+        updateAgreementDisplay(byRound);
         calVerdictsThisRound += 1;
         // Per-round agreement for the summary modal: from the latest byRound entry.
-        const byRound = (res.agreement && res.agreement.byRound) || [];
         const thisRound = byRound[byRound.length - 1];
         if (thisRound && thisRound.agreement != null) {
           calLastRoundAgreement = thisRound.agreement;

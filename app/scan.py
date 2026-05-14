@@ -317,7 +317,10 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
         ).strip()
 
     try:
-        fb_ctx = _feedback_context(candidate_uid, sess.class_id, sess.class_name)
+        fb_ctx = _feedback_context(
+            candidate_uid, sess.class_id, sess.class_name,
+            position_uid=sess.position_uid,
+        )
         if fb_ctx:
             process_ctx = (process_ctx + "\n\n" + fb_ctx).strip()
     except Exception as exc:  # noqa: BLE001
@@ -493,7 +496,10 @@ def score_one_candidate_now(
         ).strip()
 
     try:
-        fb_ctx = _feedback_context(candidate_uid, cls["classId"], cls["className"])
+        fb_ctx = _feedback_context(
+            candidate_uid, cls["classId"], cls["className"],
+            position_uid=position_uid,
+        )
         if fb_ctx:
             process_ctx = (process_ctx + "\n\n" + fb_ctx).strip()
     except Exception as exc:  # noqa: BLE001
@@ -619,10 +625,21 @@ def _build_process_context(candidate: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _feedback_context(candidate_uid: str, class_id: str, class_name: str) -> str:
+def _feedback_context(
+    candidate_uid: str,
+    class_id: str,
+    class_name: str,
+    *,
+    position_uid: str = "",
+) -> str:
     """Build a recruiter-feedback summary to inject into the scoring prompt.
 
-    Two sections:
+    Three sections, ordered by priority (highest first — Claude weights
+    earlier sections more heavily in long prompts):
+      0. CALIBRATION VERDICTS for this position. The recruiter's explicit
+         👍 / 👎 thumb clicks plus their typed reasons. This is the team's
+         direct hire/no-hire signal for the role and the AI is told to
+         weight it above everything else.
       1. Past feedback on THIS candidate (newest first). Critical when the
          recruiter has already rated this person — the AI shouldn't ignore
          the prior verdict on Re-grade.
@@ -636,13 +653,48 @@ def _feedback_context(candidate_uid: str, class_id: str, class_name: str) -> str
     from .feedback import list_feedback_for_candidate, list_feedback_for_class
     parts: list[str] = []
 
+    # ─── Section 0: calibration verdicts (max-weight block) ─────────────
+    if position_uid:
+        try:
+            verdicts = _calibration_verdicts_for_position(position_uid, limit=30)
+        except Exception as exc:  # noqa: BLE001
+            log.info("feedback_context: calibration lookup failed for %s: %s", position_uid, exc)
+            verdicts = []
+        # Highlight verdicts on THIS specific candidate first; they outrank
+        # everything because they're literally about this person.
+        own_verdicts = [v for v in verdicts if v["candidate_uid"] == candidate_uid]
+        other_verdicts = [v for v in verdicts if v["candidate_uid"] != candidate_uid]
+
+        if own_verdicts:
+            parts.append(
+                "[CRITICAL — DIRECT THUMB VERDICTS ON THIS EXACT CANDIDATE. "
+                "These are the recruiter's binding decisions. If they said 👎, "
+                "this person is NOT a fit regardless of other signals. "
+                "Mirror their judgment in your rating + reasoning.]"
+            )
+            for v in own_verdicts[:5]:
+                parts.append(_format_calibration_line(v))
+
+        if other_verdicts:
+            parts.append(
+                "\n[HIGH-WEIGHT — Recent thumb verdicts on OTHER candidates for "
+                "this position. These show exactly which profiles the team has "
+                "decided to advance or reject. Use them as the strongest "
+                "calibration signal — stronger than the learned rubric, "
+                "stronger than your general intuition. Look for the patterns: "
+                "what got 👍, what got 👎, what got ❓, and why.]"
+            )
+            for v in other_verdicts[:15]:
+                parts.append(_format_calibration_line(v))
+
+    # ─── Section 1: prior 1-5 feedback on THIS candidate ────────────────
     try:
         own = list_feedback_for_candidate(candidate_uid)
     except Exception as exc:  # noqa: BLE001
         log.info("feedback_context: own-feedback lookup failed for %s: %s", candidate_uid, exc)
         own = []
     if own:
-        parts.append("[Prior feedback on THIS candidate — recruiter has weighed in before]")
+        parts.append("\n[Prior feedback on THIS candidate — recruiter has weighed in before]")
         # Newest first; cap at 5.
         for fb in own[:5]:
             ts = fb.timestamp.strftime("%Y-%m-%d") if fb.timestamp else ""
@@ -654,6 +706,7 @@ def _feedback_context(candidate_uid: str, class_id: str, class_name: str) -> str
                 line += f" — {note[:300]}"
             parts.append(line)
 
+    # ─── Section 2: recent class-wide 1-5 feedback ──────────────────────
     try:
         cls_recent = list_feedback_for_class(class_id, limit=20) if class_id else []
     except Exception as exc:  # noqa: BLE001
@@ -677,6 +730,48 @@ def _feedback_context(candidate_uid: str, class_id: str, class_name: str) -> str
             parts.append(line)
 
     return "\n".join(parts) if parts else ""
+
+
+def _calibration_verdicts_for_position(position_uid: str, *, limit: int = 30) -> list[dict[str, Any]]:
+    """Pull recent calibration verdicts for this position. Returns plain
+    dicts (not ORM rows) so the calling code doesn't accidentally lazy-load
+    outside the session.
+    """
+    from sqlalchemy import desc, select as _select
+    from .models import CalibrationVerdict
+    out: list[dict[str, Any]] = []
+    with db_session() as ses:
+        rows = ses.execute(
+            _select(CalibrationVerdict)
+            .where(CalibrationVerdict.position_uid == position_uid)
+            .order_by(desc(CalibrationVerdict.id))
+            .limit(limit)
+        ).scalars().all()
+        for r in rows:
+            out.append({
+                "recruiter": r.recruiter_name or "",
+                "candidate_uid": r.candidate_uid or "",
+                "verdict": r.verdict or "",
+                "ai_rating": r.ai_rating,
+                "feedback_text": (r.feedback_text or "").strip(),
+                "created_at": r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
+            })
+    return out
+
+
+def _format_calibration_line(v: dict[str, Any]) -> str:
+    """Format one calibration verdict as a single prompt line."""
+    icon = {"up": "👍 GOOD FIT", "down": "👎 NOT A FIT", "question": "❓ unsure"}.get(
+        v.get("verdict") or "", v.get("verdict") or ""
+    )
+    parts = [f" - {v.get('recruiter') or 'recruiter'}: {icon}"]
+    if v.get("ai_rating") is not None:
+        parts.append(f"(AI rated {v['ai_rating']}/5)")
+    if v.get("feedback_text"):
+        # Cap each note so a few verbose notes can't dominate the prompt
+        # budget — but keep them long enough to convey real reasoning.
+        parts.append(f"— \"{v['feedback_text'][:280]}\"")
+    return " ".join(parts)
 
 
 def _resolve_numeric_position_uid(numeric_id: str) -> str | None:
