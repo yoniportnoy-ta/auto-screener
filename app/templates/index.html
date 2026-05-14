@@ -527,6 +527,64 @@
       margin-bottom: 1.2rem;
     }
 
+    /* AI's predicted thumb for this candidate — the headline debugging
+       signal during calibration. Color-coded by bucket so the recruiter
+       can see at a glance whether their click will agree or disagree. */
+    .ai-guess {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.8rem;
+      padding: 0.7rem 0.9rem;
+      border-radius: 8px;
+      margin: 0.9rem 0 1.2rem;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+    .ai-guess.up {
+      border-color: var(--ok);
+      background: rgba(74, 222, 128, 0.08);
+    }
+    .ai-guess.down {
+      border-color: var(--err);
+      background: rgba(239, 68, 68, 0.08);
+    }
+    .ai-guess.question {
+      border-color: var(--warn);
+      background: rgba(251, 191, 36, 0.08);
+    }
+    .ai-guess.pending {
+      border-style: dashed;
+      opacity: 0.85;
+    }
+    .ai-guess-icon { font-size: 1.4rem; line-height: 1; }
+    .ai-guess-label {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .ai-guess-value {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .ai-guess-rating {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.16);
+      font-variant-numeric: tabular-nums;
+    }
+    .ai-guess-why {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      flex-basis: 100%;
+      padding-left: 1.9rem;
+    }
+
     /* Career timeline (extracted lazily per candidate via Claude) */
     .cal-timeline {
       list-style: none;
@@ -1200,6 +1258,7 @@
     }
 
     let calIsCalibrated = false;
+    let calThreshold = null;  // { thumbsUpMinRating, thumbsDownMaxRating, hasCalibration } | null
 
     async function loadNextBatch() {
       // The backend may need to score fresh CVs synchronously when the
@@ -1219,6 +1278,9 @@
         );
         calQueue = res.candidates || [];
         calIsCalibrated = !!res.isCalibrated;
+        // Snapshot the threshold so each card can render "AI says X because
+        // rating Y vs your 👍 floor of Z" without needing a separate fetch.
+        calThreshold = (res.state && res.state.threshold) || null;
         calCurrentIdx = 0;
         calVerdictsThisRound = 0;
         if (!calQueue.length) {
@@ -1240,6 +1302,62 @@
           '<div class="err-banner" style="margin:0">' +
           escapeHtml(e.message || String(e)) + "</div>";
       }
+    }
+
+    // Build the "AI says 👍/👎/❓" badge that sits under the candidate's name.
+    // This is the single most useful debugging signal for the recruiter:
+    // it lets them see whether their thumb matches the AI's prediction
+    // BEFORE they click, so the agreement number actually means something
+    // to them in real time. The badge also explains WHY the AI chose that
+    // bucket (rating vs threshold floors) so a mismatch is interpretable.
+    function renderAiGuessBadge(c, threshold) {
+      const rating = c.rating == null ? null : Number(c.rating);
+      const bucket = c.bucket;  // server-computed: "up" | "down" | "question" | null
+      const upMin = threshold && threshold.thumbsUpMinRating;
+      const downMax = threshold && threshold.thumbsDownMaxRating;
+
+      // No calibration yet → no prediction. Be honest about it.
+      if (!bucket) {
+        return `
+          <div class="ai-guess pending">
+            <span class="ai-guess-label">AI prediction</span>
+            <span class="ai-guess-value">— not enough thumbs yet to call it</span>
+            ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/5</span>` : ""}
+          </div>
+        `;
+      }
+
+      const cfg = {
+        up:       { icon: "👍", text: "AI says Good fit",     cls: "up" },
+        down:     { icon: "👎", text: "AI says Not a fit",    cls: "down" },
+        question: { icon: "❓", text: "AI says Not sure",     cls: "question" },
+      }[bucket] || { icon: "?", text: "AI: " + bucket, cls: "question" };
+
+      // Explain the bucketing in plain English. Helps the recruiter spot
+      // when the threshold has drifted somewhere they don't actually agree
+      // with (e.g. they 👍'd a rating-3 once and now every 3 is "up").
+      let why = "";
+      if (rating != null) {
+        if (bucket === "up" && upMin != null) {
+          why = `score ${rating}/5 ≥ your 👍 floor of ${upMin}`;
+        } else if (bucket === "down" && downMax != null) {
+          why = `score ${rating}/5 ≤ your 👎 ceiling of ${downMax}`;
+        } else if (bucket === "question") {
+          const parts = [`score ${rating}/5 in the gap`];
+          if (upMin != null) parts.push(`(👍 starts at ${upMin}`);
+          if (downMax != null) parts.push(`👎 ends at ${downMax})`);
+          why = parts.join(" ");
+        }
+      }
+
+      return `
+        <div class="ai-guess ${cfg.cls}">
+          <span class="ai-guess-icon">${cfg.icon}</span>
+          <span class="ai-guess-value">${cfg.text}</span>
+          ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/5</span>` : ""}
+          ${why ? `<span class="ai-guess-why">${escapeHtml(why)}</span>` : ""}
+        </div>
+      `;
     }
 
     function renderCurrentCandidate() {
@@ -1264,6 +1382,7 @@
           thumbs are what teach the AI where to draw it.
         </div>
       ` : "";
+      const aiGuess = renderAiGuessBadge(c, calThreshold);
       $("calCard").innerHTML = `
         ${calibrationHint}
         <h2 class="cal-name">${escapeHtml(c.candidateName || c.candidateUid)}</h2>
@@ -1271,6 +1390,7 @@
           ${escapeHtml(c.positionName || state.positionName || "")}
           &middot; Candidate ${calCurrentIdx + 1} of ${calQueue.length} this round
         </p>
+        ${aiGuess}
 
         <!-- Career timeline + education + LinkedIn — populated by enrichment fetch -->
         <div class="cal-section">
