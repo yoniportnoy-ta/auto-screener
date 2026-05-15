@@ -159,13 +159,18 @@ async def cmd_rescore_all(position_uid: str | None = None) -> int:
 
 
 async def cmd_reset_for_launch() -> int:
-    """One-shot pre-launch cleanup. Clears the three tables that contain
+    """One-shot pre-launch cleanup. Clears the four tables that contain
     pre-launch noise and leaves the expensive/historical ones alone:
 
       WIPED:
         - feedback                (old 1-5 ratings + notes — pre-calibration era)
         - recruiter_thresholds    (so the new MIN_THUMBS_UP_FLOOR is enforced)
         - calibration_verdicts    (pre-launch test thumbs from internal QA)
+        - learned_rubrics         (synthesised FROM feedback above — leaving them
+                                   in place means the scoring prompt still treats
+                                   the stale "rate 4-5 when X" patterns as
+                                   authoritative, overruling the new strict
+                                   pre-rating checklist)
 
       KEPT:
         - debug_scoring           (the scoring pool — Claude tokens already paid)
@@ -178,6 +183,7 @@ async def cmd_reset_for_launch() -> int:
     from .models import (
         CalibrationVerdict,
         Feedback,
+        LearnedRubric,
         RecruiterThreshold,
     )
 
@@ -187,6 +193,7 @@ async def cmd_reset_for_launch() -> int:
             ("feedback", Feedback),
             ("recruiter_thresholds", RecruiterThreshold),
             ("calibration_verdicts", CalibrationVerdict),
+            ("learned_rubrics", LearnedRubric),
         ]:
             res = ses.execute(delete(model))
             counts[label] = res.rowcount or 0
