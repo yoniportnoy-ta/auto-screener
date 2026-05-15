@@ -712,60 +712,32 @@ def _feedback_context(
             for v in other_verdicts[:15]:
                 parts.append(_format_calibration_line(v))
 
-    # Cross-role: surface verdicts from OTHER positions when the recruiter
-    # has typed a reason. The reasoning generalises — "no relocation",
-    # "agency career", "flat progression" are universal standards, not
-    # position-specific. Limit to verdicts that have typed feedback because
-    # those carry the *why*, not just the thumb.
-    try:
-        cross = _calibration_verdicts_cross_position(
-            exclude_position_uid=position_uid, limit=20, require_feedback_text=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.info("feedback_context: cross-role verdict lookup failed: %s", exc)
-        cross = []
-    if cross:
-        parts.append(
-            "\n[CROSS-ROLE RECRUITER STANDARDS — Recent verdicts on OTHER positions "
-            "where the recruiter explained their reasoning. These describe the team's "
-            "*universal* bar (relocation, company tier, career progression, etc.) and "
-            "should be applied to this candidate too. Apply the same standards.]"
-        )
-        for v in cross[:20]:
-            parts.append(_format_calibration_line(v))
-
-    # Aggregate stats: show the AI how its own historical ratings have
-    # been received. If the team 👎'd 80% of candidates the AI rated 4,
-    # it's overcalling 4. The model should self-correct.
-    try:
-        agg = _verdict_aggregate_stats()
-    except Exception as exc:  # noqa: BLE001
-        log.info("feedback_context: aggregate stats failed: %s", exc)
-        agg = None
-    if agg and agg.get("verdict_count", 0) >= 10:
-        by_r = agg["by_ai_rating"]
-        agg_lines = ["\n[AI SELF-CALIBRATION — how the team has reacted to your past ratings:]"]
-        for rating in (5, 4, 3, 2, 1):
-            row = by_r.get(rating, {})
-            n = row.get("total", 0)
-            if n < 3:
-                continue
-            up = row.get("up", 0)
-            down = row.get("down", 0)
-            q = row.get("question", 0)
-            pct = lambda x: f"{round(100 * x / n)}%" if n else "—"
-            agg_lines.append(
-                f" - When you rated {rating}/5  (n={n}): "
-                f"👍 {pct(up)}, 👎 {pct(down)}, ❓ {pct(q)}"
+    # Same-class: surface verdicts from OTHER positions in the SAME class
+    # when the recruiter has typed a reason. Standards generalise within
+    # a class (all "Android Team Lead" roles share a bar) but should NOT
+    # bleed across classes (Android standards aren't Marketing standards).
+    # Only show verdicts with typed feedback — those carry the *why*.
+    if class_id:
+        try:
+            same_class = _calibration_verdicts_same_class(
+                class_id=class_id,
+                exclude_position_uid=position_uid,
+                limit=20,
+                require_feedback_text=True,
             )
-        # Only show this section if at least one rating bucket has data
-        if len(agg_lines) > 1:
-            agg_lines.append(
-                "Use these percentages to calibrate yourself. If a rating "
-                "bucket has high 👎%, you've been over-rating in that band — "
-                "be stricter."
+        except Exception as exc:  # noqa: BLE001
+            log.info("feedback_context: same-class verdict lookup failed: %s", exc)
+            same_class = []
+        if same_class:
+            parts.append(
+                f"\n[CLASS-WIDE RECRUITER STANDARDS for '{class_name or class_id}' — "
+                "Recent verdicts on OTHER positions in this class where the recruiter "
+                "explained their reasoning. These describe the team's bar for THIS "
+                "kind of role (similar rubric) and should be applied here. Apply the "
+                "same standards.]"
             )
-            parts.extend(agg_lines)
+            for v in same_class[:20]:
+                parts.append(_format_calibration_line(v))
 
     # ─── Section 1: prior 1-5 feedback on THIS candidate ────────────────
     try:
@@ -840,30 +812,41 @@ def _calibration_verdicts_for_position(position_uid: str, *, limit: int = 30) ->
     return out
 
 
-def _calibration_verdicts_cross_position(
+def _calibration_verdicts_same_class(
     *,
+    class_id: str,
     exclude_position_uid: str = "",
-    limit: int = 25,
+    limit: int = 20,
     require_feedback_text: bool = True,
 ) -> list[dict[str, Any]]:
-    """Pull recent calibration verdicts ACROSS all positions.
+    """Pull recent calibration verdicts from OTHER positions that share
+    the same class_id (e.g., all "Android Team Lead" positions teach each
+    other, but Android verdicts don't bleed into Design / Marketing).
 
-    The point: the recruiter's feedback on one role should teach the AI
-    about their standards on every other role. If Yoni 👎'd three
-    candidates across different positions all saying "no relocation",
-    the AI on a fresh fourth position should also weight relocation
-    heavily — even if no one has thumbed yet on that specific position.
+    Within-class is the sweet spot for cross-position learning: similar
+    rubrics apply, so a recruiter's "no relocation" or "agency career"
+    reasoning on one Android role transfers cleanly to the next Android
+    role. Cross-class would be too noisy (Android standards aren't
+    Marketing standards).
 
-    Filtered to verdicts with typed feedback by default (those carry the
-    *reasoning*, not just the thumb). Newest first. Caller passes the
-    current position_uid as exclude_position_uid so the cross-role
-    section doesn't double up with the per-position section.
+    Joins CalibrationVerdict → PositionClass on position_uid to filter
+    by class_id. Filtered to verdicts with typed feedback by default —
+    those carry the *reasoning*, not just the thumb.
     """
     from sqlalchemy import desc, select as _select
-    from .models import CalibrationVerdict
+    from .models import CalibrationVerdict, PositionClass
+
+    if not class_id:
+        return []
     out: list[dict[str, Any]] = []
     with db_session() as ses:
-        stmt = _select(CalibrationVerdict).order_by(desc(CalibrationVerdict.id)).limit(limit * 3)
+        stmt = (
+            _select(CalibrationVerdict)
+            .join(PositionClass, PositionClass.position_uid == CalibrationVerdict.position_uid)
+            .where(PositionClass.class_id == class_id)
+            .order_by(desc(CalibrationVerdict.id))
+            .limit(limit * 3)
+        )
         if exclude_position_uid:
             stmt = stmt.where(CalibrationVerdict.position_uid != exclude_position_uid)
         if require_feedback_text:
@@ -885,42 +868,6 @@ def _calibration_verdicts_cross_position(
             if len(out) >= limit:
                 break
     return out
-
-
-def _verdict_aggregate_stats(*, exclude_position_uid: str = "") -> dict[str, Any]:
-    """Aggregate verdict stats across all positions so the prompt can show
-    the AI HOW its ratings have been received. If 80% of the candidates it
-    rated 4 ended up 👎'd, that's a powerful signal to recalibrate.
-
-    Returns {
-      "verdict_count": int,
-      "by_ai_rating": {1: {up, down, question, total}, ..., 5: {...}},
-    }
-    """
-    from sqlalchemy import desc, select as _select
-    from .models import CalibrationVerdict
-
-    by_rating: dict[int, dict[str, int]] = {
-        i: {"up": 0, "down": 0, "question": 0, "total": 0} for i in range(1, 6)
-    }
-    total = 0
-    with db_session() as ses:
-        stmt = _select(
-            CalibrationVerdict.ai_rating, CalibrationVerdict.verdict
-        ).order_by(desc(CalibrationVerdict.id)).limit(500)
-        if exclude_position_uid:
-            stmt = stmt.where(CalibrationVerdict.position_uid != exclude_position_uid)
-        rows = ses.execute(stmt).all()
-        for ai_rating, verdict in rows:
-            if ai_rating is None or verdict not in ("up", "down", "question"):
-                continue
-            r = int(ai_rating)
-            if not (1 <= r <= 5):
-                continue
-            by_rating[r][verdict] += 1
-            by_rating[r]["total"] += 1
-            total += 1
-    return {"verdict_count": total, "by_ai_rating": by_rating}
 
 
 def _format_calibration_line(v: dict[str, Any]) -> str:
