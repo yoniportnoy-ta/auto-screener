@@ -67,13 +67,17 @@ def _write(key: str, value: str | None) -> None:
 
 
 def get_settings() -> dict[str, Any]:
-    """Public read. Returns dict with both fields, normalized."""
+    """Public read. Returns dict with both fields, normalized.
+
+    `thumbsUpFloor` is on the internal 1-10 scale (matches the calibration
+    threshold and AI rating). UI dropdowns expose 1-10 values directly.
+    """
     floor_raw = _read(KEY_THUMBS_UP_FLOOR)
     floor: int | None = None
     if floor_raw:
         try:
             v = int(floor_raw)
-            if 1 <= v <= 5:
+            if 1 <= v <= 10:
                 floor = v
         except (ValueError, TypeError):
             pass
@@ -92,13 +96,15 @@ def set_settings(
     """Write either or both fields. None = leave unchanged (don't clear).
     Pass `0` / empty string explicitly to clear (treated as None internally
     on the floor side; empty string clears the brief).
+
+    `thumbs_up_floor` is on the 1-10 internal scale.
     """
     if thumbs_up_floor is not None:
         if thumbs_up_floor == 0:
             _write(KEY_THUMBS_UP_FLOOR, None)
         else:
-            if not (1 <= thumbs_up_floor <= 5):
-                raise ValueError("thumbs_up_floor must be 1-5 (or 0 to clear)")
+            if not (1 <= thumbs_up_floor <= 10):
+                raise ValueError("thumbs_up_floor must be 1-10 (or 0 to clear)")
             _write(KEY_THUMBS_UP_FLOOR, str(thumbs_up_floor))
     if brief is not None:
         _write(KEY_BRIEF, brief.strip())

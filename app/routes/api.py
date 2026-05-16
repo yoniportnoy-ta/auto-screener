@@ -1303,8 +1303,8 @@ def admin_get_settings(recruiter: str = "") -> dict[str, Any]:
 
 class AdminSettingsBody(BaseModel):
     recruiter: str = Field(min_length=1, max_length=200)
-    # 1-5 sets the floor, 0 clears it, None leaves it alone.
-    thumbs_up_floor: int | None = Field(default=None, ge=0, le=5)
+    # 1-10 sets the floor (internal scale), 0 clears it, None leaves it alone.
+    thumbs_up_floor: int | None = Field(default=None, ge=0, le=10)
     # Empty string clears, None leaves alone.
     brief: str | None = Field(default=None, max_length=10000)
 

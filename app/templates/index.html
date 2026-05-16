@@ -933,14 +933,15 @@
       </p>
 
       <label class="admin-field-label" for="adminFloor">
-        Global 👍 floor
-        <span class="hint-inline">No candidate below this rating can ever be tagged as a fit.</span>
+        Global 👍 floor (1-10 internal scale)
+        <span class="hint-inline">No candidate below this rating can ever be tagged as a fit. Internal scale is 1-10; the Comeet tag itself stays on 1-5.</span>
       </label>
       <select class="admin-select" id="adminFloor">
         <option value="0">— no floor (use per-recruiter calibration only) —</option>
-        <option value="3">3 — let through 3, 4, and 5</option>
-        <option value="4">4 — only 4 and 5 (recommended)</option>
-        <option value="5">5 — only 5 (very strict)</option>
+        <option value="6">6 — lean-yes and above (lenient)</option>
+        <option value="7">7 — strong fit and above (recommended)</option>
+        <option value="8">8 — very strong fit and above (strict)</option>
+        <option value="9">9 — near-superstar only (very strict)</option>
       </select>
 
       <label class="admin-field-label" for="adminBrief">
@@ -1586,7 +1587,7 @@
           <div class="ai-guess pending">
             <span class="ai-guess-label">AI prediction</span>
             <span class="ai-guess-value">— not enough thumbs yet to call it</span>
-            ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/5</span>` : ""}
+            ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/10</span>` : ""}
           </div>
         `;
       }
@@ -1603,11 +1604,11 @@
       let why = "";
       if (rating != null) {
         if (bucket === "up" && upMin != null) {
-          why = `score ${rating}/5 ≥ your 👍 floor of ${upMin}`;
+          why = `score ${rating}/10 ≥ your 👍 floor of ${upMin}`;
         } else if (bucket === "down" && downMax != null) {
-          why = `score ${rating}/5 ≤ your 👎 ceiling of ${downMax}`;
+          why = `score ${rating}/10 ≤ your 👎 ceiling of ${downMax}`;
         } else if (bucket === "question") {
-          const parts = [`score ${rating}/5 in the gap`];
+          const parts = [`score ${rating}/10 in the gap`];
           if (upMin != null) parts.push(`(👍 starts at ${upMin}`);
           if (downMax != null) parts.push(`👎 ends at ${downMax})`);
           why = parts.join(" ");
@@ -1618,7 +1619,7 @@
         <div class="ai-guess ${cfg.cls}">
           <span class="ai-guess-icon">${cfg.icon}</span>
           <span class="ai-guess-value">${cfg.text}</span>
-          ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/5</span>` : ""}
+          ${rating != null ? `<span class="ai-guess-rating">raw score: ${rating}/10</span>` : ""}
           ${why ? `<span class="ai-guess-why">${escapeHtml(why)}</span>` : ""}
         </div>
       `;

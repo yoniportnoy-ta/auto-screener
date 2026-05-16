@@ -89,9 +89,16 @@ RATING_TAG_SUFFIX = RATING_TAG_NAMES
 
 
 def rating_tag_name(rating: int) -> str:
-    name = RATING_TAG_NAMES.get(int(rating))
+    """Pick the right "AI: <verdict>" tag name for a rating.
+
+    Internally we store 1-10 scores; Comeet tags stay on 1-5 (those are the
+    five tags recruiters already created in the Comeet UI). Convert here.
+    """
+    from .rating_scale import internal_to_external
+    ext = internal_to_external(rating)
+    name = RATING_TAG_NAMES.get(int(ext)) if ext is not None else None
     if not name:
-        raise ValueError(f"unsupported rating {rating!r} (expected 1-5)")
+        raise ValueError(f"unsupported rating {rating!r} (expected 1-10 internal)")
     return name
 
 
@@ -216,10 +223,15 @@ def apply_rating_tag(
                 rating, calibrated_threshold,
             )
             return None
-    elif int(rating) < settings.tag_rating_threshold and not force:
+    elif int(rating) < (settings.tag_rating_threshold * 2) and not force:
         # Force path or missing position_uid — fall back to the legacy global
-        # threshold so manual tag invocations still respect *some* bar.
-        log.debug("apply_rating_tag: rating %s < threshold %s; skipping", rating, settings.tag_rating_threshold)
+        # threshold so manual tag invocations still respect *some* bar. The
+        # env var still uses the 1-5 scale; multiply by 2 to compare against
+        # the internal 1-10 rating.
+        log.debug(
+            "apply_rating_tag: rating %s < threshold %s/10; skipping",
+            rating, settings.tag_rating_threshold * 2,
+        )
         return None
 
     tag_name = rating_tag_name(rating)
@@ -281,10 +293,13 @@ def apply_rating_tag(
     # in force/manual-tag flows) get is_favorite=true. On a re-score that
     # drops them below the bar we ALSO clear the flag so it reflects reality.
     if settings.auto_flag_enabled:
+        # Internal rating is 1-10. Calibrated threshold (when set) is also
+        # 1-10. The legacy flag_rating_threshold env var is still on the
+        # old 1-5 scale; double it to compare against 1-10.
         flag_bar = (
             calibrated_threshold
             if calibrated_threshold is not None
-            else int(settings.flag_rating_threshold)
+            else int(settings.flag_rating_threshold) * 2
         )
         should_flag = int(rating) >= flag_bar
         numeric_id = numeric_candidate_id_from_url(candidate_url)

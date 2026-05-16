@@ -37,13 +37,12 @@ log = logging.getLogger(__name__)
 
 Verdict = Literal["up", "down", "question"]
 
-# Hard floor on the recruiter's 👍 minimum. Rating 2 and below should never
-# count as "good fit" no matter what a recruiter accidentally clicked — the
-# 1-5 scale puts 1-2 in "weak / probably not a fit" territory and using
-# those as the up-bar produces absurd buckets like "AI says 👍 because 2/5
-# ≥ your 👍 floor of 2". The floor doesn't fire if the recruiter never 👍'd
-# anything; it only clamps after-the-fact when the computed min is below 3.
-MIN_THUMBS_UP_FLOOR = 3
+# Hard floor on the recruiter's 👍 minimum. Internal scale is 1-10, so a
+# 👍 floor below 6 means the recruiter would tag rating-5-or-less candidates
+# as "good fit" — which is nonsense on the recalibrated scale (5 = lean
+# no, 6 = lean yes). 6 is the smallest defensible 👍 floor; the algorithm
+# only clamps after-the-fact when the computed min is below 6.
+MIN_THUMBS_UP_FLOOR = 6
 
 
 @dataclass

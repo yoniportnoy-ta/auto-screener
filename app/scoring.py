@@ -337,10 +337,11 @@ def _single_pass(
 
         "6) BAND IMPACT — Combine the above with the role-specific evidence. Strong "
         "tier-1 product + tier-1 university + location match + product career arc + "
-        "healthy progression = candidate for 4-5. Service/staffing/agency career + "
-        "unknown employers + mismatched location + flat progression = should be 1-2 "
+        "healthy progression = candidate for 7-10. Service/staffing/agency career + "
+        "unknown employers + mismatched location + flat progression = should be 1-3 "
         "unless the candidate has truly exceptional individual achievements that "
-        "outweigh the tier signal.\n"
+        "outweigh the tier signal. The 1-10 internal scale gives you room to "
+        "differentiate — use 5-6 when the signals are mixed, not as a polite default.\n"
         + _tiers_block()
         + "\n\nThen proceed to the rating.\n\n"
     )
@@ -368,7 +369,7 @@ def _single_pass(
 
     tail = (
         "Respond with ONLY a single JSON object (no markdown fences, no prose before or after). Keys:\n"
-        "- rating: integer 1–5 (see scale below)\n"
+        "- rating: integer 1–10 (see scale below)\n"
         "- confidence: number 0 to 1\n"
         "- summary: string, 1-2 sentences max\n"
         "- strengths: array of up to 4 short strings\n"
@@ -376,68 +377,70 @@ def _single_pass(
         "- comeet_comment_html: short extra HTML/plain for the note (server allows only b, i, u)\n"
         "- linkedin_url: full linkedin.com/in/ URL if visible in the resume; otherwise null\n\n"
 
-        "Rating scale — calibrated so the distribution across a TYPICAL pool should look "
-        "like: ~5% at 5, ~15% at 4, ~30% at 3, ~35% at 2, ~15% at 1. If most of your "
-        "ratings land at 3-4, you are being too generous. USE THE FULL SCALE — 1s and "
-        "5s exist and should appear in their target frequencies. Refusing to use the "
-        "extremes is itself a calibration failure.\n\n"
+        "Rating scale (1-10) — calibrated so a TYPICAL pool of CVs distributes roughly:\n"
+        "  10: ~3%   |  9: ~5%   |  8: ~7%   |  7: ~10%  |  6: ~15%\n"
+        "   5: ~15%  |  4: ~15%  |  3: ~12%  |  2: ~10%  |  1: ~8%\n"
+        "If most of your ratings cluster in any single value you are not using the scale. "
+        "The 10-point range exists so you can distinguish a 'strong tier-2 product hire' "
+        "(7) from a 'tier-1 superstar' (10) and a 'borderline maybe' (5) from a 'thin "
+        "evidence but no blockers' (4). USE THE FULL RANGE.\n\n"
 
-        "- 5 (Superstar — ~5%, roughly 1 in 20 candidates): Rare. ALL FOUR axes are "
-        "tier-1 (tier-1 product employer + tier-1 university + location match + clear "
-        "role-mapped achievements with concrete scale numbers). 'Hire-on-paper' before "
-        "even talking to them. If you're hesitating whether they're a 5, they're a 4.\n"
-        "- 4 (Strong — ~15%): Candidate we would actually FAST-TRACK TO INTERVIEW TODAY. "
-        "Tier-1 OR strong tier-2 PRODUCT background, clear progression, location match, "
-        "no major red flags. Most CVs do NOT clear this bar. If you would also describe "
-        "the candidate as 'maybe worth a screen', that's a 3.\n"
-        "- 3 (OK — ~30%): Reasonable signals but with notable gaps OR all-mid signals "
-        "(known-but-not-top-tier employer, normal progression, no standout achievements). "
-        "Maybe worth a screen; an interview would clarify. Includes 'good on paper but "
-        "borderline on the role' — that's not a 4.\n"
-        "- 2 (Weak — ~35%, DEFAULT for typical applicants): Multiple negative signals — "
-        "unknown / agency / staffing employers, OR flat / slow career progression, OR "
-        "mismatched location with no relocation statement, OR no concrete evidence of "
-        "the skills the role requires. Sparse-resume candidates land here by default.\n"
-        "- 1 (No fit — ~15%, roughly 1 in 7 candidates): Hard blockers. Use 1 when ANY "
-        "of these are true:\n"
+        "Bands (use the 10-point scale below, but here's the rough mapping if you need "
+        "anchor points):\n"
+        "- 9-10 (Superstar tier — top ~8%): RARE. ALL axes tier-1 (tier-1 product "
+        "employer + tier-1 university + location match + clear role-mapped achievements "
+        "with concrete scale numbers). 10 = unambiguous 'hire on paper'. 9 = same minus "
+        "one small caveat.\n"
+        "- 7-8 (Strong — ~17%): Candidate we would FAST-TRACK TO INTERVIEW TODAY. "
+        "Tier-1 or strong tier-2 product background, clear progression, location match, "
+        "no major red flags. 8 = solidly strong. 7 = strong but one specific gap.\n"
+        "- 5-6 (OK / Borderline — ~30%): Reasonable signals but with notable gaps, OR "
+        "all-mid signals (known-but-not-top-tier employer, normal progression, no "
+        "standout achievements). 6 = lean yes. 5 = lean no. An interview would clarify.\n"
+        "- 3-4 (Weak — ~27%, the DEFAULT for typical applicants): Multiple negative "
+        "signals — unknown / agency / staffing employer, flat / slow career progression, "
+        "mismatched location with no relocation statement, or no concrete evidence of "
+        "the skills the role requires. Sparse-resume candidates land here by default. "
+        "4 = some redeeming features. 3 = none.\n"
+        "- 1-2 (No fit — ~18%): Hard blockers. Use 1-2 when ANY of these are true:\n"
         "    • Candidate is in a different country and the CV does NOT mention relocating.\n"
         "    • Entire (or near-entire) career at service / staffing / consulting / "
         "outsourcing shops.\n"
         "    • Completely wrong skill set or domain for the role.\n"
         "    • Obvious level mismatch (senior role + sub-junior candidate, or vice versa "
         "with no path forward).\n"
-        "  These cases are NOT 2 with low confidence — they're 1.\n\n"
+        "  These cases are NOT 3-4 with low confidence — they're 1-2.\n\n"
 
         "IMPORTANT: Sparse evidence is itself a negative signal. 'I can't tell from this CV' "
-        "= 2, not 3. Only land at 3 when there ARE real signals but they're middling.\n\n"
+        "= 3-4, not 5-6. Only land at 5-6 when there ARE real signals but they're middling.\n\n"
 
-        "TIEBREAKER RULE: When hesitating between two adjacent ratings, pick the LOWER one. "
-        "'I think this is a 4, maybe a 3' → 3. 'I think this is a 2, maybe a 1' → 1. The "
-        "team can always thumbs-up a borderline candidate and teach you to be less strict; "
-        "they cannot easily un-tag a candidate you over-rated.\n\n"
+        "TIEBREAKER RULE: When hesitating between two adjacent values, pick the LOWER one. "
+        "'I think this is a 7, maybe a 6' → 6. 'Could be a 4 or 3' → 3. The team can "
+        "always thumbs-up a borderline candidate and teach you to be less strict; they "
+        "cannot easily un-tag a candidate you over-rated.\n\n"
 
         "=== REFLECTION STEP (do this BEFORE finalising the rating) ===\n"
-        "  (a) If you're about to rate 4 or 5, mentally list THREE concrete positive "
-        "signals — specific tier-1 employer names, specific scale/scope numbers, "
+        "  (a) If you're about to rate 7 or higher, mentally list THREE concrete "
+        "positive signals — specific tier-1 employer names, specific scale/scope numbers, "
         "specific tier-1 university, or specific recent achievements that map directly "
         "to THIS role (not generic 'has experience'). If you cannot list three SPECIFIC "
-        "items, drop by one tier. If you cannot list any, drop to 2.\n"
+        "items, drop by one band (i.e. to 5-6). If you cannot list any, drop to 3-4.\n"
         "  (b) Count the CONS (red flags from the checklist: location mismatch, "
         "service/agency career, flat progression, unknown employers, irrelevant domain). "
         "If you have 2 or more cons, do NOT just inflate the rating based on the "
         "positives — explicitly weigh the negatives in your final number. The rating "
         "should reflect a balanced view of both sides. Strong positives can still "
-        "justify a 4 if the cons are minor or non-blocking; but if the cons are "
+        "justify a 7-8 if the cons are minor or non-blocking; but if the cons are "
         "substantive (location mismatch, agency-only career, etc.) the balanced answer "
-        "is usually one tier lower than the positives alone would suggest.\n"
-        "  (c) 4-vs-3 wedge: if your reasoning for picking 4 would also fit a 3 "
+        "is usually one band lower than the positives alone would suggest.\n"
+        "  (c) 7-vs-6 wedge: if your reasoning for picking 7+ would also fit a 6 "
         "candidate ('strong tech depth', 'good company experience', 'relevant skills'), "
-        "the answer is 3. 4 requires something SPECIFICALLY differentiating — a tier-1 "
+        "the answer is 6. 7+ requires something SPECIFICALLY differentiating — a tier-1 "
         "employer name, a clear scale/scope leader achievement, a domain match the "
         "lower-rated peers don't have. If you can't name that differentiator in one "
-        "sentence, drop to 3.\n"
+        "sentence, drop to 6.\n"
         "  (d) Final sanity-check: if you would describe this candidate as 'good but "
-        "not exceptional', that's a 3, not a 4. 4 means 'fast-track this person today'.\n"
+        "not exceptional', that's a 5-6, not a 7+. 7+ means 'fast-track this person today'.\n"
     )
 
     if inputs.resume_pdf_b64:
@@ -478,9 +481,10 @@ def _single_pass(
     raw_text = "".join(b.text for b in msg.content if isinstance(b, TextBlock)).strip()
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = json.loads(raw_text)
-    rating = int(round(float(parsed.get("rating") or 3)))
-    if rating < 1 or rating > 5:
-        rating = 3
+    # Internal scale is 1-10. Default to 5 ("borderline middling") on parse
+    # failures — that's the calibrated midpoint, not a polite "looks fine".
+    from .rating_scale import clamp_internal
+    rating = clamp_internal(parsed.get("rating")) or 5
     return ScoreResult(
         rating=rating,
         confidence=float(parsed.get("confidence") or 0.0),
