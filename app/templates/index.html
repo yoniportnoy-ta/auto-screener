@@ -936,6 +936,46 @@
       color: var(--text);
       font-size: 0.95rem;
     }
+    /* Locked / gate rows render a static bar instead of a slider input. */
+    .weight-row-locked, .weight-row-gate {
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 0.55rem 0.7rem;
+    }
+    .weight-row-bar {
+      width: 100%;
+      height: 8px;
+      border-radius: 4px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .weight-row-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.2s;
+    }
+    .weight-row-bar-fill-gate {
+      background: var(--warn);
+    }
+    .weights-locked-pill, .weights-gate-pill {
+      display: inline-block;
+      padding: 0.05rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+    .weights-locked-pill {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--accent);
+    }
+    .weights-gate-pill {
+      background: rgba(251, 191, 36, 0.18);
+      color: var(--warn);
+    }
 
     /* Per-candidate dimension breakdown shown under the rating card. */
     .cal-dim-breakdown {
@@ -964,6 +1004,16 @@
     .cal-dim-row .score.dim-low    { color: var(--err); }
     .cal-dim-row .score.dim-mid    { color: var(--warn); }
     .cal-dim-row .score.dim-high   { color: var(--ok); }
+    .cal-gate-banner {
+      padding: 0.55rem 0.85rem;
+      margin: 0.7rem 0;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid var(--err);
+      border-radius: 6px;
+      color: var(--err);
+      font-size: 0.83rem;
+      font-weight: 500;
+    }
 
     /* ─── Errors ─── */
     .err-banner {
@@ -1124,25 +1174,48 @@
         <div class="spinner"></div> Loading saved brief…
       </div>
 
-      <!-- Dimension weight sliders. Always rendered (above the start
-           button) once the brief loads. The recruiter tweaks weights so
-           they sum to 100%, then clicks Start session. -->
+      <!-- Dimension weight sliders. Domain match is locked at 33% of the
+           overall (always — too important to de-prioritise). Location is
+           a hard gate (auto-rejects candidates in the wrong country, not
+           a weighted axis). The recruiter adjusts the 4 remaining
+           sliders so they sum to 67%, then clicks Start session. -->
       <div id="weightsPanel" class="weights-panel hidden">
         <h3 class="weights-title">
           What matters most for this role?
           <span class="weights-total">
-            Total: <strong id="weightsTotal">100</strong>%
+            Sliders: <strong id="weightsTotal">67</strong> / 67
             <span id="weightsTotalErr" class="weights-total-err hidden">
-              must equal 100
+              must equal 67
             </span>
           </span>
         </h3>
         <p class="hint" style="margin: 0 0 0.6rem;">
-          The AI scores each candidate on 6 dimensions (1-10 each). The
-          overall rating is a weighted sum. Adjust the sliders below to
-          tell it what matters most for THIS position.
+          The AI scores each candidate on 6 axes. <strong>Domain match</strong>
+          is locked at <strong>33%</strong> of the overall (always). <strong>Location</strong>
+          is a hard gate — wrong country with no relocation = auto-1.
+          Adjust the four sliders below (must sum to 67%) to weight the other axes.
         </p>
+        <div class="weight-row weight-row-locked">
+          <div>
+            <span class="label">Domain match <span class="weights-locked-pill">locked</span></span>
+            <span class="desc">Skills/stack-to-role fit. Always 33% of the overall.</span>
+          </div>
+          <div class="weight-row-bar">
+            <div class="weight-row-bar-fill" style="width: 33%"></div>
+          </div>
+          <span class="value">33%</span>
+        </div>
         <div id="weightsSliders"></div>
+        <div class="weight-row weight-row-gate">
+          <div>
+            <span class="label">Location match <span class="weights-gate-pill">gate</span></span>
+            <span class="desc">Not weighted — auto-rejects candidates in the wrong country.</span>
+          </div>
+          <div class="weight-row-bar">
+            <div class="weight-row-bar-fill weight-row-bar-fill-gate" style="width: 100%"></div>
+          </div>
+          <span class="value">gate</span>
+        </div>
         <div class="button-row">
           <button class="btn-secondary" id="weightsResetBtn" type="button">
             Reset to defaults
@@ -1622,7 +1695,7 @@
             <span class="label">${escapeHtml(label)}</span>
             <span class="desc">${escapeHtml(desc)}</span>
           </div>
-          <input type="range" min="0" max="100" step="5"
+          <input type="range" min="0" max="67" step="1"
                  value="${value}" data-key="${escapeHtml(key)}" />
           <span class="value" id="weightValue-${escapeHtml(key)}">${value}%</span>
         `;
@@ -1641,6 +1714,11 @@
       updateWeightsTotal();
     }
 
+    // Slider weights now sum to 67 (NOT 100) — the other 33% is reserved
+    // for the locked Domain match dimension, and location is a separate
+    // hard gate that isn't part of the sum at all.
+    const SLIDER_WEIGHT_TARGET = 67;
+
     function updateWeightsTotal() {
       const total = Object.values(weightsState.weights)
         .reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
@@ -1648,12 +1726,12 @@
       const wrap = totalEl.parentElement;
       totalEl.textContent = String(total);
       wrap.classList.remove("over", "under", "match");
-      if (total === 100) wrap.classList.add("match");
-      else if (total > 100) wrap.classList.add("over");
+      if (total === SLIDER_WEIGHT_TARGET) wrap.classList.add("match");
+      else if (total > SLIDER_WEIGHT_TARGET) wrap.classList.add("over");
       else wrap.classList.add("under");
       const startBtn = $("weightsStartBtn");
-      startBtn.disabled = total !== 100;
-      $("weightsTotalErr").classList.toggle("hidden", total === 100);
+      startBtn.disabled = total !== SLIDER_WEIGHT_TARGET;
+      $("weightsTotalErr").classList.toggle("hidden", total === SLIDER_WEIGHT_TARGET);
     }
 
     $("weightsResetBtn").addEventListener("click", () => {
@@ -1861,33 +1939,47 @@
     // migration) → render nothing. Colour-codes by score band so the
     // recruiter sees at a glance WHICH dimension dragged the rating down.
     const DIM_LABELS_FE = {
-      domain_match: "Domain match",
+      domain_match: "Domain match (33%)",
       company_tier: "Company tier",
       career_progression: "Career progression",
-      location_match: "Location match",
+      location_match: "Location (gate)",
       university_tier: "University tier",
       achievements: "Achievements",
     };
+    // Domain first (it's locked at 33% — most important), then sliders,
+    // then location as the gate signal at the end.
     const DIM_ORDER_FE = [
-      "domain_match", "company_tier", "career_progression",
-      "location_match", "university_tier", "achievements",
+      "domain_match",
+      "company_tier", "career_progression", "university_tier", "achievements",
+      "location_match",
     ];
 
     function renderDimensionBreakdown(c) {
       const dims = c.dimensions || {};
       const present = DIM_ORDER_FE.filter((k) => dims[k] != null);
       if (!present.length) return "";  // legacy row, no breakdown to show
+      const gateFailed = !!c.locationGateFailed;
       const rows = present.map((k) => {
         const v = dims[k];
-        const band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
+        let band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
+        let suffix = "";
+        if (k === "location_match" && gateFailed) {
+          band = "dim-low";
+          suffix = " ✗ GATE";
+        } else if (k === "location_match") {
+          suffix = " ✓";
+        }
         return `
           <div class="cal-dim-row">
             <span class="name">${escapeHtml(DIM_LABELS_FE[k] || k)}</span>
-            <span class="score ${band}">${v}/10</span>
+            <span class="score ${band}">${v}/10${suffix}</span>
           </div>
         `;
       }).join("");
-      return '<div class="cal-dim-breakdown">' + rows + "</div>";
+      const gateBanner = gateFailed
+        ? '<div class="cal-gate-banner">⚠ Location gate triggered — auto-rated 1 regardless of other axes.</div>'
+        : "";
+      return gateBanner + '<div class="cal-dim-breakdown">' + rows + "</div>";
     }
 
     function renderCurrentCandidate() {

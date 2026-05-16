@@ -553,7 +553,8 @@ def get_calibration_queue(
             ),
             # Per-dimension sub-scores. Null for legacy rows scored before
             # the dimension migration — frontend hides the breakdown when
-            # all six are null.
+            # all six are null. location_match is included for display +
+            # gate-state lookup; it isn't weighted into the overall.
             "dimensions": {
                 "domain_match": getattr(r, "dim_domain_match", None),
                 "company_tier": getattr(r, "dim_company_tier", None),
@@ -562,6 +563,13 @@ def get_calibration_queue(
                 "university_tier": getattr(r, "dim_university_tier", None),
                 "achievements": getattr(r, "dim_achievements", None),
             },
+            # Convenience flag for the UI: was the location hard-gate
+            # triggered for this candidate? True when the AI scored their
+            # location below the gate threshold.
+            "locationGateFailed": (
+                getattr(r, "dim_location_match", None) is not None
+                and getattr(r, "dim_location_match") < 4  # LOCATION_GATE_THRESHOLD
+            ),
         }
         for r in pool
     ]

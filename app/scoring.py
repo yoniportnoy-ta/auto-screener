@@ -384,10 +384,13 @@ def _single_pass(
 
     tail = (
         "Respond with ONLY a single JSON object (no markdown fences, no prose before or after). Keys:\n"
-        "- domain_match: integer 1-10 — skills/stack-to-role fit\n"
+        "- domain_match: integer 1-10 — skills/stack-to-role fit (locked at 33% of overall — most important)\n"
         "- company_tier: integer 1-10 — quality of recent employers (tier-1 product vs agency/unknown)\n"
         "- career_progression: integer 1-10 — title+scope growth over time (10=healthy, 1=flat/regression)\n"
-        "- location_match: integer 1-10 — does the candidate live where the role is, or willing to relocate?\n"
+        "- location_match: integer 1-10 — HARD GATE: scoring below 4 auto-rejects the candidate. "
+        "Score 1-3 ONLY when the candidate is clearly in a different country AND the CV does NOT mention "
+        "willingness to relocate. Score 8-10 when location clearly matches the role's country. "
+        "Score 5-7 when uncertain (no explicit location info but no obvious mismatch either).\n"
         "- university_tier: integer 1-10 — Technion/MIT/Stanford=10, respected national=6-7, bootcamp=3\n"
         "- achievements: integer 1-10 — concrete scale/scope numbers in CV (DAUs, revenue, team, launches)\n"
         "- confidence: number 0 to 1\n"
@@ -397,10 +400,12 @@ def _single_pass(
         "- comeet_comment_html: short extra HTML/plain for the note (server allows only b, i, u)\n"
         "- linkedin_url: full linkedin.com/in/ URL if visible in the resume; otherwise null\n\n"
 
-        "The OVERALL rating you'd give the candidate (1-10) is what we'll compute server-side as a "
-        "weighted sum of your six sub-scores using this position's recruiter-set weights. Your job is "
-        "to score each dimension HONESTLY and INDEPENDENTLY. Do not try to pre-balance toward a target "
-        "overall — that's our job. Score each axis on its own merits.\n\n"
+        "The OVERALL rating is computed server-side:\n"
+        "  - If location_match < 4 (location gate): overall = 1, regardless of everything else.\n"
+        "  - Otherwise: domain_match × 33% + the four slider dimensions (company, progression, "
+        "university, achievements) weighted by recruiter-set per-position weights summing to 67%.\n"
+        "Score each axis HONESTLY and INDEPENDENTLY. Don't try to pre-balance toward a target — "
+        "that's our math to do.\n\n"
 
         "Rating scale (1-10) — calibrated so a TYPICAL pool of CVs distributes roughly:\n"
         "  10: ~3%   |  9: ~5%   |  8: ~7%   |  7: ~10%  |  6: ~15%\n"
@@ -507,18 +512,19 @@ def _single_pass(
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = json.loads(raw_text)
 
-    # Pull the six sub-scores. Each clamps to 1-10 internal scale.
+    # Pull all six sub-scores Claude returned (4 sliders + domain + location).
+    # Each clamps to 1-10 internal scale.
     from .rating_scale import clamp_internal
-    from .dimensions import DIMENSIONS, compute_overall, get_weights
+    from .dimensions import ALL_SCORED_AXES, compute_overall, get_weights
 
     sub_scores: dict[str, int | None] = {
-        k: clamp_internal(parsed.get(k)) for k in DIMENSIONS
+        k: clamp_internal(parsed.get(k)) for k in ALL_SCORED_AXES
     }
 
-    # Compute the weighted overall using this position's weights (or
-    # defaults if unset). compute_overall handles missing sub-scores
-    # gracefully by redistributing weight.
-    weights = get_weights(inputs.position_uid)
+    # Compute the weighted overall:
+    #  - location_match < threshold → auto 1 (hard gate)
+    #  - else: domain at fixed 33% + slider dims at their per-position weights
+    weights = get_weights(inputs.position_uid)  # 4 slider weights summing to 67
     rating = compute_overall(sub_scores, weights)
     if rating is None:
         # Total parse failure (Claude returned no sub-scores). Fall back
