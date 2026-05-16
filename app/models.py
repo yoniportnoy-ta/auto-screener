@@ -73,6 +73,11 @@ class PositionClass(Base):
     # or the JD itself — "agency hires count as a no, regardless of resume",
     # "we want EU candidates only", etc.
     recruiter_notes: Mapped[str | None] = mapped_column(Text, default=None)
+    # Per-position weights for the 6 scoring dimensions. Dict shape:
+    #   {"domain_match": 25, "company_tier": 20, ...}  sum must be 100.
+    # Null means "use defaults". Set via the wizard's weight-slider panel
+    # before calibration starts.
+    dimension_weights_json: Mapped[dict | None] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -171,6 +176,17 @@ class DebugScoring(Base):
     # uids don't navigate inside the app — only the numeric URL it ships in
     # the candidate object works.
     profile_url: Mapped[str | None] = mapped_column(String(500))
+
+    # Per-dimension sub-scores (1-10 each). Null for legacy rows scored
+    # before the dimension migration. The recruiter-facing rating
+    # (final_rating) is the weighted sum of these using
+    # PositionClass.dimension_weights_json.
+    dim_domain_match: Mapped[int | None] = mapped_column(Integer)
+    dim_company_tier: Mapped[int | None] = mapped_column(Integer)
+    dim_career_progression: Mapped[int | None] = mapped_column(Integer)
+    dim_location_match: Mapped[int | None] = mapped_column(Integer)
+    dim_university_tier: Mapped[int | None] = mapped_column(Integer)
+    dim_achievements: Mapped[int | None] = mapped_column(Integer)
 
 
 class ComeetAppSession(Base):

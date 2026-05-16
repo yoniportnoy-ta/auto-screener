@@ -33,13 +33,22 @@ log = logging.getLogger(__name__)
 # ─── Result dataclass ────────────────────────────────────────────────────────
 @dataclass
 class ScoreResult:
-    rating: int
+    rating: int                                 # overall 1-10 (weighted sum of sub-scores)
     confidence: float
     summary: str
     strengths: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
     comeet_comment_html: str = ""
     linkedin_url: str | None = None
+    # Per-dimension sub-scores (1-10 each). All optional — legacy callers
+    # without dimension support can still construct a ScoreResult with
+    # just `rating`. New scoring pipeline populates all six.
+    dim_domain_match: int | None = None
+    dim_company_tier: int | None = None
+    dim_career_progression: int | None = None
+    dim_location_match: int | None = None
+    dim_university_tier: int | None = None
+    dim_achievements: int | None = None
     # v2 extras
     pre_calibration_rating: int = 0
     calibration_delta: float | None = None
@@ -231,6 +240,12 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
         strengths=pass_result.strengths,
         gaps=pass_result.gaps,
         profile_url=(candidate.get("URL") or None),
+        dim_domain_match=pass_result.dim_domain_match,
+        dim_company_tier=pass_result.dim_company_tier,
+        dim_career_progression=pass_result.dim_career_progression,
+        dim_location_match=pass_result.dim_location_match,
+        dim_university_tier=pass_result.dim_university_tier,
+        dim_achievements=pass_result.dim_achievements,
     )
 
     return ScoreResult(
@@ -369,13 +384,23 @@ def _single_pass(
 
     tail = (
         "Respond with ONLY a single JSON object (no markdown fences, no prose before or after). Keys:\n"
-        "- rating: integer 1–10 (see scale below)\n"
+        "- domain_match: integer 1-10 — skills/stack-to-role fit\n"
+        "- company_tier: integer 1-10 — quality of recent employers (tier-1 product vs agency/unknown)\n"
+        "- career_progression: integer 1-10 — title+scope growth over time (10=healthy, 1=flat/regression)\n"
+        "- location_match: integer 1-10 — does the candidate live where the role is, or willing to relocate?\n"
+        "- university_tier: integer 1-10 — Technion/MIT/Stanford=10, respected national=6-7, bootcamp=3\n"
+        "- achievements: integer 1-10 — concrete scale/scope numbers in CV (DAUs, revenue, team, launches)\n"
         "- confidence: number 0 to 1\n"
         "- summary: string, 1-2 sentences max\n"
         "- strengths: array of up to 4 short strings\n"
         "- gaps: array of up to 2 short strings (only those that materially affect the rating)\n"
         "- comeet_comment_html: short extra HTML/plain for the note (server allows only b, i, u)\n"
         "- linkedin_url: full linkedin.com/in/ URL if visible in the resume; otherwise null\n\n"
+
+        "The OVERALL rating you'd give the candidate (1-10) is what we'll compute server-side as a "
+        "weighted sum of your six sub-scores using this position's recruiter-set weights. Your job is "
+        "to score each dimension HONESTLY and INDEPENDENTLY. Do not try to pre-balance toward a target "
+        "overall — that's our job. Score each axis on its own merits.\n\n"
 
         "Rating scale (1-10) — calibrated so a TYPICAL pool of CVs distributes roughly:\n"
         "  10: ~3%   |  9: ~5%   |  8: ~7%   |  7: ~10%  |  6: ~15%\n"
@@ -481,10 +506,24 @@ def _single_pass(
     raw_text = "".join(b.text for b in msg.content if isinstance(b, TextBlock)).strip()
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = json.loads(raw_text)
-    # Internal scale is 1-10. Default to 5 ("borderline middling") on parse
-    # failures — that's the calibrated midpoint, not a polite "looks fine".
+
+    # Pull the six sub-scores. Each clamps to 1-10 internal scale.
     from .rating_scale import clamp_internal
-    rating = clamp_internal(parsed.get("rating")) or 5
+    from .dimensions import DIMENSIONS, compute_overall, get_weights
+
+    sub_scores: dict[str, int | None] = {
+        k: clamp_internal(parsed.get(k)) for k in DIMENSIONS
+    }
+
+    # Compute the weighted overall using this position's weights (or
+    # defaults if unset). compute_overall handles missing sub-scores
+    # gracefully by redistributing weight.
+    weights = get_weights(inputs.position_uid)
+    rating = compute_overall(sub_scores, weights)
+    if rating is None:
+        # Total parse failure (Claude returned no sub-scores). Fall back
+        # to legacy single-"rating" field if present, else neutral 5.
+        rating = clamp_internal(parsed.get("rating")) or 5
     return ScoreResult(
         rating=rating,
         confidence=float(parsed.get("confidence") or 0.0),
@@ -493,6 +532,12 @@ def _single_pass(
         gaps=list(parsed.get("gaps") or [])[:2],
         comeet_comment_html=str(parsed.get("comeet_comment_html") or ""),
         linkedin_url=(parsed.get("linkedin_url") or None) or None,
+        dim_domain_match=sub_scores.get("domain_match"),
+        dim_company_tier=sub_scores.get("company_tier"),
+        dim_career_progression=sub_scores.get("career_progression"),
+        dim_location_match=sub_scores.get("location_match"),
+        dim_university_tier=sub_scores.get("university_tier"),
+        dim_achievements=sub_scores.get("achievements"),
     )
 
 

@@ -33,6 +33,9 @@ dependencies = [
     # Misc
     "python-json-logger>=2.0",
     "openpyxl>=3.1",         # read the legacy Apps Script feedback sheet (XLSX export)
+    "python-docx>=1.1",      # parse .docx resumes that Comeet sometimes serves
+                              # (otherwise we silently drop them and score from
+                              # metadata only — confirmed Hen Levi, Eli Gur, etc.)
 ]
 
 [project.optional-dependencies]

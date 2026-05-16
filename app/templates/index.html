@@ -873,6 +873,98 @@
       font-size: 0.85em;
     }
 
+    /* ─── Per-position dimension weight sliders (step 4) ─── */
+    .weights-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      margin-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .weights-panel.hidden { display: none; }
+    .weights-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.8rem;
+      margin: 0;
+      font-size: 1rem;
+    }
+    .weights-total {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .weights-total strong { color: var(--text); }
+    .weights-total.over strong, .weights-total.under strong { color: var(--err); }
+    .weights-total.match strong { color: var(--ok); }
+    .weights-total-err {
+      color: var(--err);
+      font-size: 0.78rem;
+      margin-left: 0.4rem;
+    }
+    .weights-total-err.hidden { display: none; }
+    .weight-row {
+      display: grid;
+      grid-template-columns: 200px 1fr 56px;
+      gap: 0.6rem;
+      align-items: center;
+      padding: 0.35rem 0;
+    }
+    .weight-row .label {
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    .weight-row .desc {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      line-height: 1.3;
+      margin-top: 0.15rem;
+    }
+    .weight-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .weight-row .value {
+      font-weight: 600;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    /* Per-candidate dimension breakdown shown under the rating card. */
+    .cal-dim-breakdown {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.45rem 1.1rem;
+      margin: 0.7rem 0 1rem;
+      padding: 0.7rem 0.9rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .cal-dim-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.84rem;
+    }
+    .cal-dim-row .name { color: var(--text-muted); }
+    .cal-dim-row .score {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .cal-dim-row .score.dim-low    { color: var(--err); }
+    .cal-dim-row .score.dim-mid    { color: var(--warn); }
+    .cal-dim-row .score.dim-high   { color: var(--ok); }
+
     /* ─── Errors ─── */
     .err-banner {
       width: 100%;
@@ -1016,11 +1108,6 @@
           </button>
         </div>
         <div class="brief-locked-text" id="briefLockedText"></div>
-        <div class="button-row">
-          <button class="btn-primary" id="step4Continue" type="button">
-            Start session →
-          </button>
-        </div>
       </div>
 
       <!-- Edit view: textarea + save -->
@@ -1028,13 +1115,42 @@
         <textarea class="brief-input" id="briefText"
           placeholder="e.g. Looking for an iOS engineer with 4+ yrs at high-traffic consumer apps. Must have led at least one feature end-to-end. Prefer candidates with experience in real-time / media-heavy products. Hard rejects: agency-only background, no team-lead experience."></textarea>
         <div class="button-row">
-          <button class="btn-primary" id="step4Next" disabled>Save & start session →</button>
+          <button class="btn-primary" id="step4Next" disabled>Save brief →</button>
         </div>
       </div>
 
       <!-- Loading skeleton while we fetch the existing brief -->
       <div id="briefLoading" class="working">
         <div class="spinner"></div> Loading saved brief…
+      </div>
+
+      <!-- Dimension weight sliders. Always rendered (above the start
+           button) once the brief loads. The recruiter tweaks weights so
+           they sum to 100%, then clicks Start session. -->
+      <div id="weightsPanel" class="weights-panel hidden">
+        <h3 class="weights-title">
+          What matters most for this role?
+          <span class="weights-total">
+            Total: <strong id="weightsTotal">100</strong>%
+            <span id="weightsTotalErr" class="weights-total-err hidden">
+              must equal 100
+            </span>
+          </span>
+        </h3>
+        <p class="hint" style="margin: 0 0 0.6rem;">
+          The AI scores each candidate on 6 dimensions (1-10 each). The
+          overall rating is a weighted sum. Adjust the sliders below to
+          tell it what matters most for THIS position.
+        </p>
+        <div id="weightsSliders"></div>
+        <div class="button-row">
+          <button class="btn-secondary" id="weightsResetBtn" type="button">
+            Reset to defaults
+          </button>
+          <button class="btn-primary" id="weightsStartBtn" type="button">
+            Save & start session →
+          </button>
+        </div>
       </div>
     </section>
 
@@ -1375,6 +1491,7 @@
       $("briefLoading").classList.remove("hidden");
       $("briefLocked").classList.add("hidden");
       $("briefEdit").classList.add("hidden");
+      $("weightsPanel").classList.add("hidden");
       try {
         const res = await api(
           "/api/onboarding/brief?position_uid=" +
@@ -1386,9 +1503,13 @@
         } else {
           renderBriefEdit("");
         }
+        // Load weights in parallel — recruiter can adjust them whether
+        // the brief is already saved or being typed for the first time.
+        loadWeightsPanel();
       } catch (_) {
         // On error, just show the edit view so the recruiter isn't stuck.
         renderBriefEdit("");
+        loadWeightsPanel();
       } finally {
         $("briefLoading").classList.add("hidden");
       }
@@ -1423,14 +1544,10 @@
       renderBriefEdit($("briefLockedText").textContent || "");
     });
 
-    // "Start session" when a saved brief already exists — skip the POST,
-    // the brief is unchanged.
-    $("step4Continue").addEventListener("click", () => {
-      gotoStep(5);
-      startCalibration();
-    });
-
-    // "Save & start session" — write the new brief, then proceed.
+    // "Save brief" — write the new brief, then keep the recruiter in
+    // the same step so they can still adjust the weight sliders. (We
+    // used to go straight to calibration here, but with weights below
+    // the brief, we want the recruiter to see both before starting.)
     $("step4Next").addEventListener("click", async () => {
       const text = $("briefText").value.trim();
       if (!text) return;
@@ -1446,6 +1563,120 @@
         state.brief = text;
         saveState();
         renderSessionHeader();
+        // Swap to the locked view; the weights panel is already loaded.
+        renderBriefLocked(text);
+      } catch (e) {
+        setErr(e.message || String(e));
+        btn.disabled = false;
+        btn.textContent = "Save brief →";
+      }
+    });
+
+    // ─── Per-position dimension weight sliders ───────────────────────
+    //
+    // Recruiter sets six 0-100 weights that must sum to exactly 100. The
+    // overall AI rating is a weighted sum of six 1-10 sub-scores using
+    // these weights. Default weights are role-agnostic; recruiter tweaks
+    // per position to express "what matters most here".
+
+    let weightsState = {
+      weights: {},     // current slider values
+      defaults: {},    // server-provided defaults
+      labels: {},      // display labels
+      descriptions: {},// per-dim explainers
+      order: [],       // canonical key order
+    };
+
+    async function loadWeightsPanel() {
+      try {
+        const res = await api(
+          "/api/onboarding/weights?position_uid=" +
+          encodeURIComponent(state.positionUid)
+        );
+        weightsState = {
+          weights: { ...res.weights },
+          defaults: { ...res.defaults },
+          labels: res.labels || {},
+          descriptions: res.descriptions || {},
+          order: res.order || Object.keys(res.weights),
+        };
+        renderWeightsSliders();
+        $("weightsPanel").classList.remove("hidden");
+      } catch (e) {
+        // Non-fatal — recruiter can still proceed with default weights.
+        console.warn("weights load failed:", e && e.message);
+      }
+    }
+
+    function renderWeightsSliders() {
+      const wrap = $("weightsSliders");
+      wrap.innerHTML = "";
+      weightsState.order.forEach((key) => {
+        const row = document.createElement("div");
+        row.className = "weight-row";
+        const label = weightsState.labels[key] || key;
+        const desc = weightsState.descriptions[key] || "";
+        const value = weightsState.weights[key];
+        row.innerHTML = `
+          <div>
+            <span class="label">${escapeHtml(label)}</span>
+            <span class="desc">${escapeHtml(desc)}</span>
+          </div>
+          <input type="range" min="0" max="100" step="5"
+                 value="${value}" data-key="${escapeHtml(key)}" />
+          <span class="value" id="weightValue-${escapeHtml(key)}">${value}%</span>
+        `;
+        wrap.appendChild(row);
+      });
+      // Re-bind input handlers on the new DOM.
+      wrap.querySelectorAll("input[type=range]").forEach((inp) => {
+        inp.addEventListener("input", (e) => {
+          const k = e.target.dataset.key;
+          const v = parseInt(e.target.value, 10);
+          weightsState.weights[k] = isNaN(v) ? 0 : v;
+          document.getElementById("weightValue-" + k).textContent = weightsState.weights[k] + "%";
+          updateWeightsTotal();
+        });
+      });
+      updateWeightsTotal();
+    }
+
+    function updateWeightsTotal() {
+      const total = Object.values(weightsState.weights)
+        .reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+      const totalEl = $("weightsTotal");
+      const wrap = totalEl.parentElement;
+      totalEl.textContent = String(total);
+      wrap.classList.remove("over", "under", "match");
+      if (total === 100) wrap.classList.add("match");
+      else if (total > 100) wrap.classList.add("over");
+      else wrap.classList.add("under");
+      const startBtn = $("weightsStartBtn");
+      startBtn.disabled = total !== 100;
+      $("weightsTotalErr").classList.toggle("hidden", total === 100);
+    }
+
+    $("weightsResetBtn").addEventListener("click", () => {
+      weightsState.weights = { ...weightsState.defaults };
+      renderWeightsSliders();
+    });
+
+    $("weightsStartBtn").addEventListener("click", async () => {
+      const total = Object.values(weightsState.weights)
+        .reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+      if (total !== 100) return;  // button should already be disabled
+      const btn = $("weightsStartBtn");
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        await api("/api/onboarding/weights", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            position_uid: state.positionUid,
+            weights: weightsState.weights,
+          }),
+        });
         gotoStep(5);
         startCalibration();
       } catch (e) {
@@ -1625,6 +1856,40 @@
       `;
     }
 
+    // Render the per-dimension sub-score breakdown that appears under the
+    // AI-guess badge. Null/missing dims (legacy debug_scoring rows pre-
+    // migration) → render nothing. Colour-codes by score band so the
+    // recruiter sees at a glance WHICH dimension dragged the rating down.
+    const DIM_LABELS_FE = {
+      domain_match: "Domain match",
+      company_tier: "Company tier",
+      career_progression: "Career progression",
+      location_match: "Location match",
+      university_tier: "University tier",
+      achievements: "Achievements",
+    };
+    const DIM_ORDER_FE = [
+      "domain_match", "company_tier", "career_progression",
+      "location_match", "university_tier", "achievements",
+    ];
+
+    function renderDimensionBreakdown(c) {
+      const dims = c.dimensions || {};
+      const present = DIM_ORDER_FE.filter((k) => dims[k] != null);
+      if (!present.length) return "";  // legacy row, no breakdown to show
+      const rows = present.map((k) => {
+        const v = dims[k];
+        const band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
+        return `
+          <div class="cal-dim-row">
+            <span class="name">${escapeHtml(DIM_LABELS_FE[k] || k)}</span>
+            <span class="score ${band}">${v}/10</span>
+          </div>
+        `;
+      }).join("");
+      return '<div class="cal-dim-breakdown">' + rows + "</div>";
+    }
+
     function renderCurrentCandidate() {
       const c = calQueue[calCurrentIdx];
       if (!c) return;
@@ -1648,6 +1913,7 @@
         </div>
       ` : "";
       const aiGuess = renderAiGuessBadge(c, calThreshold);
+      const dimBreakdown = renderDimensionBreakdown(c);
       $("calCard").innerHTML = `
         ${calibrationHint}
         <h2 class="cal-name">${escapeHtml(c.candidateName || c.candidateUid)}</h2>
@@ -1656,6 +1922,7 @@
           &middot; Candidate ${calCurrentIdx + 1} of ${calQueue.length} this round
         </p>
         ${aiGuess}
+        ${dimBreakdown}
 
         <!-- Career timeline + education + LinkedIn — populated by enrichment fetch -->
         <div class="cal-section">

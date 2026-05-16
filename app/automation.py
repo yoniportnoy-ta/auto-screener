@@ -314,6 +314,20 @@ def _scan_one_position(
         if len(processed) < len(begin.uids):
             break
 
+    # Post-scan normalization: when we scored a sizeable batch, spread the
+    # distribution out so the calibration UI sees a meaningful bell curve
+    # instead of bunching at one rating. No-op for small batches.
+    try:
+        from .normalization import normalize_position_if_needed
+        norm = normalize_position_if_needed(position_uid, batch_scored=out.scored)
+        if norm.get("ran"):
+            log.info(
+                "autoscan: normalization on %s — %s; before=%s after=%s",
+                position_uid, norm.get("reason"), norm.get("before"), norm.get("after"),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("autoscan: normalization failed on %s: %s", position_uid, exc)
+
     return out
 
 

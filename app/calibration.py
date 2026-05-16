@@ -551,6 +551,17 @@ def get_calibration_queue(
                 or enrichment_urls.get(r.candidate_uid or "")
                 or None
             ),
+            # Per-dimension sub-scores. Null for legacy rows scored before
+            # the dimension migration — frontend hides the breakdown when
+            # all six are null.
+            "dimensions": {
+                "domain_match": getattr(r, "dim_domain_match", None),
+                "company_tier": getattr(r, "dim_company_tier", None),
+                "career_progression": getattr(r, "dim_career_progression", None),
+                "location_match": getattr(r, "dim_location_match", None),
+                "university_tier": getattr(r, "dim_university_tier", None),
+                "achievements": getattr(r, "dim_achievements", None),
+            },
         }
         for r in pool
     ]

@@ -141,15 +141,34 @@ async def cmd_rescore_all(position_uid: str | None = None) -> int:
         )
         total_skipped += skipped
 
+        scored_this_position = 0
         for i, uid in enumerate(eligible, start=1):
             try:
                 score_one_candidate_now(pos_uid, candidate_uid=uid)
                 total_rescored += 1
+                scored_this_position += 1
             except Exception as exc:  # noqa: BLE001
                 log.warning("rescore-all: %s/%s failed: %s", pos_name, uid, exc)
                 total_errors += 1
             if i % 10 == 0:
                 log.info("  ... %d/%d on %s", i, len(eligible), pos_name)
+
+        # Per-position normalization: spread the distribution out when we
+        # rescored a sizeable batch. No-op for small batches.
+        if scored_this_position > 0:
+            try:
+                from .normalization import normalize_position_if_needed
+                norm = normalize_position_if_needed(
+                    pos_uid, batch_scored=scored_this_position,
+                )
+                if norm.get("ran"):
+                    log.info(
+                        "rescore-all: normalized %s — %s; before=%s after=%s",
+                        pos_name, norm.get("reason"),
+                        norm.get("before"), norm.get("after"),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("rescore-all: normalization failed for %s: %s", pos_name, exc)
 
     log.info(
         "rescore-all done: rescored=%d skipped=%d errors=%d (positions=%d)",

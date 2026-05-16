@@ -1180,6 +1180,48 @@ def get_onboarding_brief(position_uid: str) -> dict[str, Any]:
     return {"positionUid": pos, "brief": brief, "hasBrief": bool(brief)}
 
 
+@router.get("/onboarding/weights")
+def get_onboarding_weights(position_uid: str) -> dict[str, Any]:
+    """Read the 6-dimension weights for this position. Falls back to
+    defaults if the recruiter hasn't customised them yet.
+    """
+    from .. import dimensions as dims
+
+    pos = _resolve_pos(position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    return {
+        "positionUid": pos,
+        "weights": dims.get_weights(pos),
+        "defaults": dims.DEFAULT_WEIGHTS,
+        "labels": dims.DIMENSION_LABELS,
+        "descriptions": dims.DIMENSION_DESCRIPTIONS,
+        "order": list(dims.DIMENSIONS),
+    }
+
+
+class OnboardingWeightsBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    weights: dict[str, int] = Field(min_length=6, max_length=6)
+
+
+@router.post("/onboarding/weights")
+def post_onboarding_weights(body: OnboardingWeightsBody) -> dict[str, Any]:
+    """Persist the recruiter's per-position weight dict. Must include all
+    six dimensions and sum to exactly 100.
+    """
+    from .. import dimensions as dims
+
+    pos = _resolve_pos(body.position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    try:
+        saved = dims.set_weights(pos, body.weights)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"positionUid": pos, "weights": saved, "saved": True}
+
+
 # ─── Calibration (thumbs UI) ─────────────────────────────────────────────────
 def _resolve_pos(uid: str) -> str:
     """Normalize a position uid: numeric Comeet URL form → alphanumeric."""

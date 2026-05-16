@@ -283,12 +283,24 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
 
     # Build process context (name/email/source/links) — enough for prompt anchoring.
     process_ctx = _build_process_context(candidate)
-    resume_pdf_b64, resume_failed = _maybe_fetch_resume(resume.get("url"))
-    # If we couldn't get a PDF, fall back to Comeet's internal API for a
-    # rich profile dump (work history, education, recruiter comments).
-    # This gives Claude something to score against instead of returning
-    # "no resume content available".
-    if not resume_pdf_b64:
+    resume_pdf_b64, resume_docx_text, resume_failed = _maybe_fetch_resume(resume.get("url"))
+
+    # If the CV was a DOCX, inject the extracted text into process_context
+    # so the scorer sees it. Claude can score from text just fine — we
+    # still prefer PDF attachments when available because they preserve
+    # formatting hints, but text is dramatically better than nothing.
+    if resume_docx_text:
+        process_ctx = (
+            process_ctx
+            + "\n\n[CANDIDATE CV (extracted from .docx upload)]\n"
+            + resume_docx_text
+        ).strip()
+
+    # If we got neither PDF nor DOCX text, fall back to Comeet's internal
+    # API for a rich profile dump (work history, education, recruiter
+    # comments). This gives Claude something to score against instead of
+    # returning "no resume content available".
+    if not resume_pdf_b64 and not resume_docx_text:
         try:
             enrich = _fetch_internal_profile_text(candidate)
             if enrich:
@@ -462,12 +474,17 @@ def score_one_candidate_now(
     # the candidate is in the configured screening step.
 
     process_ctx = _build_process_context(candidate)
-    resume_pdf_b64, resume_failed = _maybe_fetch_resume(resume.get("url"))
-    # If we couldn't get a PDF, fall back to Comeet's internal API for a
-    # rich profile dump (work history, education, recruiter comments).
-    # This gives Claude something to score against instead of returning
-    # "no resume content available".
-    if not resume_pdf_b64:
+    resume_pdf_b64, resume_docx_text, resume_failed = _maybe_fetch_resume(resume.get("url"))
+
+    # DOCX content goes straight into process_context (text-mode scoring).
+    if resume_docx_text:
+        process_ctx = (
+            process_ctx
+            + "\n\n[CANDIDATE CV (extracted from .docx upload)]\n"
+            + resume_docx_text
+        ).strip()
+
+    if not resume_pdf_b64 and not resume_docx_text:
         try:
             enrich = _fetch_internal_profile_text(candidate)
             if enrich:
@@ -1086,31 +1103,99 @@ def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:
     return text if len(text) > 50 else ""  # only return when we actually got something
 
 
-def _maybe_fetch_resume(url: str | None) -> tuple[str | None, bool]:
-    """Download resume PDF, base64-encode it. Returns (b64_or_None, url_failed_flag)."""
+def _maybe_fetch_resume(url: str | None) -> tuple[str | None, str | None, bool]:
+    """Download a candidate's resume and return whatever we could parse.
+
+    Returns (pdf_b64, docx_text, did_fail). The caller uses pdf_b64 if set
+    (preferred — Claude scores PDFs natively); otherwise docx_text is
+    injected into process_context. did_fail is True only when the URL was
+    advertised but unreachable / unparseable.
+
+    Comeet serves both PDFs and DOCX. The previous version silently
+    dropped DOCX, leaving the AI to score candidates from metadata only
+    (confirmed: Hen Levi, Eli Gur, Roy Olinsky, Amir Lev-ran all had no-CV
+    summaries despite uploading Word docs).
+    """
     if not url:
-        return None, False
+        return None, None, False
     try:
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             resp = client.get(url)
             if resp.status_code != 200:
                 log.info("resume URL returned %s for %s", resp.status_code, url[:80])
-                return None, True
+                return None, None, True
             content = resp.content or b""
             if not content:
-                return None, True
+                return None, None, True
             # 7 MB cap mirrors the Apps Script behaviour.
             if len(content) > 7 * 1024 * 1024:
                 log.info("resume too large (%d bytes) — skipping", len(content))
-                return None, True
+                return None, None, True
             mime = (resp.headers.get("content-type") or "").lower()
-            if "pdf" not in mime:
-                # Not a PDF — Comeet sometimes serves DOCX. Skip gracefully.
-                return None, False
-            return base64.b64encode(content).decode("ascii"), False
+            url_lower = url.lower()
+
+            # PDF — best case, send as document attachment.
+            if "pdf" in mime or url_lower.endswith(".pdf"):
+                return base64.b64encode(content).decode("ascii"), None, False
+
+            # DOCX (Office Open XML). Both the MIME and the file magic
+            # bytes (PK\x03\x04 — it's a zip) are reliable detectors.
+            if (
+                "officedocument.wordprocessingml" in mime
+                or "msword" in mime
+                or url_lower.endswith((".docx", ".doc"))
+                or content.startswith(b"PK\x03\x04")
+            ):
+                text = _extract_docx_text(content)
+                if text:
+                    return None, text, False
+                # Couldn't parse — flag as fail so caller falls back to
+                # internal-API enrichment instead of pretending we have nothing.
+                return None, None, True
+
+            # Unknown format — log it so we know what else Comeet is serving.
+            log.info("resume fetch: unknown mime=%r url=%s; skipping", mime, url[:80])
+            return None, None, False
     except Exception as exc:  # noqa: BLE001
         log.info("resume fetch failed for %s: %s", url[:80], exc)
-        return None, True
+        return None, None, True
+
+
+def _extract_docx_text(content: bytes) -> str | None:
+    """Pull readable text out of a .docx blob. Best-effort — returns None
+    on any error. Caps total output at ~30 KB so a verbose CV can't
+    dominate the prompt budget.
+    """
+    try:
+        import io
+        from docx import Document  # python-docx
+    except Exception as exc:  # noqa: BLE001
+        log.warning("python-docx not available: %s", exc)
+        return None
+    try:
+        doc = Document(io.BytesIO(content))
+    except Exception as exc:  # noqa: BLE001
+        log.info("docx parse failed: %s", exc)
+        return None
+
+    parts: list[str] = []
+    # Paragraphs (the bulk of the text).
+    for p in doc.paragraphs:
+        t = (p.text or "").strip()
+        if t:
+            parts.append(t)
+    # Tables (some CVs use tables for skills / contact info).
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            cells = [(c.text or "").strip() for c in row.cells]
+            cells = [c for c in cells if c]
+            if cells:
+                parts.append(" | ".join(cells))
+    text = "\n".join(parts).strip()
+    if not text:
+        return None
+    # Cap to keep prompt size bounded.
+    return text[:30000]
 
 
 _RATING_LABELS = {5: "Superstar", 4: "Great", 3: "OK", 2: "Not a fit", 1: "Way off"}

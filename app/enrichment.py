@@ -134,10 +134,9 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
     resume_obj = candidate.get("resume") or {}
     resume_url = resume_obj.get("url") if isinstance(resume_obj, dict) else None
 
-    # 2. Download the CV PDF (re-uses the same logic the scoring path does
-    # — same 7 MB cap, same PDF-only filter).
-    resume_pdf_b64, fetch_failed = _maybe_fetch_resume(resume_url)
-    if not resume_pdf_b64:
+    # 2. Download the CV — could be PDF (best) or DOCX (text-only fallback).
+    resume_pdf_b64, resume_docx_text, fetch_failed = _maybe_fetch_resume(resume_url)
+    if not resume_pdf_b64 and not resume_docx_text:
         # No CV → return what we have (LinkedIn at least), with an
         # informative error so the UI can degrade gracefully.
         return {
@@ -146,13 +145,14 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
             "profileUrl": profile_url,
             "careerTimeline": [],
             "education": [],
-            "error": "no resume PDF available" if fetch_failed else "candidate has no CV on file",
+            "error": "no resume available" if fetch_failed else "candidate has no CV on file",
             "cached": False,
         }
 
-    # 3. Extract structured timeline via Claude.
+    # 3. Extract structured timeline via Claude. Pass PDF as document
+    # attachment when available; otherwise pass DOCX text as plain text.
     try:
-        parsed = _claude_extract(resume_pdf_b64)
+        parsed = _claude_extract(resume_pdf_b64=resume_pdf_b64, resume_text=resume_docx_text)
     except Exception as exc:  # noqa: BLE001
         log.warning("enrichment: claude extract failed for %s: %s", candidate_uid, exc)
         return {
@@ -181,39 +181,61 @@ def _extract_fresh(candidate_uid: str) -> dict[str, Any]:
     }
 
 
-def _maybe_fetch_resume(url: str | None) -> tuple[str | None, bool]:
-    """Same shape as scan._maybe_fetch_resume — we inline it here to keep
-    this module independent of the scanning pipeline. Returns
-    (base64_pdf_or_None, did_fetch_fail_flag).
+def _maybe_fetch_resume(url: str | None) -> tuple[str | None, str | None, bool]:
+    """Download the CV. Returns (pdf_b64, docx_text, did_fail).
+
+    Mirrors scan._maybe_fetch_resume — kept inline here so this module
+    doesn't depend on the scanning pipeline. For DOCX we extract text
+    via python-docx so Claude can still process it (the timeline-
+    extraction pass below treats text and PDF differently).
     """
     if not url:
-        return None, False
+        return None, None, False
     try:
         with httpx.Client(timeout=20.0, follow_redirects=True) as client:
             resp = client.get(url)
             if resp.status_code != 200:
-                return None, True
+                return None, None, True
             content = resp.content or b""
             if not content or len(content) > 7 * 1024 * 1024:
-                return None, True
+                return None, None, True
             mime = (resp.headers.get("content-type") or "").lower()
-            if "pdf" not in mime:
-                return None, False
-            return base64.b64encode(content).decode("ascii"), False
+            url_lower = url.lower()
+            if "pdf" in mime or url_lower.endswith(".pdf"):
+                return base64.b64encode(content).decode("ascii"), None, False
+            if (
+                "officedocument.wordprocessingml" in mime
+                or "msword" in mime
+                or url_lower.endswith((".docx", ".doc"))
+                or content.startswith(b"PK\x03\x04")
+            ):
+                from .scan import _extract_docx_text
+                text = _extract_docx_text(content)
+                if text:
+                    return None, text, False
+                return None, None, True
+            return None, None, False
     except Exception as exc:  # noqa: BLE001
         log.info("enrichment: resume fetch failed: %s", exc)
-        return None, True
+        return None, None, True
 
 
-def _claude_extract(resume_pdf_b64: str) -> dict[str, Any]:
+def _claude_extract(
+    *,
+    resume_pdf_b64: str | None = None,
+    resume_text: str | None = None,
+) -> dict[str, Any]:
     """Send the CV to Claude with a focused extraction prompt. Returns a dict
     with `career_timeline`, `education`, and optionally `linkedin_url`.
+
+    Accepts either a PDF (attached as a document) or extracted DOCX text.
+    Exactly one should be provided.
     """
     # Lazy import keeps app boot fast.
     from anthropic import Anthropic
 
     prompt = (
-        "You are extracting a structured career timeline from a resume PDF "
+        "You are extracting a structured career timeline from a resume "
         "for a recruiter to glance at. Return STRICT JSON with no markdown, "
         "no prose, no code fences — just the object.\n\n"
         "Schema:\n"
@@ -237,28 +259,43 @@ def _claude_extract(resume_pdf_b64: str) -> dict[str, Any]:
         "- Use the candidate's exact employer name (don't paraphrase to 'Google' if they wrote 'Google Israel').\n"
         "- If a date is ambiguous (just 'Summer 2020'), pick a year and put just the year.\n"
         "- Skip internships, freelance gigs, and unrelated jobs only if you have to fit in 5; otherwise include them.\n"
-        "- Empty arrays are fine. Don't invent details that aren't on the page.\n"
+        "- Empty arrays are fine. Don't invent details that aren't on the page.\n\n"
+        "LinkedIn extraction (look HARDER — this is currently missing 40%+ of the time):\n"
+        "- Scan the CV header, contact section, footer, and ANY mention of 'linkedin' (case-insensitive).\n"
+        "- Accept any form: 'linkedin.com/in/...', 'www.linkedin.com/in/...', 'https://il.linkedin.com/in/...',\n"
+        "  even bare '/in/joey-foo' or 'LinkedIn: joey-foo' — normalise to https://linkedin.com/in/<slug>.\n"
+        "- Also accept icons next to a URL (LinkedIn icon often appears in CV headers).\n"
+        "- Only return null if you genuinely see no LinkedIn URL or username anywhere in the CV.\n"
     )
+
+    # Build user content based on what we have. PDF → document block;
+    # text → inline. Either way the prompt comes second so the schema
+    # instructions are read after the source material.
+    user_content: list[dict[str, Any]] = []
+    if resume_pdf_b64:
+        user_content.append({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": resume_pdf_b64,
+            },
+        })
+    elif resume_text:
+        user_content.append({
+            "type": "text",
+            "text": "CANDIDATE CV (plain text, extracted from .docx):\n\n" + resume_text,
+        })
+    else:
+        raise ValueError("_claude_extract: must provide resume_pdf_b64 OR resume_text")
+    user_content.append({"type": "text", "text": prompt})
 
     client = Anthropic(api_key=settings.anthropic_api_key)
     msg = client.messages.create(
         model=settings.claude_model,
         max_tokens=2000,
         temperature=0.0,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": resume_pdf_b64,
-                    },
-                },
-                {"type": "text", "text": prompt},
-            ],
-        }],
+        messages=[{"role": "user", "content": user_content}],
     )
     text = "".join(
         b.text for b in msg.content if getattr(b, "type", "") == "text"
@@ -313,19 +350,35 @@ def _clean_str(v: Any) -> str:
 
 
 def _clean_linkedin(v: Any) -> str | None:
+    """Normalise whatever Comeet or Claude returned for a LinkedIn URL.
+
+    Accepted shapes (all coerced to https://linkedin.com/in/<slug>):
+      - https://www.linkedin.com/in/joey-foo
+      - https://il.linkedin.com/in/joey-foo
+      - linkedin.com/in/joey-foo
+      - /in/joey-foo (Claude sometimes returns just the path)
+    Returns None for anything that doesn't look like a real LinkedIn URL
+    — we deliberately do NOT accept bare slugs because random strings would
+    be falsely promoted to LinkedIn URLs. The extraction prompt asks Claude
+    for the full URL explicitly.
+    """
     if not v:
         return None
-    s = str(v).strip()
+    s = str(v).strip().rstrip("/")
     if not s:
         return None
-    # Comeet sometimes stores LinkedIn as just the username or a tracker URL.
-    # Normalize to a canonical form when we can.
-    if s.startswith("linkedin.com/"):
-        s = "https://" + s
-    if "linkedin.com/in/" in s:
-        # Strip trailing ?utm_* etc.
-        s = s.split("?")[0].rstrip("/")
-    return s
+    s = s.split("?")[0].split("#")[0]
+
+    import re
+    # Match linkedin.com/in/<slug> with optional country subdomain (il., uk., etc.).
+    m = re.search(r"linkedin\.com(?:/[a-z]{2})?/in/([A-Za-z0-9_-]+)", s, re.IGNORECASE)
+    if m:
+        return "https://linkedin.com/in/" + m.group(1)
+    # /in/<slug> path-only (no host).
+    m = re.search(r"^/in/([A-Za-z0-9_-]+)", s, re.IGNORECASE)
+    if m:
+        return "https://linkedin.com/in/" + m.group(1)
+    return None
 
 
 __all__ = ["get_or_extract"]
