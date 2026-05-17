@@ -241,33 +241,125 @@ def _compute_target_counts(pool_size: int) -> dict[int, int]:
     return floored
 
 
+# Thresholds for the gates that normalization must respect. Kept in sync
+# with app.dimensions — duplicating the numbers here (rather than importing
+# at module load) keeps the normalization module independent of dimensions
+# in import order.
+_LOCATION_GATE_THRESHOLD = 4
+_DOMAIN_GATE_THRESHOLD = 5
+_DOMAIN_CAP_RATING = 5
+
+
+def _is_gate_locked(row: DebugScoring) -> tuple[bool, int | None]:
+    """Decide whether `row` is locked to a specific rating by a hard/soft
+    gate. Returns (locked, forced_rating).
+
+    - location_match < 4   → locked at 1 (hard gate)
+    - domain_match  < 5 and current rating ≤ 5 → locked at current rating
+      (the domain soft cap; if compute_overall already capped them at 5,
+      normalization must not push them above)
+    """
+    loc = getattr(row, "dim_location_match", None)
+    if loc is not None and int(loc) < _LOCATION_GATE_THRESHOLD:
+        return True, 1
+    domain = getattr(row, "dim_domain_match", None)
+    current = int(row.final_rating or 0)
+    if (
+        domain is not None
+        and int(domain) < _DOMAIN_GATE_THRESHOLD
+        and current <= _DOMAIN_CAP_RATING
+    ):
+        return True, current
+    return False, None
+
+
 def _compute_normalization_changes(rows: list[DebugScoring]) -> list[dict[str, Any]]:
     """Core algorithm. Returns a list of {debug_id, candidate_uid, old, new}.
 
-    Rows come in already sorted highest-first. We walk them from the top,
-    handing out target ratings starting at 10 and stepping down. For each
-    candidate the proposed new rating is clamped to ±MAX_DELTA_INTERNAL
-    of their current rating.
+    Gated candidates (location < 4 or domain < 5 with current rating ≤ 5)
+    are EXCLUDED from the redistribution and kept at their gated rating.
+    Their slot count is subtracted from the target distribution so the
+    remaining (unfrozen) candidates fill the right share of buckets.
+
+    Rows come in already sorted highest-first. We walk the unfrozen
+    candidates from the top, handing out target ratings starting at 10
+    and stepping down. For each, the proposed new rating is clamped to
+    ±MAX_DELTA_INTERNAL of their current rating.
     """
     if not rows:
         return []
 
-    pool_size = len(rows)
-    target_counts = _compute_target_counts(pool_size)
+    # Partition: frozen (gated) vs free (eligible for normalization).
+    frozen: list[tuple[DebugScoring, int]] = []   # (row, forced_rating)
+    free: list[DebugScoring] = []
+    for r in rows:
+        locked, forced = _is_gate_locked(r)
+        if locked and forced is not None:
+            frozen.append((r, forced))
+        else:
+            free.append(r)
+
+    # Build the target count map for the WHOLE pool, then subtract the
+    # frozen candidates' slots so the redistribution only redistributes
+    # the free ones.
+    target_counts = _compute_target_counts(len(rows))
+    for _, forced in frozen:
+        if target_counts.get(forced, 0) > 0:
+            target_counts[forced] -= 1
+    # If freezing left a target with negative count (e.g., more frozen
+    # at rating 1 than the target allows), clamp to 0. The free pool just
+    # gets fewer rating-1 slots — that's correct.
+    for r in target_counts:
+        if target_counts[r] < 0:
+            target_counts[r] = 0
 
     changes: list[dict[str, Any]] = []
-    cursor = 0  # position in the sorted `rows` list
+
+    # 1) Force-fix any frozen row whose stored rating doesn't match the
+    # gate (e.g., a future scoring change that briefly let a location-gated
+    # row through). Belt-and-suspenders.
+    for row, forced in frozen:
+        old = int(row.final_rating or 0)
+        if old != forced:
+            changes.append({
+                "debug_id": row.id,
+                "candidate_uid": row.candidate_uid,
+                "old": old,
+                "new": forced,
+            })
+
+    # 2) Normalize the free pool.
+    free_size = len(free)
+    if free_size == 0:
+        return changes
+    # Re-cap target counts to the free pool size.
+    target_sum = sum(target_counts.values())
+    if target_sum > free_size:
+        # Trim from the bottom-rated bucket downward until we match.
+        overflow = target_sum - free_size
+        for r in range(INTERNAL_MIN, INTERNAL_MAX + 1):
+            if overflow <= 0:
+                break
+            take = min(target_counts[r], overflow)
+            target_counts[r] -= take
+            overflow -= take
+    elif target_sum < free_size:
+        # Distribute the deficit to the largest bucket.
+        deficit = free_size - target_sum
+        biggest = max(target_counts, key=lambda k: target_counts[k])
+        target_counts[biggest] += deficit
+
+    cursor = 0
     for target_rating in range(INTERNAL_MAX, INTERNAL_MIN - 1, -1):
         slots = target_counts.get(target_rating, 0)
         for _ in range(slots):
-            if cursor >= pool_size:
+            if cursor >= free_size:
                 break
-            row = rows[cursor]
+            row = free[cursor]
             cursor += 1
             old = int(row.final_rating or 0)
             if old == target_rating:
-                continue  # already where it should be
-            # Clamp to ±MAX_DELTA_INTERNAL.
+                continue
             delta = target_rating - old
             if abs(delta) > MAX_DELTA_INTERNAL:
                 delta = MAX_DELTA_INTERNAL if delta > 0 else -MAX_DELTA_INTERNAL
