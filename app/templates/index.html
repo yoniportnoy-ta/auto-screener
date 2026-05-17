@@ -1014,6 +1014,11 @@
       font-size: 0.83rem;
       font-weight: 500;
     }
+    .cal-gate-banner.cal-gate-banner-soft {
+      background: rgba(251, 191, 36, 0.12);
+      border-color: var(--warn);
+      color: var(--warn);
+    }
 
     /* ─── Errors ─── */
     .err-banner {
@@ -1976,10 +1981,23 @@
           </div>
         `;
       }).join("");
-      const gateBanner = gateFailed
-        ? '<div class="cal-gate-banner">⚠ Location gate triggered — auto-rated 1 regardless of other axes.</div>'
-        : "";
-      return gateBanner + '<div class="cal-dim-breakdown">' + rows + "</div>";
+      const banners = [];
+      if (gateFailed) {
+        banners.push(
+          '<div class="cal-gate-banner">' +
+          '⚠ Location gate triggered — auto-rated 1 regardless of other axes.' +
+          '</div>'
+        );
+      }
+      if (c.domainCapApplied) {
+        banners.push(
+          '<div class="cal-gate-banner cal-gate-banner-soft">' +
+          '⚠ Domain mismatch cap — overall held at 5 because domain_match < 5 ' +
+          '(wrong professional field; other axes can\'t push past 5).' +
+          '</div>'
+        );
+      }
+      return banners.join("") + '<div class="cal-dim-breakdown">' + rows + "</div>";
     }
 
     function renderCurrentCandidate() {

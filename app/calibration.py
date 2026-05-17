@@ -563,12 +563,17 @@ def get_calibration_queue(
                 "university_tier": getattr(r, "dim_university_tier", None),
                 "achievements": getattr(r, "dim_achievements", None),
             },
-            # Convenience flag for the UI: was the location hard-gate
-            # triggered for this candidate? True when the AI scored their
-            # location below the gate threshold.
+            # Convenience flags for the UI:
+            # - locationGateFailed: location gate (auto-rated 1).
+            # - domainCapApplied: domain mismatch cap (overall held at 5).
             "locationGateFailed": (
                 getattr(r, "dim_location_match", None) is not None
                 and getattr(r, "dim_location_match") < 4  # LOCATION_GATE_THRESHOLD
+            ),
+            "domainCapApplied": (
+                getattr(r, "dim_domain_match", None) is not None
+                and getattr(r, "dim_domain_match") < 5  # DOMAIN_GATE_THRESHOLD
+                and (r.final_rating or 0) == 5           # DOMAIN_CAP_RATING
             ),
         }
         for r in pool

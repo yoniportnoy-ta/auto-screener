@@ -59,6 +59,16 @@ SLIDER_WEIGHT_BUDGET = 100 - DOMAIN_WEIGHT_PCT  # = 67
 # overall rating is forced to 1 regardless of everything else.
 LOCATION_GATE_THRESHOLD = 4
 
+# Domain match is the most important fit signal. If the candidate's
+# domain_match sub-score is weak (below this threshold), the overall
+# is capped at DOMAIN_CAP_RATING — even if all other axes are 10/10.
+# Rationale: a pharma recruiter applying to a tech-recruiter role might
+# look stellar on every other axis (career arc, employers, achievements)
+# but the domain mismatch alone should prevent the AI from rating them
+# 7+. Strong sliders pull them up TO the cap, never past it.
+DOMAIN_GATE_THRESHOLD = 5
+DOMAIN_CAP_RATING = 5
+
 
 # ─── Slider dimensions (recruiter-adjustable) ─────────────────────────────
 DIMENSIONS: tuple[str, ...] = (
@@ -257,10 +267,29 @@ def compute_overall(
     used_weight = sum(w for _, w in pieces)
     if used_weight <= 0:
         # All weights happen to be 0 — fall back to simple mean.
-        return max(1, min(10, round(sum(s for s, _ in pieces) / len(pieces))))
+        result = max(1, min(10, round(sum(s for s, _ in pieces) / len(pieces))))
+    else:
+        weighted = sum(s * w for s, w in pieces)
+        result = max(1, min(10, round(weighted / used_weight)))
 
-    weighted = sum(s * w for s, w in pieces)
-    return max(1, min(10, round(weighted / used_weight)))
+    # Domain soft cap: if domain_match is weak (< threshold), don't let
+    # strong sliders push the overall above DOMAIN_CAP_RATING. Common
+    # scenario: tier-1-everything candidate from the wrong professional
+    # field — pharma recruiter for a tech-recruiter role, full-stack dev
+    # for a data-engineer role, etc.
+    domain_raw = sub_scores.get("domain_match")
+    try:
+        domain_int = int(domain_raw) if domain_raw is not None else None
+    except (TypeError, ValueError):
+        domain_int = None
+    if domain_int is not None and domain_int < DOMAIN_GATE_THRESHOLD and result > DOMAIN_CAP_RATING:
+        log.info(
+            "compute_overall: domain cap fired (domain=%s < %s) — capping %s to %s",
+            domain_int, DOMAIN_GATE_THRESHOLD, result, DOMAIN_CAP_RATING,
+        )
+        result = DOMAIN_CAP_RATING
+
+    return result
 
 
 __all__ = [
@@ -272,6 +301,8 @@ __all__ = [
     "DOMAIN_WEIGHT_PCT",
     "SLIDER_WEIGHT_BUDGET",
     "LOCATION_GATE_THRESHOLD",
+    "DOMAIN_GATE_THRESHOLD",
+    "DOMAIN_CAP_RATING",
     "get_weights",
     "set_weights",
     "compute_overall",
