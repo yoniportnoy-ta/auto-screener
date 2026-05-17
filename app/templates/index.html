@@ -1179,48 +1179,25 @@
         <div class="spinner"></div> Loading saved brief…
       </div>
 
-      <!-- Dimension weight sliders. Domain match is locked at 33% of the
-           overall (always — too important to de-prioritise). Location is
-           a hard gate (auto-rejects candidates in the wrong country, not
-           a weighted axis). The recruiter adjusts the 4 remaining
-           sliders so they sum to 67%, then clicks Start session. -->
+      <!-- Dimension weight sliders. The recruiter adjusts 4 sliders so
+           they sum to 100% — that's their relative preference among the
+           four axes. Domain-match weighting and the location gate are
+           applied invisibly server-side. -->
       <div id="weightsPanel" class="weights-panel hidden">
         <h3 class="weights-title">
           What matters most for this role?
           <span class="weights-total">
-            Sliders: <strong id="weightsTotal">67</strong> / 67
+            Total: <strong id="weightsTotal">100</strong> / 100
             <span id="weightsTotalErr" class="weights-total-err hidden">
-              must equal 67
+              must equal 100
             </span>
           </span>
         </h3>
         <p class="hint" style="margin: 0 0 0.6rem;">
-          The AI scores each candidate on 6 axes. <strong>Domain match</strong>
-          is locked at <strong>33%</strong> of the overall (always). <strong>Location</strong>
-          is a hard gate — wrong country with no relocation = auto-1.
-          Adjust the four sliders below (must sum to 67%) to weight the other axes.
+          Adjust the four sliders below to tell the AI what matters most
+          for this position. They must sum to 100%.
         </p>
-        <div class="weight-row weight-row-locked">
-          <div>
-            <span class="label">Domain match <span class="weights-locked-pill">locked</span></span>
-            <span class="desc">Skills/stack-to-role fit. Always 33% of the overall.</span>
-          </div>
-          <div class="weight-row-bar">
-            <div class="weight-row-bar-fill" style="width: 33%"></div>
-          </div>
-          <span class="value">33%</span>
-        </div>
         <div id="weightsSliders"></div>
-        <div class="weight-row weight-row-gate">
-          <div>
-            <span class="label">Location match <span class="weights-gate-pill">gate</span></span>
-            <span class="desc">Not weighted — auto-rejects candidates in the wrong country.</span>
-          </div>
-          <div class="weight-row-bar">
-            <div class="weight-row-bar-fill weight-row-bar-fill-gate" style="width: 100%"></div>
-          </div>
-          <span class="value">gate</span>
-        </div>
         <div class="button-row">
           <button class="btn-secondary" id="weightsResetBtn" type="button">
             Reset to defaults
@@ -1700,7 +1677,7 @@
             <span class="label">${escapeHtml(label)}</span>
             <span class="desc">${escapeHtml(desc)}</span>
           </div>
-          <input type="range" min="0" max="67" step="1"
+          <input type="range" min="0" max="100" step="1"
                  value="${value}" data-key="${escapeHtml(key)}" />
           <span class="value" id="weightValue-${escapeHtml(key)}">${value}%</span>
         `;
@@ -1719,10 +1696,11 @@
       updateWeightsTotal();
     }
 
-    // Slider weights now sum to 67 (NOT 100) — the other 33% is reserved
-    // for the locked Domain match dimension, and location is a separate
-    // hard gate that isn't part of the sum at all.
-    const SLIDER_WEIGHT_TARGET = 67;
+    // Recruiter-facing slider weights sum to 100. The domain-match lock
+    // (33% of overall) and the location gate are applied invisibly
+    // server-side; the recruiter just sets relative preferences across
+    // the four slider dimensions.
+    const SLIDER_WEIGHT_TARGET = 100;
 
     function updateWeightsTotal() {
       const total = Object.values(weightsState.weights)
@@ -1944,56 +1922,44 @@
     // migration) → render nothing. Colour-codes by score band so the
     // recruiter sees at a glance WHICH dimension dragged the rating down.
     const DIM_LABELS_FE = {
-      domain_match: "Domain match (33%)",
       company_tier: "Company tier",
       career_progression: "Career progression",
-      location_match: "Location (gate)",
       university_tier: "University tier",
       achievements: "Achievements",
     };
-    // Domain first (it's locked at 33% — most important), then sliders,
-    // then location as the gate signal at the end.
+    // Only the 4 slider dimensions are shown — domain and location are
+    // intentionally hidden from the breakdown (domain is a fixed 33%, and
+    // location is a hard gate already surfaced via the banner below).
     const DIM_ORDER_FE = [
-      "domain_match",
       "company_tier", "career_progression", "university_tier", "achievements",
-      "location_match",
     ];
 
     function renderDimensionBreakdown(c) {
       const dims = c.dimensions || {};
       const present = DIM_ORDER_FE.filter((k) => dims[k] != null);
       if (!present.length) return "";  // legacy row, no breakdown to show
-      const gateFailed = !!c.locationGateFailed;
       const rows = present.map((k) => {
         const v = dims[k];
-        let band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
-        let suffix = "";
-        if (k === "location_match" && gateFailed) {
-          band = "dim-low";
-          suffix = " ✗ GATE";
-        } else if (k === "location_match") {
-          suffix = " ✓";
-        }
+        const band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
         return `
           <div class="cal-dim-row">
             <span class="name">${escapeHtml(DIM_LABELS_FE[k] || k)}</span>
-            <span class="score ${band}">${v}/10${suffix}</span>
+            <span class="score ${band}">${v}/10</span>
           </div>
         `;
       }).join("");
       const banners = [];
-      if (gateFailed) {
+      if (c.locationGateFailed) {
         banners.push(
           '<div class="cal-gate-banner">' +
-          '⚠ Location gate triggered — auto-rated 1 regardless of other axes.' +
+          '⚠ Location mismatch — auto-rated 1.' +
           '</div>'
         );
       }
       if (c.domainCapApplied) {
         banners.push(
           '<div class="cal-gate-banner cal-gate-banner-soft">' +
-          '⚠ Domain mismatch cap — overall held at 5 because domain_match < 5 ' +
-          '(wrong professional field; other axes can\'t push past 5).' +
+          '⚠ Wrong professional field — capped at 5.' +
           '</div>'
         );
       }

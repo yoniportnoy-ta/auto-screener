@@ -47,12 +47,19 @@ log = logging.getLogger(__name__)
 
 
 # ─── Fixed parameters (NOT user-adjustable) ───────────────────────────────
-# Domain match always counts for this share of the overall rating.
+# Domain match always counts for this share of the overall rating. Hidden
+# from the recruiter — they don't see this in the UI.
 DOMAIN_WEIGHT_PCT = 33
 
-# Everything else (the four sliders) shares this remaining share. The four
-# slider weights stored per position must sum to this value.
+# The four slider dimensions share the remaining 67% of the overall.
+# The recruiter sees those 4 sliders summing to 100% (relative preference
+# among the four), and we scale them into this internal budget when
+# computing the weighted overall.
 SLIDER_WEIGHT_BUDGET = 100 - DOMAIN_WEIGHT_PCT  # = 67
+
+# What the recruiter sees on the UI: sliders summing to this value. Stays
+# at 100 forever — it's just a mental-model number.
+SLIDER_WEIGHT_USER_TOTAL = 100
 
 # Location is not weighted into the rating at all — instead it's a hard
 # gate. If the AI's location_match sub-score is below this threshold, the
@@ -113,22 +120,24 @@ DIMENSION_DESCRIPTIONS: dict[str, str] = {
     "achievements": "Concrete scale/scope numbers (DAUs, revenue, team size, launches) vs vague claims.",
 }
 
-# Defaults for the four sliders. Must sum to SLIDER_WEIGHT_BUDGET.
+# Defaults for the four sliders, expressed as percentages summing to 100
+# (the recruiter-facing total). Internally these are scaled into the 67%
+# slider budget when computing the overall.
 DEFAULT_WEIGHTS: dict[str, int] = {
-    "company_tier": 27,
-    "career_progression": 17,
-    "university_tier": 8,
-    "achievements": 15,
+    "company_tier": 40,
+    "career_progression": 25,
+    "university_tier": 12,
+    "achievements": 23,
 }
-assert sum(DEFAULT_WEIGHTS.values()) == SLIDER_WEIGHT_BUDGET, (
-    f"default slider weights must sum to {SLIDER_WEIGHT_BUDGET}"
+assert sum(DEFAULT_WEIGHTS.values()) == SLIDER_WEIGHT_USER_TOTAL, (
+    f"default slider weights must sum to {SLIDER_WEIGHT_USER_TOTAL}"
 )
 
 
 def get_weights(position_uid: str) -> dict[str, int]:
-    """Read a position's slider weights (4 entries summing to 67), falling
-    back to defaults. Domain and location are NOT in this dict — they're
-    handled separately by `compute_overall`.
+    """Read a position's slider weights (4 entries summing to 100 — the
+    recruiter-facing total), falling back to defaults. Domain and location
+    are NOT in this dict — they're handled separately by `compute_overall`.
     """
     if not position_uid:
         return dict(DEFAULT_WEIGHTS)
@@ -145,32 +154,36 @@ def get_weights(position_uid: str) -> dict[str, int]:
         v = raw.get(k)
         try:
             iv = int(v)
-            if 0 <= iv <= SLIDER_WEIGHT_BUDGET:
+            if 0 <= iv <= SLIDER_WEIGHT_USER_TOTAL:
                 merged[k] = iv
         except (TypeError, ValueError):
             pass
 
-    # Renormalise if the stored values don't sum exactly to the budget.
+    # Renormalise if the stored values don't sum exactly to the user total.
+    # Handles two legacy cases:
+    #   - sum=67 (old internal budget) → scaled up to 100
+    #   - sum=anything else            → proportionally normalized to 100
     total = sum(merged.values())
     if total == 0:
         return dict(DEFAULT_WEIGHTS)
-    if total != SLIDER_WEIGHT_BUDGET:
-        scale = SLIDER_WEIGHT_BUDGET / total
+    if total != SLIDER_WEIGHT_USER_TOTAL:
+        scale = SLIDER_WEIGHT_USER_TOTAL / total
         merged = {
-            k: max(0, min(SLIDER_WEIGHT_BUDGET, round(v * scale)))
+            k: max(0, min(SLIDER_WEIGHT_USER_TOTAL, round(v * scale)))
             for k, v in merged.items()
         }
-        diff = SLIDER_WEIGHT_BUDGET - sum(merged.values())
+        diff = SLIDER_WEIGHT_USER_TOTAL - sum(merged.values())
         if diff != 0:
             biggest = max(merged, key=lambda k: merged[k])
-            merged[biggest] = max(0, min(SLIDER_WEIGHT_BUDGET, merged[biggest] + diff))
+            merged[biggest] = max(0, min(SLIDER_WEIGHT_USER_TOTAL, merged[biggest] + diff))
     return merged
 
 
 def set_weights(position_uid: str, weights: dict[str, Any]) -> dict[str, int]:
     """Persist a fresh weight dict for this position. Must include the 4
-    slider dimensions, each in 0-SLIDER_WEIGHT_BUDGET, summing exactly to
-    SLIDER_WEIGHT_BUDGET (67).
+    slider dimensions, each in 0-100, summing exactly to 100 (the user-
+    facing total). Internally we'll scale into the 67% budget at scoring
+    time — the recruiter never sees that.
     """
     uid = (position_uid or "").strip()
     if not uid:
@@ -183,15 +196,15 @@ def set_weights(position_uid: str, weights: dict[str, Any]) -> dict[str, int]:
             iv = int(v)
         except (TypeError, ValueError):
             raise ValueError(f"weight for {k!r} must be an integer")
-        if not (0 <= iv <= SLIDER_WEIGHT_BUDGET):
+        if not (0 <= iv <= SLIDER_WEIGHT_USER_TOTAL):
             raise ValueError(
-                f"weight for {k!r} must be 0-{SLIDER_WEIGHT_BUDGET} (got {iv})"
+                f"weight for {k!r} must be 0-{SLIDER_WEIGHT_USER_TOTAL} (got {iv})"
             )
         cleaned[k] = iv
 
-    if sum(cleaned.values()) != SLIDER_WEIGHT_BUDGET:
+    if sum(cleaned.values()) != SLIDER_WEIGHT_USER_TOTAL:
         raise ValueError(
-            f"slider weights must sum to exactly {SLIDER_WEIGHT_BUDGET} "
+            f"slider weights must sum to exactly {SLIDER_WEIGHT_USER_TOTAL} "
             f"(got {sum(cleaned.values())})"
         )
 
@@ -237,17 +250,21 @@ def compute_overall(
         )
         return 1
 
-    # Domain + sliders.
-    pieces: list[tuple[int, int]] = []   # (score, weight_pct)
+    # Domain + sliders. Domain weight is fixed at DOMAIN_WEIGHT_PCT (33).
+    # Slider weights are stored as 100-sum recruiter preferences; we
+    # scale each into the 67% slider budget at compute time so the total
+    # weight (domain + scaled sliders) sums to 100.
+    pieces: list[tuple[int, float]] = []   # (score, weight_share)
 
     domain = sub_scores.get("domain_match")
     if domain is not None:
         try:
             d = max(1, min(10, int(domain)))
-            pieces.append((d, DOMAIN_WEIGHT_PCT))
+            pieces.append((d, float(DOMAIN_WEIGHT_PCT)))
         except (TypeError, ValueError):
             pass
 
+    scale = SLIDER_WEIGHT_BUDGET / SLIDER_WEIGHT_USER_TOTAL  # = 0.67
     for k in DIMENSIONS:
         v = sub_scores.get(k)
         if v is None:
@@ -256,10 +273,10 @@ def compute_overall(
             iv = max(1, min(10, int(v)))
         except (TypeError, ValueError):
             continue
-        w = slider_weights.get(k, 0)
-        if w <= 0:
+        w_stored = slider_weights.get(k, 0)
+        if w_stored <= 0:
             continue
-        pieces.append((iv, w))
+        pieces.append((iv, w_stored * scale))
 
     if not pieces:
         return None
@@ -300,6 +317,7 @@ __all__ = [
     "DEFAULT_WEIGHTS",
     "DOMAIN_WEIGHT_PCT",
     "SLIDER_WEIGHT_BUDGET",
+    "SLIDER_WEIGHT_USER_TOTAL",
     "LOCATION_GATE_THRESHOLD",
     "DOMAIN_GATE_THRESHOLD",
     "DOMAIN_CAP_RATING",
