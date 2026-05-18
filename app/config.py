@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     note_rating_threshold: int = 3
     auto_tag_enabled: bool = False
     tag_rating_threshold: int = 3
+    # Master kill-switch for all automatic scoring paths. When True:
+    #   - hourly prewarm cron exits immediately
+    #   - hourly scan-all cron exits immediately
+    #   - position-pick prewarm endpoint returns a no-op
+    #   - calibration queue's lazy-fill is skipped
+    # Manual paths still work: `python -m app.cli rescore-all`, individual
+    # rescore buttons in the dashboard, and the extension's score endpoint.
+    # Toggle via SCORING_PAUSE_AUTO env var in the Render dashboard — no
+    # deploy needed. Used when running benchmark / A-B tests where you
+    # don't want background scoring to muddy the results.
+    scoring_pause_auto: bool = False
     # Candidates rated >= flag_rating_threshold also get is_favorite=true in Comeet.
     # 6 disables flagging entirely; 4 is the default — only "Great" and "Superstar".
     flag_rating_threshold: int = 4

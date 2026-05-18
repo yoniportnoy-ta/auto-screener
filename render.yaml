@@ -75,6 +75,12 @@ services:
       # "First Last" format used everywhere else.
       - key: ADMIN_RECRUITERS
         value: "Yoni Portnoy"
+      # Master kill-switch for auto-scoring (prewarm + scan-all crons +
+      # position-pick prewarm + calibration queue lazy-fill). Manual
+      # rescore-all and dashboard rescore buttons still work. Flip to "1"
+      # in the Render dashboard for benchmark / A-B test runs.
+      - key: SCORING_PAUSE_AUTO
+        value: "0"
       - key: NOTE_RATING_THRESHOLD
         value: "3"
       - key: SCREENER_MAX_PER_RUN
@@ -120,6 +126,8 @@ services:
         sync: false
       - key: AUTO_TAG_ENABLED
         value: "1"
+      - key: SCORING_PAUSE_AUTO
+        value: "0"
 
   # Background prewarm: score the next 15 candidates across every open
   # position so calibration sessions usually open onto a pre-scored batch.
@@ -163,6 +171,8 @@ services:
       # Critical: never apply tags during prewarm. Tagging is gated on
       # recruiter calibration via the auto-screener-scan cron path.
       - key: AUTO_TAG_ENABLED
+        value: "0"
+      - key: SCORING_PAUSE_AUTO
         value: "0"
 
   # Tag-change feedback poller: detects when a recruiter swapped one of our

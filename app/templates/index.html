@@ -602,6 +602,53 @@
     .cal-thumb.down:hover { border-color: var(--err); }
     .cal-thumb.question:hover { border-color: var(--warn); }
 
+    /* 1-10 rating row — replaces the thumbs for precise ground-truth */
+    .cal-rating-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .cal-rating-label {
+      color: var(--text);
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+    .cal-rating-buttons {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 0.4rem;
+    }
+    .cal-rating-btn {
+      padding: 0.7rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-variant-numeric: tabular-nums;
+      transition: background 0.12s, border-color 0.12s, transform 0.05s;
+    }
+    .cal-rating-btn:hover {
+      background: var(--panel);
+      transform: scale(1.04);
+    }
+    .cal-rating-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .cal-rating-btn.low:hover  { border-color: var(--err);  color: var(--err);  }
+    .cal-rating-btn.mid:hover  { border-color: var(--warn); color: var(--warn); }
+    .cal-rating-btn.high:hover { border-color: var(--ok);   color: var(--ok);   }
+    .cal-rating-legend {
+      display: flex;
+      justify-content: space-around;
+      gap: 0.5rem;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+
     /* Free-text feedback box that sits above the thumbs */
     .cal-feedback-wrap {
       display: flex;
@@ -2060,33 +2107,35 @@
           ></textarea>
         </div>
 
-        <div class="cal-thumbs" style="margin-top:0.9rem;">
-          <button class="cal-thumb down" type="button" data-verdict="down">
-            <span class="icon">👎</span>
-            <span>Not a fit</span>
-          </button>
-          <button class="cal-thumb question" type="button" data-verdict="question">
-            <span class="icon">❓</span>
-            <span>Not sure</span>
-          </button>
-          <button class="cal-thumb up" type="button" data-verdict="up">
-            <span class="icon">👍</span>
-            <span>Good fit</span>
-          </button>
+        <div class="cal-rating-row" style="margin-top:0.9rem;">
+          <div class="cal-rating-label">
+            Your rating (1-10) — precise ground truth so we can tune the algorithm:
+          </div>
+          <div class="cal-rating-buttons">
+            ${[1,2,3,4,5,6,7,8,9,10].map(n => {
+              const band = n <= 3 ? "low" : n <= 6 ? "mid" : "high";
+              return `<button class="cal-rating-btn ${band}" type="button" data-rating="${n}">${n}</button>`;
+            }).join("")}
+          </div>
+          <div class="cal-rating-legend">
+            <span class="hint">1-3 = not a fit</span>
+            <span class="hint">4-6 = maybe</span>
+            <span class="hint">7-10 = good fit</span>
+          </div>
         </div>
       `;
-      // Bind thumb handlers.
-      $("calCard").querySelectorAll(".cal-thumb").forEach((btn) => {
-        btn.addEventListener("click", () => submitVerdict(btn.dataset.verdict));
+      // Bind rating handlers.
+      $("calCard").querySelectorAll(".cal-rating-btn").forEach((btn) => {
+        btn.addEventListener("click", () => submitVerdict(parseInt(btn.dataset.rating, 10)));
       });
-      // Cmd/Ctrl+Enter inside the textarea = 👍 (the most common click).
-      // Keeps power-users keyboard-only when they're rapid-fire on a thin pool.
+      // Number-key shortcuts (1-9 and 0 for 10) — power-user keyboard mode.
       const fb = $("calFeedbackText");
       if (fb) {
         fb.addEventListener("keydown", (ev) => {
           if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
             ev.preventDefault();
-            submitVerdict("up");
+            // Cmd+Enter still sends a high default rating (8 = "fast-track").
+            submitVerdict(8);
           }
         });
       }
@@ -2184,15 +2233,25 @@
       }
     }
 
-    async function submitVerdict(verdict) {
+    async function submitVerdict(verdictOrRating) {
       const c = calQueue[calCurrentIdx];
       if (!c) return;
-      // Snapshot textarea contents before disabling — disabling can clear
-      // the focused field's transient value in some browsers.
+      // Caller passes either a number (1-10, the new precise rating) or a
+      // legacy verdict string ('up' / 'down' / 'question'). The server
+      // derives whichever is missing.
+      let recruiterRating = null;
+      let verdict = "question";
+      if (typeof verdictOrRating === "number") {
+        recruiterRating = Math.max(1, Math.min(10, verdictOrRating | 0));
+        verdict = recruiterRating <= 3 ? "down" :
+                  recruiterRating <= 6 ? "question" : "up";
+      } else {
+        verdict = verdictOrRating;
+      }
       const fbEl = $("calFeedbackText");
       const feedbackText = (fbEl && fbEl.value || "").trim();
-      // Disable all thumbs + textarea while we round-trip.
-      $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = true);
+      // Disable all rating buttons + textarea while we round-trip.
+      $("calCard").querySelectorAll(".cal-rating-btn").forEach((b) => b.disabled = true);
       if (fbEl) fbEl.disabled = true;
       try {
         const res = await api("/api/calibration/verdict", {
@@ -2206,6 +2265,7 @@
             ai_rating: c.rating,
             ai_confidence: c.confidence,
             feedback_text: feedbackText || null,
+            recruiter_rating: recruiterRating,
           }),
         });
         // Refresh toolbar — show the CURRENT round's agreement (not
@@ -2228,7 +2288,7 @@
         }
       } catch (e) {
         setErr(e.message || String(e));
-        $("calCard").querySelectorAll(".cal-thumb").forEach((b) => b.disabled = false);
+        $("calCard").querySelectorAll(".cal-rating-btn").forEach((b) => b.disabled = false);
         if (fbEl) fbEl.disabled = false;
       }
     }

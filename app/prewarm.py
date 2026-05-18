@@ -122,6 +122,12 @@ def prewarm_position(position_uid: str, *, n: int = 15) -> dict[str, Any]:
     if not uid:
         return {"status": "no_op", "positionUid": "", "reason": "missing position_uid"}
 
+    # Master pause switch for benchmark/A-B testing.
+    from .config import settings
+    if settings.scoring_pause_auto:
+        log.info("prewarm_position: SCORING_PAUSE_AUTO is set — skipping %s", uid)
+        return {"status": "no_op", "positionUid": uid, "reason": "auto-scoring paused"}
+
     if not _claim_slot(uid):
         return {"status": "already_running", "positionUid": uid}
 
@@ -151,6 +157,11 @@ def prewarm_all_open_positions(
     timing keeps it predictable.
     """
     from .comeet_client import ComeetClient
+    from .config import settings
+
+    if settings.scoring_pause_auto:
+        log.info("prewarm_all: SCORING_PAUSE_AUTO is set — exiting early")
+        return {"scanned": 0, "elapsed_s": 0.0, "note": "auto-scoring paused"}
 
     started = _time.monotonic()
     try:

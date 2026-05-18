@@ -1271,17 +1271,21 @@ class CalibrationVerdictBody(BaseModel):
     recruiter: str = Field(min_length=1, max_length=200)
     position_uid: str = Field(min_length=1)
     candidate_uid: str = Field(min_length=1)
-    verdict: str = Field(pattern=r"^(up|down|question)$")
+    # `verdict` is now optional — if `recruiter_rating` is supplied, the
+    # server derives the verdict bucket from it (1-3=down, 4-6=question,
+    # 7-10=up). Kept here for legacy thumb-clients.
+    verdict: str = Field(default="question", pattern=r"^(up|down|question)$")
     ai_rating: int | None = None
     ai_confidence: float | None = None
-    # Optional free-text reason the recruiter typed alongside the thumb.
-    # Caps at ~2 KB server-side; UI suggests a one-liner.
     feedback_text: str | None = Field(default=None, max_length=4000)
+    # Precise 1-10 ground-truth from the recruiter. Optional for backward
+    # compatibility but the calibration UI now always sends it.
+    recruiter_rating: int | None = Field(default=None, ge=1, le=10)
 
 
 @router.post("/calibration/verdict")
 def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
-    """Record a 👍 / 👎 / ❓ verdict and update the recruiter's threshold."""
+    """Record a 1-10 rating (preferred) or 👍/👎/❓ verdict + update threshold."""
     from .. import calibration as cal
     pos = _resolve_pos(body.position_uid)
     if not pos:
@@ -1294,6 +1298,7 @@ def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
         ai_rating=body.ai_rating,
         ai_confidence=body.ai_confidence,
         feedback_text=body.feedback_text,
+        recruiter_rating=body.recruiter_rating,
     )
     return result
 

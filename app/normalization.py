@@ -43,19 +43,32 @@ from .rating_scale import INTERNAL_MAX, INTERNAL_MIN
 log = logging.getLogger(__name__)
 
 
-# Target distribution on the internal 1-10 scale. Sums to ~1.0.
-# Matches the rating-scale prompt — keep them in sync.
+# Target distribution on the internal 1-10 scale (power-law decay, not
+# bell-curve). Real CV pools have a long tail at the bottom — most
+# applicants are wrong-fit / wrong-location / wrong-tier — and a thin
+# top end where only the rare candidate is "fast-track to interview".
+# Sums to ~1.0. Keep in sync with the rating-scale block in scoring.py.
+#
+# Cumulative percentile breakdown (top-down):
+#   10            → top 1%
+#   10 + 9        → top 3%
+#   10 + 9 + 8    → top 5%
+#   ... + 7       → top 10%
+#   ... + 6       → top 20%
+#   ... + 5       → top 33%
+#   ... + 4       → top 50%   ← median lands inside rating-4
+#   bottom half (3/2/1) — distributed by how often gates fire
 TARGET_DISTRIBUTION: dict[int, float] = {
-    10: 0.03,
-    9: 0.05,
-    8: 0.07,
-    7: 0.10,
-    6: 0.15,
-    5: 0.15,
-    4: 0.15,
-    3: 0.12,
-    2: 0.10,
-    1: 0.08,
+    10: 0.01,
+    9:  0.02,
+    8:  0.02,
+    7:  0.05,
+    6:  0.10,
+    5:  0.13,
+    4:  0.17,
+    3:  0.15,
+    2:  0.15,
+    1:  0.20,
 }
 
 # Hard cap on how far a single candidate's rating can shift during

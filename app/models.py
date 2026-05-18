@@ -308,6 +308,11 @@ class CalibrationVerdict(Base):
     # E.g. "Too senior", "Great stack match but no ML". Captured here for
     # review and ultimately to flow into the scoring prompt as context.
     feedback_text: Mapped[str | None] = mapped_column(Text)
+    # Recruiter's precise 1-10 ground-truth rating. New for benchmark
+    # mode — replaces the coarse thumb verdict on the UI but the verdict
+    # bucket is still computed from this (1-3=down, 4-6=question, 7-10=up)
+    # for backwards compatibility with the existing threshold logic.
+    recruiter_rating: Mapped[int | None] = mapped_column(Integer)
 
     __table_args__ = (
         CheckConstraint(

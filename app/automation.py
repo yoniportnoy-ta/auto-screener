@@ -146,6 +146,13 @@ def run_autoscan() -> AutoscanResult:
     started_at = datetime.now(timezone.utc).isoformat()
     result = AutoscanResult(started_at=started_at, auto_tag_enabled=settings.auto_tag_enabled)
 
+    if settings.scoring_pause_auto:
+        result.note = "SCORING_PAUSE_AUTO is set — autoscan disabled"
+        result.finished_at = datetime.now(timezone.utc).isoformat()
+        log.info("autoscan: %s", result.note)
+        _write_runlog(_serialise(result))
+        return result
+
     if not settings.anthropic_api_key:
         result.error = "ANTHROPIC_API_KEY not set"
         result.finished_at = datetime.now(timezone.utc).isoformat()

@@ -219,6 +219,27 @@ def _current_round_num(recruiter_name: str, position_uid: str) -> int:
     return (count // 5) + 1
 
 
+def rating_to_verdict(rating: int | None) -> Verdict | None:
+    """Map a precise 1-10 recruiter rating into the legacy thumb-trichotomy
+    bucket for backwards compatibility with threshold math.
+
+      1-3  → down     (auto-reject territory)
+      4-6  → question (uncertain / interview required)
+      7-10 → up       (would advance)
+    """
+    if rating is None:
+        return None
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return None
+    if r <= 3:
+        return "down"
+    if r <= 6:
+        return "question"
+    return "up"
+
+
 def record_verdict(
     recruiter_name: str,
     position_uid: str,
@@ -227,19 +248,31 @@ def record_verdict(
     ai_rating: int | None,
     ai_confidence: float | None,
     feedback_text: str | None = None,
+    recruiter_rating: int | None = None,
 ) -> dict[str, Any]:
-    """Persist a thumb click and recompute the recruiter's threshold.
+    """Persist a verdict + recompute the recruiter's threshold.
 
-    `feedback_text` is the optional free-form reason the recruiter typed —
-    e.g. "Too senior" / "Great match on the data stack". Stored on the
-    verdict row for later review. We deliberately don't try to map it to a
-    1-5 Feedback row here: the existing Feedback flow expects a numeric
-    rating, and the thumb-trichotomy doesn't map cleanly enough that the
-    AI's scoring rubric should learn from it without supervision.
+    `recruiter_rating` is the precise 1-10 ground truth from the UI. When
+    provided, the legacy `verdict` bucket is derived from it (override the
+    caller's value) so the threshold math stays consistent.
 
     Returns the updated threshold + the new agreement % + the round number
     this verdict belongs to, so the UI can update headers in one round-trip.
     """
+    # Coerce / derive the verdict from the precise rating when present.
+    cleaned_rating: int | None = None
+    if recruiter_rating is not None:
+        try:
+            r = int(recruiter_rating)
+            if 1 <= r <= 10:
+                cleaned_rating = r
+        except (TypeError, ValueError):
+            pass
+    if cleaned_rating is not None:
+        derived = rating_to_verdict(cleaned_rating)
+        if derived is not None:
+            verdict = derived
+
     threshold_before = get_threshold(recruiter_name, position_uid)
     bucket_at_time = bucket_for(ai_rating, threshold_before)
     # ❓ ("not sure") is deliberately excluded from the agreement metric —
@@ -254,9 +287,6 @@ def record_verdict(
         agreed = (bucket_at_time == verdict)
     round_num = _current_round_num(recruiter_name, position_uid)
 
-    # Trim conservatively. The column is TEXT so there's no DB cap, but
-    # nothing useful tends to live past ~2 KB and we don't want a recruiter
-    # paste-bombing the prompt later.
     cleaned_text = (feedback_text or "").strip()[:2000] or None
 
     with db_session() as ses:
@@ -270,6 +300,7 @@ def record_verdict(
             agreed_at_time=agreed,
             round_num=round_num,
             feedback_text=cleaned_text,
+            recruiter_rating=cleaned_rating,
         ))
         ses.commit()
 
@@ -399,9 +430,17 @@ def _lazy_score_to_fill(
     queue load because of one bad CV.
 
     Returns the number actually scored (may be 0 if Comeet has nothing left
-    to offer in the active CV-screening step).
+    to offer in the active CV-screening step). Returns 0 immediately when
+    SCORING_PAUSE_AUTO is set (benchmark mode).
     """
     if needed <= 0:
+        return 0
+
+    # Master kill-switch — skip lazy-scoring during benchmark runs so the
+    # queue only shows candidates that were scored deliberately.
+    from .config import settings
+    if settings.scoring_pause_auto:
+        log.info("_lazy_score_to_fill: SCORING_PAUSE_AUTO is set — skipping")
         return 0
 
     # Lazy import: scan.py is heavyweight and pulls in Comeet + Claude. The
