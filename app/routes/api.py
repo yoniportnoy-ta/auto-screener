@@ -1202,7 +1202,9 @@ def get_onboarding_weights(position_uid: str) -> dict[str, Any]:
 
 class OnboardingWeightsBody(BaseModel):
     position_uid: str = Field(min_length=1)
-    weights: dict[str, int] = Field(min_length=6, max_length=6)
+    # 4 slider dimensions (company_tier, career_progression, university_tier,
+    # achievements). Domain and location are server-side, not in this dict.
+    weights: dict[str, int] = Field(min_length=4, max_length=4)
 
 
 @router.post("/onboarding/weights")
