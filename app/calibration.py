@@ -495,6 +495,26 @@ def _lazy_score_to_fill(
     return scored
 
 
+def _domain_cap_applied(r: Any) -> bool:
+    """Did the domain soft cap fire on this candidate?
+
+    New rule (post 2026-05-18): cap fires when avg(profession_domain,
+    company_domain) < 5 AND the final rating was held at 5 (the cap value).
+    Falls back to legacy `dim_domain_match < 5` for historical rows that
+    pre-date the split.
+    """
+    prof = getattr(r, "dim_profession_domain", None)
+    comp = getattr(r, "dim_company_domain", None)
+    present = [x for x in (prof, comp) if x is not None]
+    final = getattr(r, "final_rating", None) or 0
+    if present:
+        avg = sum(present) / len(present)
+        return avg < 5 and final == 5
+    # Legacy fallback: pre-split rows with only `dim_domain_match`
+    legacy = getattr(r, "dim_domain_match", None)
+    return legacy is not None and legacy < 5 and final == 5
+
+
 def get_calibration_queue(
     recruiter_name: str,
     position_uid: str,
@@ -595,25 +615,26 @@ def get_calibration_queue(
             # all six are null. location_match is included for display +
             # gate-state lookup; it isn't weighted into the overall.
             "dimensions": {
-                "domain_match": getattr(r, "dim_domain_match", None),
+                "profession_domain": getattr(r, "dim_profession_domain", None),
+                "company_domain": getattr(r, "dim_company_domain", None),
                 "company_tier": getattr(r, "dim_company_tier", None),
                 "career_progression": getattr(r, "dim_career_progression", None),
                 "location_match": getattr(r, "dim_location_match", None),
                 "university_tier": getattr(r, "dim_university_tier", None),
+                # Legacy dims kept for back-compat with historical rows; the UI
+                # filters by `null` so new rows simply don't render these.
+                "domain_match": getattr(r, "dim_domain_match", None),
                 "achievements": getattr(r, "dim_achievements", None),
             },
             # Convenience flags for the UI:
             # - locationGateFailed: location gate (auto-rated 1).
-            # - domainCapApplied: domain mismatch cap (overall held at 5).
+            # - domainCapApplied: domain mismatch cap (avg of profession +
+            #   company domain < 5, with the overall held at 5).
             "locationGateFailed": (
                 getattr(r, "dim_location_match", None) is not None
                 and getattr(r, "dim_location_match") < 4  # LOCATION_GATE_THRESHOLD
             ),
-            "domainCapApplied": (
-                getattr(r, "dim_domain_match", None) is not None
-                and getattr(r, "dim_domain_match") < 5  # DOMAIN_GATE_THRESHOLD
-                and (r.final_rating or 0) == 5           # DOMAIN_CAP_RATING
-            ),
+            "domainCapApplied": _domain_cap_applied(r),
         }
         for r in pool
     ]

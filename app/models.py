@@ -181,11 +181,19 @@ class DebugScoring(Base):
     # before the dimension migration. The recruiter-facing rating
     # (final_rating) is the weighted sum of these using
     # PositionClass.dimension_weights_json.
+    #
+    # dim_domain_match — DEPRECATED but kept nullable for historical rows.
+    # Replaced by dim_company_domain + dim_profession_domain. Combined
+    # average of those two acts as the soft cap.
     dim_domain_match: Mapped[int | None] = mapped_column(Integer)
+    dim_company_domain: Mapped[int | None] = mapped_column(Integer)
+    dim_profession_domain: Mapped[int | None] = mapped_column(Integer)
     dim_company_tier: Mapped[int | None] = mapped_column(Integer)
     dim_career_progression: Mapped[int | None] = mapped_column(Integer)
     dim_location_match: Mapped[int | None] = mapped_column(Integer)
     dim_university_tier: Mapped[int | None] = mapped_column(Integer)
+    # dim_achievements — DEPRECATED. Kept nullable for historical rows;
+    # the AI no longer scores this axis.
     dim_achievements: Mapped[int | None] = mapped_column(Integer)
 
 

@@ -1202,15 +1202,19 @@ def get_onboarding_weights(position_uid: str) -> dict[str, Any]:
 
 class OnboardingWeightsBody(BaseModel):
     position_uid: str = Field(min_length=1)
-    # 4 slider dimensions (company_tier, career_progression, university_tier,
-    # achievements). Domain and location are server-side, not in this dict.
-    weights: dict[str, int] = Field(min_length=4, max_length=4)
+    # 5 slider dimensions: profession_domain, company_domain, company_tier,
+    # career_progression, university_tier. Each integer 0-100; the five
+    # must sum to exactly 100. location_match is server-side (hard gate),
+    # not in this dict. Legacy axes `domain_match` and `achievements` are
+    # deprecated and ignored if present.
+    weights: dict[str, int] = Field(min_length=5, max_length=5)
 
 
 @router.post("/onboarding/weights")
 def post_onboarding_weights(body: OnboardingWeightsBody) -> dict[str, Any]:
-    """Persist the recruiter's per-position weight dict. Must include all
-    six dimensions and sum to exactly 100.
+    """Persist the recruiter's per-position weight dict. Must include the
+    5 slider dimensions (profession_domain, company_domain, company_tier,
+    career_progression, university_tier) and sum to exactly 100.
     """
     from .. import dimensions as dims
 

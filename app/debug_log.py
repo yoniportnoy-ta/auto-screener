@@ -47,12 +47,14 @@ def append_debug_log(
     strengths: list[str] | None,
     gaps: list[str] | None,
     profile_url: str | None = None,
-    dim_domain_match: int | None = None,
+    dim_domain_match: int | None = None,          # legacy avg of new pair
+    dim_company_domain: int | None = None,
+    dim_profession_domain: int | None = None,
     dim_company_tier: int | None = None,
     dim_career_progression: int | None = None,
     dim_location_match: int | None = None,
     dim_university_tier: int | None = None,
-    dim_achievements: int | None = None,
+    dim_achievements: int | None = None,          # deprecated
 ) -> None:
     """Best-effort insert. Never raises — debug logging is non-critical."""
     if not is_debug_logging_enabled():
@@ -80,6 +82,8 @@ def append_debug_log(
                 gaps_json=list(gaps or []),
                 profile_url=(profile_url or None),
                 dim_domain_match=dim_domain_match,
+                dim_company_domain=dim_company_domain,
+                dim_profession_domain=dim_profession_domain,
                 dim_company_tier=dim_company_tier,
                 dim_career_progression=dim_career_progression,
                 dim_location_match=dim_location_match,

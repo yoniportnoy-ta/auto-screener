@@ -50,56 +50,84 @@ TIER_1_GLOBAL = [
 ]
 
 
-# ─── TIER-1 ISRAELI: top scale-ups / public companies ───────────────────
-# Curated list of well-known Israeli product/tech companies. The bar:
-# either publicly traded, valued >$1B, broadly recognised in the
-# Israeli tech ecosystem, or category-leading in their niche.
+# ─── TIER-1 ISRAELI: top scale-ups / public companies (tight bar) ───────
+# Curated list of household-name Israeli product/tech companies. The bar
+# is intentionally STRICT after benchmark feedback: globally-recognised
+# brand OR clear category-leader, not just "respected unicorn." Borderline
+# names live in TIER_2_PRODUCT_ISRAELI below.
 TIER_1_ISRAELI = [
-    # Public / mega-cap consumer + SaaS
+    # Public / mega-cap consumer + SaaS — household names
     "Wix", "monday.com", "monday", "Fiverr", "ironSource", "Unity",
-    "AppsFlyer", "JFrog", "Riskified", "Global-e", "WalkMe",
-    "Innovid", "Taboola", "Outbrain", "Cellebrite", "Nayax",
+    "JFrog", "Riskified", "Global-e", "WalkMe",
+    "Taboola", "Outbrain", "Cellebrite", "Nayax",
     "Lightricks",
-    # Public/mega-cap fintech + insurtech
-    "Lemonade", "Hippo", "Plus500", "Pagaya", "Payoneer", "Nuvei",
-    "eToro", "Next Insurance",
-    # Public/mega-cap cyber
-    "Check Point", "CyberArk", "Imperva", "Radware", "Allot",
+    # Public/mega-cap fintech — only the truly large
+    "Lemonade", "Plus500", "Pagaya", "Nuvei", "eToro",
+    # Public/mega-cap cyber — top of category
+    "Check Point", "CyberArk", "Imperva", "Radware",
     "SentinelOne", "Cybereason",
-    # Mature enterprise software
+    # Mature enterprise software — household
     "NICE", "Amdocs", "Verint", "Sapiens", "Mellanox",
     "Tower Semiconductor",
-    # Mobility / auto
+    # Mobility / auto — top-of-mind
     "Mobileye", "Gett", "Via", "Moovit",
-    # Late-stage unicorns — cyber
+    # Late-stage unicorns — cyber (top-of-category only)
     "Snyk", "Wiz", "Aqua Security", "Orca Security", "Cato Networks",
-    "Salt Security", "Pentera", "Apiiro", "Akeyless", "Cycode",
-    "Sygnia", "Mitiga", "Adaptive Shield", "Coro", "Perimeter 81",
-    "Deep Instinct", "Claroty", "Armis", "Cyolo",
-    "Talon Cyber Security", "BigID", "Mend", "WhiteSource",
-    "Argus Cyber Security", "Cymulate", "Lightspin", "Permiso",
-    # Late-stage unicorns — fintech / insurtech
-    "Tipalti", "Melio", "Rapyd", "BlueVine", "Mesh Payments",
-    "HoneyBook", "Personetics", "At-Bay", "Forter", "Earnix",
-    # AI / ML
-    "AI21 Labs", "AI21", "Pinecone", "Run:ai", "Run.ai", "Granulate",
-    "Tabnine", "D-ID", "Hour One", "Aporia", "Anyword", "DataLoop",
-    "Lightrun", "Coralogix",
-    # Marketing / sales / data
-    "Gong", "Lusha", "Yotpo", "Optimove", "Innovid",
-    # Productivity / SaaS
-    "HiBob", "Atera", "DataRails", "Verbit", "BigPanda", "Bringg",
+    "Claroty",
+    # Late-stage unicorns — fintech / insurtech (top-of-category)
+    "Tipalti", "Melio", "Rapyd", "BlueVine", "HoneyBook",
+    "At-Bay", "Forter", "Hippo", "Next Insurance",
+    # AI / ML — top-of-category Israeli AI
+    "AI21 Labs", "AI21", "Pinecone", "Run:ai", "Run.ai",
+    # Marketing / sales / data — top-of-category
+    "Gong",
+    # Productivity / SaaS — top-of-category
+    "HiBob",
     # Mobility / auto (unicorn-tier)
-    "Innoviz", "Otonomo", "Cybellum", "Optibus", "Foretellix",
-    "Trigo Vision", "Trigo",
-    # Health
-    "Tytocare", "Healthy.io", "Aidoc", "Zebra Medical Vision",
-    "K Health", "Sweetch",
-    # Gaming / media
-    "Playtika", "Plarium", "Crazy Labs", "Moon Active",
-    "Papaya Gaming", "Eko",
-    # Other product
-    "Trax", "Riverside", "Riverside.fm",
+    "Innoviz", "Optibus",
+    # Health — top-of-category
+    "Tytocare", "Aidoc",
+    # Gaming / media — household
+    "Playtika", "Plarium", "Moon Active",
+    # Anchor: us
+    "Riverside", "Riverside.fm",
+]
+
+
+# ─── TIER-2 PRODUCT ISRAELI: respected unicorns, not household names ────
+# These are real product companies with valid scale — meaningfully better
+# than "unknown employer" — but BELOW the user's tier-1 bar (Wix / Monday /
+# Mobileye / Check Point). Moved here from TIER_1_ISRAELI after benchmark
+# feedback explicitly flagged these as not-tier-1 (e.g. "appsflyer isnt",
+# "Optimove and Payoneer are not tier 1", "personetics is not tier 1",
+# "armis is not top tier"). Grade COMPANY_TIER 5-6 for these, not 8-10.
+TIER_2_PRODUCT_ISRAELI = [
+    # Mid-cap consumer + SaaS
+    "AppsFlyer", "Innovid", "Duda", "Stamply",
+    # Mid-cap fintech / insurtech
+    "Payoneer", "Personetics", "Earnix", "Mesh Payments",
+    "Shift4", "Shift4 Payments",
+    # Mid-cap cyber
+    "Armis", "Allot", "Salt Security", "Pentera", "Apiiro", "Akeyless",
+    "Cycode", "Sygnia", "Mitiga", "Adaptive Shield", "Coro", "Perimeter 81",
+    "Deep Instinct", "Cyolo", "Talon Cyber Security", "BigID",
+    "Mend", "WhiteSource", "Argus Cyber Security", "Cymulate",
+    "Lightspin", "Permiso",
+    # Mid-cap AI / ML
+    "Granulate", "Tabnine", "D-ID", "Hour One", "Aporia", "Anyword",
+    "DataLoop", "Lightrun", "Coralogix",
+    # Mid-cap marketing / sales / data
+    "Lusha", "Yotpo", "Optimove",
+    # Mid-cap productivity / SaaS
+    "Atera", "DataRails", "Verbit", "BigPanda", "Bringg",
+    # Mid-cap mobility / auto
+    "Otonomo", "Cybellum", "Foretellix", "Trigo Vision", "Trigo",
+    # Mid-cap health
+    "Healthy.io", "Zebra Medical Vision", "K Health", "Sweetch",
+    # Mid-cap gaming / media
+    "Crazy Labs", "Papaya Gaming", "Eko",
+    # Mid-cap other
+    "Trax",
 ]
 
 
@@ -133,6 +161,119 @@ SERVICE_AGENCY_ISRAELI = [
     "John Bryce", "TripleSI", "One Technologies", "Malam Team",
     "Aman", "Taldor", "Mihshuv", "Sela Group",
 ]
+
+# ─── TIER-1 CANADA: top Canadian tech / SaaS companies ─────────────────
+# Household-name Canadian product companies. Bar: publicly traded with
+# real scale, globally recognised brand, or category-leading SaaS for
+# a real customer base. Includes common alt-spellings + abbreviations
+# so name-matching in CVs is robust.
+TIER_1_CANADA = [
+    # Mega-cap consumer + SaaS
+    "Shopify", "Shopify Inc",
+    "Lightspeed", "Lightspeed Commerce", "Lightspeed POS",
+    "OpenText", "Open Text",
+    "Constellation Software", "Constellation Software Inc",
+    "Slack", "Slack Technologies",  # originally Canadian, now Salesforce
+    "BlackBerry", "BlackBerry Limited", "RIM", "Research In Motion",
+    "Hootsuite",
+    "Wattpad",
+    # Fintech / payments
+    "Wealthsimple",
+    "Nuvei", "Nuvei Corporation",
+    "Hopper",
+    "Ceridian", "Dayforce", "Ceridian HCM",
+    "Borrowell",
+    # AI / ML
+    "Cohere", "Cohere AI", "Cohere Inc",
+    "Element AI",
+    "Layer 6 AI", "Layer 6",
+    # Cyber / security / privacy
+    "1Password", "AgileBits",
+    "TrulyAo", "Trulioo",
+    "Magnet Forensics",
+    "Absolute Software",
+    # E-commerce / marketplaces
+    "Faire", "Faire Wholesale",
+    "Tucows",
+    "Ritual",
+    "ApplyBoard",
+    # SaaS — verticals
+    "Clio", "Clio Cloud",
+    "Coveo",
+    "Top Hat",
+    "D2L", "Desire2Learn",
+    "Kinaxis",
+    "Vena Solutions", "Vena",
+    "ZE PowerGroup",
+    # Health tech
+    "League",
+    "MaRS",  # innovation hub, not company, but candidates list it
+    # Media / gaming
+    "Ubisoft Montreal", "Ubisoft Toronto", "Ubisoft Quebec",
+    "EA Vancouver", "Electronic Arts Vancouver",
+    "BioWare",
+    "Behaviour Interactive",
+    "Eidos-Montréal",
+    # Telecom / large cap (recognised but not pure-product)
+    "Telus", "Bell Canada", "Rogers Communications",
+    # AI labs / research
+    "Vector Institute",
+    "Mila", "Mila Quebec AI Institute",
+]
+
+
+# ─── TIER-1 POLAND: top Polish tech / SaaS / gaming companies ──────────
+# Household-name Polish product companies + leading game studios. Bar:
+# publicly traded, broadly recognised, or category-leading. Includes
+# Polish-language and English variants for name-matching robustness.
+TIER_1_POLAND = [
+    # E-commerce / marketplaces
+    "Allegro", "Allegro.pl", "Allegro Group",
+    # IT / enterprise software (large cap)
+    "Asseco", "Asseco Poland", "Asseco SA",
+    "Comarch", "Comarch SA",
+    # SaaS / unicorns
+    "LiveChat", "LiveChat Software", "LiveChat Inc",
+    "DocPlanner", "Docplanner", "ZnanyLekarz",
+    "Booksy",
+    "Brainly", "Brainly.com",
+    "Brand24",
+    "GetResponse",
+    "Estimote",
+    "DataWalk",
+    "Nethone",
+    "Sumo Logic Poland",  # major engineering hub
+    "Codility",
+    "Spacelift",
+    "Vercel Poland",  # major remote PL talent
+    "Snowflake Poland",
+    # Logistics / fintech
+    "InPost", "InPost SA",
+    "Pekao", "PKO Bank Polski",  # banking — large cap (less tech)
+    # Gaming — Polish gaming is globally famous
+    "CD Projekt", "CD Projekt Red", "CDPR", "CD PROJEKT",
+    "Techland", "Techland S.A.",
+    "11 bit studios", "11 Bit Studios",
+    "People Can Fly",
+    "Bloober Team",
+    "Ten Square Games", "TSG",
+    "Huuuge Games", "Huuuge Inc",
+    "Reality Pump",
+    # Satellite / hardware / deeptech
+    "Iceye", "ICEYE",  # Finnish-Polish radar satellites
+    "SatRevolution",
+    # Biotech / pharma scale-ups
+    "Selvita",
+    # Media / audio
+    "Audioteka",
+    "Wirtualna Polska", "WP", "Wirtualna Polska Holding",
+    "Onet",
+    # Travel / SaaS
+    "Tidio", "Tidio Live Chat",
+    "Survicate",
+    "Edrone",
+]
+
 
 HR_STAFFING_AGENCIES = [
     # Global staffing / HR agencies — recruiting roles AT these are a
@@ -175,13 +316,53 @@ def format_company_tiers_block() -> str:
     """
     lines = ["\n--- COMPANY TIER REFERENCE (use this when grading employer signal) ---"]
 
-    lines.append("\nTIER-1 GLOBAL (FAANG, recognised unicorns — STRONG POSITIVE signal):")
+    lines.append("\nTIER-1 GLOBAL (FAANG, household-name unicorns — STRONG POSITIVE signal, grade 8-10):")
     lines.append(_csv_wrap(TIER_1_GLOBAL))
 
     lines.append(
-        "\nTIER-1 ISRAELI (top scale-ups, public, unicorns — STRONG POSITIVE signal):"
+        "\nTIER-1 ISRAELI (household-name Israeli scale-ups, category leaders — "
+        "STRONG POSITIVE signal, grade 8-10):"
     )
     lines.append(_csv_wrap(TIER_1_ISRAELI))
+
+    lines.append(
+        "\nTIER-2 PRODUCT ISRAELI (respected Israeli unicorns, NOT household names — "
+        "MODERATE POSITIVE, grade 5-6. Real product companies but the bar for tier-1 "
+        "is brand recognition / category-leadership which these don't quite meet):"
+    )
+    lines.append(_csv_wrap(TIER_2_PRODUCT_ISRAELI))
+
+    lines.append(
+        "\nTIER-1 CANADA (household-name Canadian product cos: Shopify, OpenText, "
+        "Cohere, Wealthsimple, Lightspeed, Constellation, 1Password, Clio, etc. — "
+        "STRONG POSITIVE signal, grade 8-10):"
+    )
+    lines.append(_csv_wrap(TIER_1_CANADA))
+
+    lines.append(
+        "\nTIER-1 POLAND (household-name Polish product cos + globally-recognised "
+        "game studios: Allegro, CD Projekt Red, LiveChat, Booksy, DocPlanner, "
+        "Brainly, InPost, Techland, 11 bit studios, etc. — STRONG POSITIVE signal, "
+        "grade 8-10):"
+    )
+    lines.append(_csv_wrap(TIER_1_POLAND))
+
+    lines.append(
+        "\nNAME-MATCHING NOTES: candidates write company names many ways — accept "
+        "all these as equivalent:\n"
+        "  - Capitalisation variants: AppsFlyer / Appsflyer / appsflyer / APPSFLYER\n"
+        "  - Punctuation variants: monday.com / Monday.com / Monday / monday\n"
+        "  - With/without 'Inc' / 'Ltd' / 'SA' / 'AG' suffixes\n"
+        "  - Hebrew transliterations: Wix (ויקס), Riverside (ריברסייד), etc.\n"
+        "  - Polish diacritics: CD Projekt (CD PROJEKT), Łódź / Lodz, etc.\n"
+        "  - Acronyms: CDPR (CD Projekt Red), TCS (Tata Consultancy Services), "
+        "TAU (Tel Aviv University), UofT (University of Toronto), AGH (AGH Krakow), "
+        "BGU (Ben-Gurion University), HUJI (Hebrew University), UJ (Jagiellonian), "
+        "UW (University of Warsaw), PW (Politechnika Warszawska / Warsaw UoT).\n"
+        "If you see ANY of these variants, match to the canonical entry. Do NOT "
+        "treat a known company as 'unknown' just because the candidate's spelling "
+        "differs from the reference list.\n"
+    )
 
     lines.append(
         "\nSERVICE / OUTSOURCING — global (STRONG NEGATIVE — they build for "
@@ -241,6 +422,9 @@ def _csv_wrap(names: list[str], width: int = 88) -> str:
 __all__ = [
     "TIER_1_GLOBAL",
     "TIER_1_ISRAELI",
+    "TIER_2_PRODUCT_ISRAELI",
+    "TIER_1_CANADA",
+    "TIER_1_POLAND",
     "SERVICE_AGENCY_GLOBAL",
     "SERVICE_AGENCY_ISRAELI",
     "HR_STAFFING_AGENCIES",

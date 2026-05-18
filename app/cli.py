@@ -425,6 +425,85 @@ async def cmd_reset_thresholds(position_uid: str | None = None) -> int:
     return 0
 
 
+async def cmd_reset_rubric(position_uid: str | None = None) -> int:
+    """Wipe learned_rubrics + recruiter_thresholds, keeping verdicts intact.
+
+    Use this before re-benchmarking the algorithm against the SAME 1-10
+    ratings you've already given. The learned rubric encodes corrections
+    the AI was making against the OLD prompt; keeping it would double-count
+    when you rescore with a new prompt, contaminating the A/B signal.
+
+    Usage:
+        python -m app.cli reset-rubric                # all positions
+        python -m app.cli reset-rubric 439121         # one position (numeric or alphanumeric)
+
+    WIPED:
+      - learned_rubrics      (per-class rubrics synthesised from feedback)
+      - recruiter_thresholds (per-(recruiter, position) tagging cutoffs;
+                              if a position_uid is given, only that row)
+
+    KEPT:
+      - calibration_verdicts (your 1-10 ground-truth ratings)
+      - debug_scoring        (existing AI scores — rescore-all overwrites)
+      - feedback             (free-text feedback notes on verdicts)
+
+    Typical workflow:
+      1. reset-rubric 439121
+      2. rescore-all 439121
+      3. benchmark 439121
+    """
+    from sqlalchemy import delete, select
+    from .db import db_session
+    from .models import LearnedRubric, RecruiterThreshold, PositionClass
+
+    pos = (position_uid or "").strip()
+    counts: dict[str, int] = {}
+
+    with db_session() as ses:
+        # Rubrics live per CLASS (not per position). If a position was
+        # supplied, look up its class and wipe only that class's rubric;
+        # otherwise wipe all rubrics across all classes.
+        if pos:
+            cls_row = ses.scalar(
+                select(PositionClass).where(PositionClass.position_uid == pos)
+            )
+            cls_id = (cls_row.class_id if cls_row else None) or ""
+            if cls_id:
+                res = ses.execute(
+                    delete(LearnedRubric).where(LearnedRubric.class_id == cls_id)
+                )
+                counts["learned_rubrics"] = res.rowcount or 0
+                log.info("scoped rubric wipe to class %s for position %s", cls_id, pos)
+            else:
+                counts["learned_rubrics"] = 0
+                log.warning(
+                    "position %s has no class assigned — skipped rubric wipe",
+                    pos,
+                )
+
+            thr_stmt = delete(RecruiterThreshold).where(
+                RecruiterThreshold.position_uid == pos
+            )
+            res = ses.execute(thr_stmt)
+            counts["recruiter_thresholds"] = res.rowcount or 0
+        else:
+            res = ses.execute(delete(LearnedRubric))
+            counts["learned_rubrics"] = res.rowcount or 0
+            res = ses.execute(delete(RecruiterThreshold))
+            counts["recruiter_thresholds"] = res.rowcount or 0
+        ses.commit()
+
+    summary = ", ".join(f"{k}={v}" for k, v in counts.items())
+    scope = f" for position {pos}" if pos else " (all positions)"
+    log.info("reset-rubric done%s: %s", scope, summary)
+    log.info(
+        "next steps: 'rescore-all%s' then 'benchmark%s'",
+        f" {pos}" if pos else "",
+        f" {pos}" if pos else "",
+    )
+    return 0
+
+
 async def cmd_prewarm_all() -> int:
     """Pre-score the next N candidates across every open position.
 
@@ -603,6 +682,7 @@ COMMANDS = {
     "backfill-tags": cmd_backfill_tags,
     "clear-score-locks": cmd_clear_score_locks,
     "reset-thresholds": cmd_reset_thresholds,
+    "reset-rubric": cmd_reset_rubric,
     "reset-for-launch": cmd_reset_for_launch,
     "rescore-all": cmd_rescore_all,
     "reset-and-rescore": cmd_reset_and_rescore,
@@ -612,7 +692,7 @@ COMMANDS = {
 # Commands that accept an optional position_uid positional arg.
 COMMANDS_WITH_POSITION = {
     "backfill-tags", "clear-score-locks", "reset-thresholds",
-    "rescore-all", "benchmark",
+    "reset-rubric", "rescore-all", "benchmark",
 }
 
 

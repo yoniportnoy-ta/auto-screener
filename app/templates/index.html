@@ -1969,16 +1969,24 @@
     // migration) → render nothing. Colour-codes by score band so the
     // recruiter sees at a glance WHICH dimension dragged the rating down.
     const DIM_LABELS_FE = {
+      profession_domain: "Profession domain",
+      company_domain: "Company domain",
       company_tier: "Company tier",
       career_progression: "Career progression",
       university_tier: "University tier",
-      achievements: "Achievements",
+      // Legacy dims kept for back-compat with historical debug_scoring
+      // rows. The UI filters by null so new rows simply don't render
+      // these — only old rows scored before the split / deprecation will.
+      domain_match: "Domain match (legacy)",
+      achievements: "Achievements (legacy)",
     };
-    // Only the 4 slider dimensions are shown — domain and location are
-    // intentionally hidden from the breakdown (domain is a fixed 33%, and
-    // location is a hard gate already surfaced via the banner below).
+    // Show the 5 active slider dimensions in the breakdown. Location is
+    // a hard gate (surfaced via the banner) so it's not in the per-dim
+    // grid. Legacy dims appear in tail position; only render if non-null.
     const DIM_ORDER_FE = [
-      "company_tier", "career_progression", "university_tier", "achievements",
+      "profession_domain", "company_domain",
+      "company_tier", "career_progression", "university_tier",
+      "domain_match", "achievements",  // legacy, null for new rows
     ];
 
     function renderDimensionBreakdown(c) {

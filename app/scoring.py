@@ -42,13 +42,18 @@ class ScoreResult:
     linkedin_url: str | None = None
     # Per-dimension sub-scores (1-10 each). All optional — legacy callers
     # without dimension support can still construct a ScoreResult with
-    # just `rating`. New scoring pipeline populates all six.
-    dim_domain_match: int | None = None
+    # just `rating`. Current scoring pipeline populates the five active
+    # sliders + location_match. dim_domain_match and dim_achievements
+    # are deprecated — kept on the dataclass for back-compat with stored
+    # rows.
+    dim_company_domain: int | None = None
+    dim_profession_domain: int | None = None
     dim_company_tier: int | None = None
     dim_career_progression: int | None = None
     dim_location_match: int | None = None
     dim_university_tier: int | None = None
-    dim_achievements: int | None = None
+    dim_domain_match: int | None = None      # DEPRECATED — split into above two
+    dim_achievements: int | None = None      # DEPRECATED — no longer scored
     # v2 extras
     pre_calibration_rating: int = 0
     calibration_delta: float | None = None
@@ -240,12 +245,14 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
         strengths=pass_result.strengths,
         gaps=pass_result.gaps,
         profile_url=(candidate.get("URL") or None),
-        dim_domain_match=pass_result.dim_domain_match,
+        dim_domain_match=pass_result.dim_domain_match,          # legacy avg
+        dim_company_domain=pass_result.dim_company_domain,
+        dim_profession_domain=pass_result.dim_profession_domain,
         dim_company_tier=pass_result.dim_company_tier,
         dim_career_progression=pass_result.dim_career_progression,
         dim_location_match=pass_result.dim_location_match,
         dim_university_tier=pass_result.dim_university_tier,
-        dim_achievements=pass_result.dim_achievements,
+        dim_achievements=pass_result.dim_achievements,           # deprecated, null
     )
 
     return ScoreResult(
@@ -304,6 +311,7 @@ def _single_pass(
     # and NEGATIVE (service / outsourcing / HR staffing) lists, ~280 names,
     # so Claude has concrete benchmarks both directions.
     from .company_tiers import format_company_tiers_block as _tiers_block
+    from .university_tiers import format_university_tiers_block as _uni_block
 
     pre_rating_checklist = (
         "\n=== PRE-RATING CHECKLIST (work through these BEFORE picking a rating) ===\n"
@@ -326,14 +334,18 @@ def _single_pass(
         "AT an agency is much weaker signal than recruiting in-house at a tier-1 product co\n"
         "   - UNKNOWN LOCAL: weaker signal unless concrete scale evidence (real product/DAUs/revenue)\n\n"
 
-        "3) UNIVERSITY TIER — Categorise the highest-degree institution:\n"
-        "   - TIER-1: Technion, Tel Aviv University, Hebrew University, Weizmann Institute, "
-        "MIT, Stanford, CMU, Berkeley, Harvard, Princeton, Yale, Cambridge, Oxford, ETH Zürich, "
-        "EPFL, IIT (top campuses), Tsinghua, NUS.\n"
-        "   - TIER-2: respected national universities (Ben-Gurion, Bar-Ilan, IDC Herzliya / "
-        "Reichman, Open University of Israel, top European/Asian technical universities).\n"
-        "   - OTHER: bootcamps, lesser-known regional universities. Not disqualifying, "
-        "but contributes negatively when other signals are weak.\n\n"
+        "3) UNIVERSITY TIER — Categorise the highest-degree institution using the "
+        "UNIVERSITY TIER REFERENCE below. Geographic focus is Israel / Canada / Poland "
+        "(where most of our positions are) plus a global tier-1 anchor set:\n"
+        "   - TIER-1 (global elite OR top IL/CA/PL research university): STRONG POSITIVE, "
+        "grade 8-10.\n"
+        "   - TIER-2 (respected national / regional research uni or strong academic college): "
+        "POSITIVE, grade 6-7.\n"
+        "   - LOW-TIER (smaller teaching colleges / polytechnics / regional schools): WEAK "
+        "signal, grade 3-5. Not disqualifying on its own but stacks negatively.\n"
+        "   - For Israeli candidates, ELITE MILITARY / NATIONAL PROGRAMS (Talpiot, 8200, "
+        "Mamram, etc.) often matter MORE than the university itself — bump toward 9-10 "
+        "when the CV explicitly mentions one.\n\n"
 
         "4) PRODUCT vs AGENCY CAREER ARC — Is the *recent* career trajectory at product "
         "companies or service / staffing shops? Weight the last 3-5 years more than older "
@@ -358,6 +370,7 @@ def _single_pass(
         "outweigh the tier signal. The 1-10 internal scale gives you room to "
         "differentiate — use 5-6 when the signals are mixed, not as a polite default.\n"
         + _tiers_block()
+        + _uni_block()
         + "\n\nThen proceed to the rating.\n\n"
     )
 
@@ -384,33 +397,55 @@ def _single_pass(
 
     tail = (
         "Respond with ONLY a single JSON object (no markdown fences, no prose before or after). Keys:\n"
-        "- domain_match: integer 1-10 — skills/stack-to-role fit (locked at 33% of overall — most important)\n"
+        "- profession_domain: integer 1-10 — How closely the candidate's actual ROLE / PROFESSION "
+        "matches the role we're hiring for. Senior PM applying for Senior PM = 9-10. PM-adjacent "
+        "(Product Marketing, Product Ops, BizOps with product surface) applying for PM = 5-7. "
+        "Different profession entirely (QA → PM, Designer → PM, Dev → PM) = 1-3 unless the CV "
+        "shows clear PM-style scope already. Read role descriptions and accomplishments — don't "
+        "just title-match.\n"
+        "- company_domain: integer 1-10 — Have the candidate's recent EMPLOYERS done something "
+        "similar to us (creator-tools, podcasting, video, B2C SaaS, content creation, media tech, "
+        "EdTech with consumer surface)? Use the DOMAIN ADJACENCY RULE below. PM at Descript / Loom / "
+        "Canva / Spotify = 9-10. PM at general B2B SaaS / dev-tools = 5-7. PM at a bank / pharma / "
+        "hardware / enterprise = 1-3 regardless of how well-known the company is.\n"
         "- company_tier: integer 1-10 — quality of recent employers (tier-1 product vs agency/unknown)\n"
         "- career_progression: integer 1-10 — title+scope growth over time (10=healthy, 1=flat/regression)\n"
         "- location_match: integer 1-10 — HARD GATE: scoring below 4 auto-rejects the candidate. "
         "Score 1-3 ONLY when the candidate is clearly in a different country AND the CV does NOT mention "
         "willingness to relocate. Score 8-10 when location clearly matches the role's country. "
         "Score 5-7 when uncertain (no explicit location info but no obvious mismatch either).\n"
-        "- university_tier: integer 1-10 — Technion/MIT/Stanford=10, respected national=6-7, bootcamp=3\n"
-        "- achievements: integer 1-10 — concrete scale/scope numbers in CV (DAUs, revenue, team, launches)\n"
+        "- university_tier: integer 1-10 — use the UNIVERSITY TIER REFERENCE above. "
+        "Tier-1 global / IL / CA / PL = 8-10; tier-2 respected = 6-7; low-tier / unknown = 3-5. "
+        "Israeli elite programs (Talpiot, 8200, Mamram) bump toward 9-10. "
+        "**NO-DEGREE RULE**: if the CV shows NO formal degree (no Bachelor's / Master's / "
+        "PhD / equivalent — only bootcamps, certifications, courses, or 'self-taught'), "
+        "university_tier MUST be ≤ 3. Bootcamp only = 3. No formal education visible = 1-2. "
+        "Don't be generous here — many otherwise-strong candidates have no degree, and "
+        "that's the signal the recruiter wants to see.\n"
         "- confidence: number 0 to 1\n"
         "- summary: string, 1-2 sentences max\n"
         "- strengths: array of up to 4 short strings\n"
         "- gaps: array of EXACTLY 2-3 short strings. ALWAYS provide AT LEAST 2 cons — even a "
         "5/5 candidate has something to flag for the recruiter (e.g., 'no public-product "
-        "experience visible', 'CV light on specific scale numbers'). Never return fewer than 2.\n"
+        "experience visible', 'unclear domain match on JD specifics'). Never return fewer than 2.\n"
         "- comeet_comment_html: short extra HTML/plain for the note (server allows only b, i, u)\n"
         "- linkedin_url: full linkedin.com/in/ URL if visible in the resume; otherwise null\n\n"
 
         "The OVERALL rating is computed server-side with three layers:\n"
         "  - If location_match < 4 (location gate): overall = 1, regardless of everything else.\n"
-        "  - If domain_match < 5 (domain cap): overall capped at 5 even if other axes are 10s. "
-        "Rationale: wrong professional field (e.g., pharma recruiter for a tech-recruiter role) "
-        "is disqualifying no matter how impressive the rest of the CV is.\n"
-        "  - Otherwise: domain_match × 33% + the four slider dimensions (company, progression, "
-        "university, achievements) weighted by recruiter-set per-position weights summing to 67%.\n"
+        "  - If avg(profession_domain, company_domain) < 5 (domain cap): overall capped at 5 even "
+        "if other sliders are 10s. Rationale: wrong domain on BOTH facets together (wrong job + "
+        "wrong industry) is disqualifying no matter how impressive the rest of the CV is. A strong "
+        "single facet (e.g. great profession match at a wrong-industry company, or vice versa) "
+        "can pull the average above 5 and avoid the cap.\n"
+        "  - Otherwise: weighted sum of the FIVE slider dimensions (profession_domain, "
+        "company_domain, company_tier, career_progression, university_tier) using recruiter-set "
+        "per-position weights summing to 100. Default weights are profession 23 / company-domain 13 / "
+        "company-tier 27 / progression 20 / university 17 but the recruiter can tune them per position.\n"
         "Score each axis HONESTLY and INDEPENDENTLY. Don't try to pre-balance toward a target — "
-        "that's our math to do.\n\n"
+        "that's our math to do. Note: 'achievements' is no longer scored as a separate axis; concrete "
+        "achievements are still valuable evidence but they feed your judgement on the five sliders "
+        "(especially profession_domain and career_progression) rather than getting their own number.\n\n"
 
         "Rating scale (1-10) — calibrated for a REAL CV pool, which is power-law NOT "
         "bell-curved. Most applicants are weak fits and the top is rare. Typical pool:\n"
@@ -426,18 +461,41 @@ def _single_pass(
         "  4-10      → top 50%   (so the median candidate lands at a 4)\n"
         "  1-3       → bottom 50% (location mismatches, wrong domain, agency-only, etc.)\n\n"
 
+        "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
+        "We hire for a CREATOR-TOOLS / B2C SaaS company (Riverside.fm — podcasting, "
+        "video, content creation, SaaS for creators). For ANY role at this company, "
+        "candidates from these industries are domain-RELEVANT (good fit):\n"
+        "    Creator-tools • Podcasting / audio / video • B2C SaaS for prosumers • "
+        "Social platforms • Content creation tools • Media tech • EdTech with B2C "
+        "consumer-facing surface • Streaming • Music tech\n"
+        "Candidates from these industries are domain-IRRELEVANT (bad fit, even if "
+        "their company is tier-1):\n"
+        "    Banking • Insurance (general L&P/P&C, NOT insurtech-SaaS) • Pharma / "
+        "biotech • Hardware / semiconductor / chip design • Generic enterprise IT • "
+        "Telecom / ISP infrastructure • Defense / aerospace • Industrial automation • "
+        "Heavy manufacturing • Government / public sector • Logistics infra\n"
+        "**HARD RULE**: A candidate whose entire recent career (3-5 years) is in the "
+        "IRRELEVANT bucket CANNOT score 7+ overall regardless of company tier or "
+        "education. Their domain_match should be 1-4. Their overall lands in 1-4. "
+        "A senior PM at Goldman Sachs is a 2-3 for Riverside, not a 7.\n"
+        "Adjacent-but-not-direct industries (general B2B SaaS, fintech-with-consumer-"
+        "surface, dev-tools, marketing tech) → domain_match 5-7 depending on how "
+        "close the work actually is.\n\n"
+
         "Bands (anchor points — use the 10-point scale, this is rough mapping):\n"
-        "- 10 (Superstar — top ~1%): EXCEPTIONAL. All four axes tier-1 + concrete "
-        "role-mapped achievements with real scale numbers. Hire on paper. If you're "
-        "thinking 'maybe 10', they're a 9.\n"
+        "- 10 (Superstar — top ~1%): EXCEPTIONAL. Tier-1 employer + tier-1 university + "
+        "creator-tools or B2C-SaaS adjacency + clear scale/scope leader achievements + "
+        "healthy progression. Hire on paper. If you're thinking 'maybe 10', they're a 9.\n"
         "- 8-9 (Strong — top ~5%): Candidate we would FAST-TRACK TO INTERVIEW TODAY. "
-        "Tier-1 product or strong tier-2 background, clear progression, no major flags. "
-        "9 = nearly superstar with one small caveat. 8 = solidly strong.\n"
-        "- 7 (Above bar — top ~10%): Solid candidate worth a screen call. Some "
-        "compelling axes, no disqualifying ones.\n"
-        "- 5-6 (Maybe — top ~33%): Reasonable signals but with notable gaps OR "
-        "all-mid signals (known-but-not-top-tier employer, normal progression, no "
-        "standout achievements). 6 = lean yes. 5 = lean no. An interview would clarify.\n"
+        "Tier-1 product employer in a RELEVANT domain (see Domain Adjacency Rule above), "
+        "clear progression, no major flags. 9 = nearly superstar with one small caveat. "
+        "8 = solidly strong.\n"
+        "- 7 (Above bar — top ~10%): Solid candidate worth a screen call. **REQUIRES** "
+        "domain adjacency (creator-tools / B2C SaaS / media tech / EdTech-consumer / "
+        "music or video adjacent). Without that adjacency the ceiling is 6, period.\n"
+        "- 5-6 (Maybe — top ~33%): Reasonable signals but notable gaps OR all-mid "
+        "signals (known-but-not-top-tier employer, normal progression, partial domain "
+        "match). 6 = lean yes. 5 = lean no.\n"
         "- 4 (The DEFAULT for typical applicants — top ~50%): The median candidate. "
         "Resume looks fine but nothing concrete differentiates them. Includes most "
         "applicants who have relevant work but no tier-1 / scale / leader signals.\n"
@@ -446,7 +504,9 @@ def _single_pass(
         "    • Candidate is in a different country and the CV does NOT mention relocating.\n"
         "    • Entire (or near-entire) career at service / staffing / consulting / "
         "outsourcing shops.\n"
-        "    • Completely wrong skill set or domain for the role.\n"
+        "    • Completely wrong skill set or domain (banking / hardware / pharma / "
+        "generic enterprise / defense, etc. per the Domain Adjacency Rule).\n"
+        "    • No formal degree on CV (use the No-Degree Rule above as one of the inputs).\n"
         "    • Obvious level mismatch (senior role + sub-junior candidate, or vice versa "
         "with no path forward).\n"
         "  These cases are NOT 4+ with low confidence — they're 1-3.\n\n"
@@ -491,7 +551,25 @@ def _single_pass(
             "LinkedIn only; lower confidence accordingly.\n\n"
         )
     else:
-        intro = "No resume PDF could be loaded; judge from metadata and LinkedIn URL only.\n\n"
+        # No-CV path: explicitly default to NEUTRAL with low confidence rather
+        # than letting the AI drift toward 3 (which it does because "sparse
+        # evidence = 3-4" elsewhere in the prompt). The Itay Simon / Waxman
+        # benchmark cases were AI=3, you=5 — fixing that asymmetry here.
+        intro = (
+            "NO RESUME AND NO LINKEDIN AVAILABLE for this candidate. You have only "
+            "the candidate name + role + position metadata to work from.\n\n"
+            "**NO-CV DEFAULT RULE**: When you genuinely have no CV and no LinkedIn "
+            "(this case), DO NOT pull the rating down for 'sparse evidence'. Default "
+            "to overall ~5 (neutral) with confidence ≤ 0.2. Score each sub-dimension "
+            "at 5 unless the candidate name alone gives you a clear signal "
+            "(e.g. it's an obviously non-Latin name in a Latin-only-required role, "
+            "or the metadata says they applied from a country with a hard mismatch — "
+            "in which case the location gate still fires normally). The 'sparse "
+            "evidence = 3-4' rule applies to candidates whose CV exists but is light; "
+            "it does NOT apply when the CV is entirely absent. The recruiter will "
+            "follow up to get the CV; your job is not to penalise them in the "
+            "meantime.\n\n"
+        )
 
     text_body = base_prompt + intro + tail
 
@@ -522,7 +600,9 @@ def _single_pass(
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     parsed = json.loads(raw_text)
 
-    # Pull all six sub-scores Claude returned (4 sliders + domain + location).
+    # Pull the six sub-scores Claude returned (5 sliders + location gate).
+    # `achievements` and `domain_match` are deprecated and no longer
+    # requested; if a model response still includes either we ignore them.
     # Each clamps to 1-10 internal scale.
     from .rating_scale import clamp_internal
     from .dimensions import ALL_SCORED_AXES, compute_overall, get_weights
@@ -531,15 +611,42 @@ def _single_pass(
         k: clamp_internal(parsed.get(k)) for k in ALL_SCORED_AXES
     }
 
+    # Back-compat: if Claude returns the legacy `domain_match` key but
+    # not the new split keys (can happen during prompt-cache warmup or
+    # if the model trims output), fan it out to both new axes so the
+    # weighted sum still computes correctly.
+    legacy_dm = clamp_internal(parsed.get("domain_match"))
+    if legacy_dm is not None:
+        if sub_scores.get("profession_domain") is None:
+            sub_scores["profession_domain"] = legacy_dm
+        if sub_scores.get("company_domain") is None:
+            sub_scores["company_domain"] = legacy_dm
+
     # Compute the weighted overall:
     #  - location_match < threshold → auto 1 (hard gate)
-    #  - else: domain at fixed 33% + slider dims at their per-position weights
-    weights = get_weights(inputs.position_uid)  # 4 slider weights summing to 67
+    #  - else: 5 sliders at per-position weights summing to 100
+    #  - then: avg(profession_domain, company_domain) < 5 → cap at 5
+    weights = get_weights(inputs.position_uid)  # 5 slider weights summing to 100
     rating = compute_overall(sub_scores, weights)
     if rating is None:
         # Total parse failure (Claude returned no sub-scores). Fall back
         # to legacy single-"rating" field if present, else neutral 5.
         rating = clamp_internal(parsed.get("rating")) or 5
+    # For dim_domain_match (legacy column we keep populated for back-compat
+    # with anything that still reads it — e.g. older calibration views),
+    # store the average of the two new domain facets, rounded to int.
+    prof = sub_scores.get("profession_domain")
+    comp = sub_scores.get("company_domain")
+    legacy_dim_dm: int | None
+    if prof is not None and comp is not None:
+        legacy_dim_dm = round((prof + comp) / 2)
+    elif prof is not None:
+        legacy_dim_dm = prof
+    elif comp is not None:
+        legacy_dim_dm = comp
+    else:
+        legacy_dim_dm = None
+
     return ScoreResult(
         rating=rating,
         confidence=float(parsed.get("confidence") or 0.0),
@@ -548,12 +655,14 @@ def _single_pass(
         gaps=list(parsed.get("gaps") or [])[:2],
         comeet_comment_html=str(parsed.get("comeet_comment_html") or ""),
         linkedin_url=(parsed.get("linkedin_url") or None) or None,
-        dim_domain_match=sub_scores.get("domain_match"),
+        dim_company_domain=sub_scores.get("company_domain"),
+        dim_profession_domain=sub_scores.get("profession_domain"),
         dim_company_tier=sub_scores.get("company_tier"),
         dim_career_progression=sub_scores.get("career_progression"),
         dim_location_match=sub_scores.get("location_match"),
         dim_university_tier=sub_scores.get("university_tier"),
-        dim_achievements=sub_scores.get("achievements"),
+        dim_domain_match=legacy_dim_dm,   # back-compat (averaged)
+        dim_achievements=None,             # deprecated
     )
 
 
