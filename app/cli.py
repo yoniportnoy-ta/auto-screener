@@ -32,6 +32,174 @@ async def cmd_scan_all() -> int:
     return 0
 
 
+async def cmd_benchmark(position_uid: str | None = None) -> int:
+    """Print a side-by-side AI-vs-recruiter rating table for a position.
+
+    Usage:
+        python -m app.cli benchmark 439121        # numeric Comeet ID
+        python -m app.cli benchmark DC.E45        # alphanumeric UID
+        python -m app.cli benchmark                # all positions
+
+    Joins calibration_verdicts.recruiter_rating (your ground-truth 1-10
+    rating) with the latest debug_scoring row per candidate (the AI's
+    1-10 rating + per-dim sub-scores). Skips candidates where you haven't
+    rated yet (recruiter_rating IS NULL).
+
+    Output:
+      - Per-candidate table: name, AI, you, |delta|, gates
+      - Summary: mean |delta|, RMSE, % within ±1, % within ±2
+
+    Use this after rating ~10+ candidates manually to see where the AI
+    is systematically over- or under-rating — that's the signal for the
+    next prompt tweak.
+    """
+    from sqlalchemy import select, desc, func
+    from .db import db_session
+    from .models import CalibrationVerdict, DebugScoring
+    from .scan import _resolve_numeric_position_uid
+
+    pos = (position_uid or "").strip()
+    if pos and pos.isdigit():
+        pos = _resolve_numeric_position_uid(pos) or pos
+
+    with db_session() as ses:
+        # Latest verdict per (recruiter, candidate, position) — when a
+        # candidate has been re-rated, only the most recent count.
+        verdicts_q = (
+            select(
+                CalibrationVerdict.candidate_uid,
+                CalibrationVerdict.recruiter_name,
+                CalibrationVerdict.recruiter_rating,
+                CalibrationVerdict.ai_rating.label("ai_rating_at_verdict"),
+                CalibrationVerdict.feedback_text,
+                CalibrationVerdict.position_uid,
+            )
+            .where(CalibrationVerdict.recruiter_rating.is_not(None))
+            .order_by(desc(CalibrationVerdict.id))
+        )
+        if pos:
+            verdicts_q = verdicts_q.where(CalibrationVerdict.position_uid == pos)
+        raw_verdicts = ses.execute(verdicts_q).all()
+
+        # Dedup: keep most recent verdict per (position, candidate).
+        seen: set[tuple[str, str]] = set()
+        verdicts: list[dict] = []
+        for v in raw_verdicts:
+            key = (v.position_uid or "", v.candidate_uid or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            verdicts.append({
+                "candidate_uid": v.candidate_uid,
+                "position_uid": v.position_uid,
+                "recruiter": v.recruiter_name,
+                "recruiter_rating": v.recruiter_rating,
+                "feedback_text": (v.feedback_text or "").strip(),
+            })
+
+        if not verdicts:
+            log.info(
+                "benchmark: no verdicts with recruiter_rating found%s",
+                f" for position {pos}" if pos else "",
+            )
+            return 0
+
+        # Pull the latest DebugScoring per (position, candidate) for the
+        # ones we have verdicts on. One query batch + manual dedup.
+        candidate_uids = [v["candidate_uid"] for v in verdicts]
+        position_uids = list({v["position_uid"] for v in verdicts if v["position_uid"]})
+        scoring_rows = ses.execute(
+            select(DebugScoring)
+            .where(
+                DebugScoring.candidate_uid.in_(candidate_uids),
+                DebugScoring.position_uid.in_(position_uids),
+                DebugScoring.final_rating.is_not(None),
+            )
+            .order_by(desc(DebugScoring.id))
+        ).scalars().all()
+
+        latest_scoring: dict[tuple[str, str], DebugScoring] = {}
+        for r in scoring_rows:
+            key = (r.position_uid or "", r.candidate_uid or "")
+            if key in latest_scoring:
+                continue
+            latest_scoring[key] = r
+
+    # Build the comparison rows.
+    rows: list[dict] = []
+    for v in verdicts:
+        s = latest_scoring.get((v["position_uid"] or "", v["candidate_uid"] or ""))
+        if not s:
+            continue
+        ai = int(s.final_rating or 0)
+        recruiter = int(v["recruiter_rating"] or 0)
+        delta = ai - recruiter
+        gates: list[str] = []
+        if s.dim_location_match is not None and s.dim_location_match < 4:
+            gates.append("LOC")
+        if s.dim_domain_match is not None and s.dim_domain_match < 5 and ai <= 5:
+            gates.append("DOM")
+        rows.append({
+            "name": s.candidate_name or v["candidate_uid"] or "—",
+            "position": s.position_name or v["position_uid"] or "—",
+            "ai": ai,
+            "recruiter": recruiter,
+            "delta": delta,
+            "abs_delta": abs(delta),
+            "gates": ",".join(gates) or "—",
+            "feedback": v["feedback_text"],
+        })
+
+    if not rows:
+        log.info("benchmark: no matched (verdict + scoring) rows")
+        return 0
+
+    # Sort by abs delta DESC — the worst misses surface first.
+    rows.sort(key=lambda r: (-r["abs_delta"], r["name"]))
+
+    # Print table.
+    print()
+    print(f"{'Candidate':<32} {'Position':<28} {'AI':>3} {'You':>4} {'Δ':>4}  {'Gates':<8} Feedback")
+    print("-" * 110)
+    for r in rows[:80]:  # cap at 80 rows so console isn't overwhelming
+        delta_str = f"{r['delta']:+d}"
+        print(
+            f"{r['name'][:31]:<32} "
+            f"{r['position'][:27]:<28} "
+            f"{r['ai']:>3} {r['recruiter']:>4} {delta_str:>4}  "
+            f"{r['gates']:<8} "
+            f"{(r['feedback'][:50] or '')}"
+        )
+    if len(rows) > 80:
+        print(f"... and {len(rows) - 80} more")
+
+    # Summary stats.
+    n = len(rows)
+    abs_deltas = [r["abs_delta"] for r in rows]
+    deltas = [r["delta"] for r in rows]
+    mean_abs = sum(abs_deltas) / n
+    rmse = (sum(d * d for d in deltas) / n) ** 0.5
+    within_1 = sum(1 for d in abs_deltas if d <= 1) / n * 100
+    within_2 = sum(1 for d in abs_deltas if d <= 2) / n * 100
+    bias = sum(deltas) / n
+    overcalls = sum(1 for d in deltas if d > 0)
+    undercalls = sum(1 for d in deltas if d < 0)
+
+    print()
+    print("─── Summary ──────────────────────────────────────────────")
+    print(f"  n            : {n}")
+    print(f"  mean |Δ|     : {mean_abs:.2f}")
+    print(f"  RMSE         : {rmse:.2f}")
+    print(f"  within ±1    : {within_1:.1f}%")
+    print(f"  within ±2    : {within_2:.1f}%")
+    print(f"  bias (AI − you): {bias:+.2f}  "
+          f"({'AI over-rates' if bias > 0 else 'AI under-rates' if bias < 0 else 'no bias'})")
+    print(f"  over-calls   : {overcalls} (AI > you)")
+    print(f"  under-calls  : {undercalls} (AI < you)")
+    print()
+    return 0
+
+
 async def cmd_reset_and_rescore() -> int:
     """One-shot: wipe all feedback/thresholds/verdicts AND rescore every
     candidate with the current prompt.
@@ -438,10 +606,14 @@ COMMANDS = {
     "reset-for-launch": cmd_reset_for_launch,
     "rescore-all": cmd_rescore_all,
     "reset-and-rescore": cmd_reset_and_rescore,
+    "benchmark": cmd_benchmark,
 }
 
 # Commands that accept an optional position_uid positional arg.
-COMMANDS_WITH_POSITION = {"backfill-tags", "clear-score-locks", "reset-thresholds", "rescore-all"}
+COMMANDS_WITH_POSITION = {
+    "backfill-tags", "clear-score-locks", "reset-thresholds",
+    "rescore-all", "benchmark",
+}
 
 
 def main() -> int:
