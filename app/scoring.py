@@ -433,11 +433,16 @@ def _single_pass(
 
         "The OVERALL rating is computed server-side with three layers:\n"
         "  - If location_match < 4 (location gate): overall = 1, regardless of everything else.\n"
-        "  - If avg(profession_domain, company_domain) < 5 (domain cap): overall capped at 5 even "
-        "if other sliders are 10s. Rationale: wrong domain on BOTH facets together (wrong job + "
-        "wrong industry) is disqualifying no matter how impressive the rest of the CV is. A strong "
-        "single facet (e.g. great profession match at a wrong-industry company, or vice versa) "
-        "can pull the average above 5 and avoid the cap.\n"
+        "  - TIERED company_domain cap (industry is the dominant gate — even a 9 "
+        "in profession_domain can't override wrong industry):\n"
+        "      company_domain = 1 → overall capped at 2\n"
+        "      company_domain = 2 → overall capped at 3\n"
+        "      company_domain = 3 or 4 → overall capped at 5\n"
+        "      company_domain ≥ 5 → no cap\n"
+        "    Rationale: a senior PM at a healthcare/banking/travel company should not "
+        "score 4+ for a creator-tools role no matter how strong their PM skills are. "
+        "Industry fit is the dominant gate; profession_domain contributes via the "
+        "weighted sum but can't override a low company_domain.\n"
         "  - Otherwise: weighted sum of the FIVE slider dimensions (profession_domain, "
         "company_domain, company_tier, career_progression, university_tier) using recruiter-set "
         "per-position weights summing to 100. Default weights are profession 23 / company-domain 13 / "
@@ -469,11 +474,22 @@ def _single_pass(
         "Social platforms • Content creation tools • Media tech • EdTech with B2C "
         "consumer-facing surface • Streaming • Music tech\n"
         "Candidates from these industries are domain-IRRELEVANT (bad fit, even if "
-        "their company is tier-1):\n"
-        "    Banking • Insurance (general L&P/P&C, NOT insurtech-SaaS) • Pharma / "
-        "biotech • Hardware / semiconductor / chip design • Generic enterprise IT • "
-        "Telecom / ISP infrastructure • Defense / aerospace • Industrial automation • "
-        "Heavy manufacturing • Government / public sector • Logistics infra\n"
+        "their company is tier-1). Grade company_domain in the 1-3 range:\n"
+        "    Banking / finance • Insurance (general L&P/P&C, NOT insurtech-SaaS) • "
+        "Pharma / biotech • Healthcare / medical / wellness / behavioral-health "
+        "(even B2C — Riverside is creator-tools, not health-tech) • Cosmetics / beauty / "
+        "personal-care • Travel / hospitality / tourism / booking platforms • "
+        "General retail e-commerce (Amazon-style, NOT creator-driven commerce) • "
+        "Hardware / semiconductor / chip design • Generic enterprise IT • "
+        "Telecom / ISP infrastructure • Defense / aerospace / military-tech (incl. "
+        "cybersecurity products built for governments and enterprises — distinct from "
+        "consumer-facing creator-tool security) • Industrial automation • "
+        "Heavy manufacturing • Government / public sector • Logistics infra • "
+        "Real estate / proptech • Agriculture / agtech\n"
+        "IMPORTANT: 'B2C company' alone is NOT enough to make it RELEVANT. A B2C "
+        "healthcare app, a B2C travel booking site, a B2C cosmetics brand are all "
+        "IRRELEVANT to creator-tools. The product must be in the creator-content-"
+        "media-audio-video adjacency, not just consumer-facing.\n"
         "**HARD RULE**: A candidate whose entire recent career (3-5 years) is in the "
         "IRRELEVANT bucket CANNOT score 7+ overall regardless of company tier or "
         "education. Their domain_match should be 1-4. Their overall lands in 1-4. "
@@ -725,7 +741,7 @@ def _single_pass(
     # Compute the weighted overall:
     #  - location_match < threshold → auto 1 (hard gate)
     #  - else: 5 sliders at per-position weights summing to 100
-    #  - then: avg(profession_domain, company_domain) < 5 → cap at 5
+    #  - then: tiered company_domain cap (1→cap 2, 2→cap 3, 3-4→cap 5, ≥5→no cap)
     weights = get_weights(inputs.position_uid)  # 5 slider weights summing to 100
     rating = compute_overall(sub_scores, weights)
     if rating is None:

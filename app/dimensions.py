@@ -357,26 +357,57 @@ def compute_overall(
         weighted = sum(s * w for s, w in pieces)
         result = max(1, min(10, round(weighted / used_weight)))
 
-    # 3) Domain soft cap: average of the two domain axes. If either is
-    # missing, use whichever is present. If both are missing, no cap.
+    # 3) Tiered domain cap. Earlier (single-tier) design capped at 5
+    #    whenever avg(profession_domain, company_domain) < 5. Benchmark
+    #    showed that wasn't strict enough — candidates with strong
+    #    profession_domain (right kind of role, e.g. PM) but very weak
+    #    company_domain (wrong industry, e.g. healthcare for a creator-
+    #    tools shop) were floating up to 4-7 because the high prof score
+    #    pulled the average above 5, and even when the cap fired it only
+    #    pulled to 5 — recruiter wanted 1-3.
+    #
+    #    New rule: cap is driven by `company_domain` alone (industry fit
+    #    is the dominant gate), and is tiered:
+    #
+    #        company_domain      result is capped at
+    #        ─────────────────   ───────────────────
+    #        ≥ 5                 no cap
+    #        4                   5
+    #        3                   5
+    #        2                   3
+    #        1                   2
+    #
+    #    Rationale: profession_domain still contributes via the weighted
+    #    sum (so a PM at the wrong industry isn't punished as hard as a
+    #    QA engineer at the wrong industry), but it can't override the
+    #    industry signal entirely. This treats `company_domain` as a
+    #    soft gate analogous to `location_match` (hard gate) and
+    #    profession_domain as a contributor.
     def _to_int(v: Any) -> int | None:
         try:
             return int(v) if v is not None else None
         except (TypeError, ValueError):
             return None
 
-    prof = _to_int(sub_scores.get("profession_domain"))
     comp = _to_int(sub_scores.get("company_domain"))
-    present = [x for x in (prof, comp) if x is not None]
-    if present:
-        domain_avg = sum(present) / len(present)
-        if domain_avg < DOMAIN_GATE_THRESHOLD and result > DOMAIN_CAP_RATING:
-            log.info(
-                "compute_overall: domain cap fired "
-                "(prof=%s, comp=%s, avg=%.2f < %s) — capping %s to %s",
-                prof, comp, domain_avg, DOMAIN_GATE_THRESHOLD, result, DOMAIN_CAP_RATING,
-            )
-            result = DOMAIN_CAP_RATING
+    prof = _to_int(sub_scores.get("profession_domain"))
+
+    cap: int | None = None
+    if comp is not None:
+        if comp <= 1:
+            cap = 2
+        elif comp == 2:
+            cap = 3
+        elif comp <= 4:
+            cap = 5
+
+    if cap is not None and result > cap:
+        log.info(
+            "compute_overall: tiered company_domain cap fired "
+            "(comp=%s, prof=%s) — capping %s to %s",
+            comp, prof, result, cap,
+        )
+        result = cap
 
     return result
 
