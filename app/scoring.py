@@ -586,19 +586,119 @@ def _single_pass(
     user_content.append({"type": "text", "text": text_body})
 
     client = Anthropic(api_key=settings.anthropic_api_key)
+    # Bumped from 1500 → 2048 to give the model headroom for the new
+    # 5-axis schema + 4 strengths + 3 gaps + summary + html comment.
+    # Empty-response cases observed after the 2026-05-18 prompt refactor
+    # suggested the response was being truncated to nothing in some edge
+    # cases — extra budget is cheap insurance.
     msg = client.messages.create(
         model=settings.claude_model,
-        max_tokens=1500,
+        max_tokens=2048,
         temperature=0.2,
         system=(
             "You return only valid JSON for recruiting screening. No markdown code fences. "
-            "No extra keys beyond those requested."
+            "No extra keys beyond those requested. Begin your response immediately with the "
+            "opening { of the JSON object."
         ),
         messages=[{"role": "user", "content": user_content}],
     )
     raw_text = "".join(b.text for b in msg.content if isinstance(b, TextBlock)).strip()
     raw_text = raw_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    parsed = json.loads(raw_text)
+
+    # Defensive guard: when Claude returns an empty text response (observed
+    # on the prewarm cron after the 2026-05-18 prompt refactor — see the
+    # `score_candidate failed ... Expecting value` errors), fall back to a
+    # low-confidence neutral default and emit a rich diagnostic so we can
+    # see WHY this happened. Without this guard, json.loads("") raises and
+    # the whole candidate scoring is dropped.
+    if not raw_text:
+        # Pull every diagnostic we can without re-touching the API.
+        content_block_types = [type(b).__name__ for b in msg.content]
+        stop_reason = getattr(msg, "stop_reason", None)
+        stop_sequence = getattr(msg, "stop_sequence", None)
+        usage = getattr(msg, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None) if usage else None
+        output_tokens = getattr(usage, "output_tokens", None) if usage else None
+        text_body_len = len(text_body)
+        pdf_present = bool(inputs.resume_pdf_b64)
+        pdf_b64_len = len(inputs.resume_pdf_b64) if inputs.resume_pdf_b64 else 0
+        # Approx PDF size in MB (base64 inflates by ~33%)
+        pdf_mb_approx = round(pdf_b64_len * 0.75 / (1024 * 1024), 2) if pdf_b64_len else 0
+        log.warning(
+            "scoring: Claude returned empty text for candidate=%s position=%s "
+            "stop_reason=%s stop_sequence=%s content_block_types=%s "
+            "input_tokens=%s output_tokens=%s "
+            "prompt_chars=%s pdf=%s pdf_size_mb=%s — defaulting to rating=5 conf=0.1",
+            candidate.get("uid") or candidate.get("candidate_uid") or "?",
+            inputs.position_uid,
+            stop_reason, stop_sequence, content_block_types,
+            input_tokens, output_tokens,
+            text_body_len, pdf_present, pdf_mb_approx,
+        )
+        # Return a neutral-default ScoreResult — same shape as the success
+        # path but with rating=5 / confidence=0.1 / sub-scores all 5.
+        from .rating_scale import clamp_internal as _ci_unused  # noqa: F401
+        return ScoreResult(
+            rating=5,
+            confidence=0.1,
+            summary=(
+                "AI returned an empty response (see logs for diagnostics). "
+                "Defaulted to neutral 5 — recruiter should review manually."
+            ),
+            strengths=["(AI scoring fallback — no analysis available)"],
+            gaps=[
+                "AI did not produce a structured response for this candidate",
+                "Manual review needed before tagging",
+            ],
+            comeet_comment_html="",
+            linkedin_url=None,
+            dim_company_domain=5,
+            dim_profession_domain=5,
+            dim_company_tier=5,
+            dim_career_progression=5,
+            dim_location_match=5,
+            dim_university_tier=5,
+            dim_domain_match=5,
+            dim_achievements=None,
+        )
+
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        # Non-empty but unparseable. Log the first 500 chars verbatim so we
+        # can see exactly what Claude returned, then fall back.
+        log.warning(
+            "scoring: Claude returned unparseable JSON for candidate=%s position=%s "
+            "stop_reason=%s err=%s raw_head=%r — defaulting to rating=5 conf=0.1",
+            candidate.get("uid") or candidate.get("candidate_uid") or "?",
+            inputs.position_uid,
+            getattr(msg, "stop_reason", None),
+            str(exc),
+            raw_text[:500],
+        )
+        return ScoreResult(
+            rating=5,
+            confidence=0.1,
+            summary=(
+                "AI returned malformed JSON (see logs). "
+                "Defaulted to neutral 5 — recruiter should review manually."
+            ),
+            strengths=["(AI scoring fallback — no analysis available)"],
+            gaps=[
+                "AI response could not be parsed as JSON",
+                "Manual review needed before tagging",
+            ],
+            comeet_comment_html="",
+            linkedin_url=None,
+            dim_company_domain=5,
+            dim_profession_domain=5,
+            dim_company_tier=5,
+            dim_career_progression=5,
+            dim_location_match=5,
+            dim_university_tier=5,
+            dim_domain_match=5,
+            dim_achievements=None,
+        )
 
     # Pull the six sub-scores Claude returned (5 sliders + location gate).
     # `achievements` and `domain_match` are deprecated and no longer
