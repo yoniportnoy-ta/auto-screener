@@ -641,6 +641,45 @@
     .cal-rating-btn.low:hover  { border-color: var(--err);  color: var(--err);  }
     .cal-rating-btn.mid:hover  { border-color: var(--warn); color: var(--warn); }
     .cal-rating-btn.high:hover { border-color: var(--ok);   color: var(--ok);   }
+    /* Selected state — clicking a rating button now selects (doesn't submit).
+       Submission happens via the Next button so the recruiter has a chance
+       to add feedback before advancing. */
+    .cal-rating-btn.selected.low  {
+      background: var(--err); border-color: var(--err); color: white;
+    }
+    .cal-rating-btn.selected.mid  {
+      background: var(--warn); border-color: var(--warn); color: white;
+    }
+    .cal-rating-btn.selected.high {
+      background: var(--ok); border-color: var(--ok); color: white;
+    }
+    /* "Next →" button that submits the selected rating + feedback. */
+    .cal-next-btn {
+      margin-top: 0.9rem;
+      width: 100%;
+      padding: 0.85rem 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      background: var(--accent, #3b82f6);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s, opacity 0.12s;
+    }
+    .cal-next-btn:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+    .cal-next-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .cal-next-hint {
+      margin-top: 0.4rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
     .cal-rating-legend {
       display: flex;
       justify-content: space-around;
@@ -2130,23 +2169,87 @@
             <span class="hint">4-6 = maybe</span>
             <span class="hint">7-10 = good fit</span>
           </div>
+          <button id="calNextBtn" class="cal-next-btn" type="button" disabled>
+            Next →
+          </button>
+          <div class="cal-next-hint" id="calNextHint">
+            Pick a rating to enable. Add feedback (optional) before clicking Next.
+          </div>
         </div>
       `;
-      // Bind rating handlers.
-      $("calCard").querySelectorAll(".cal-rating-btn").forEach((btn) => {
-        btn.addEventListener("click", () => submitVerdict(parseInt(btn.dataset.rating, 10)));
+      // Two-step verdict flow: clicking a rating SELECTS it (highlights the
+      // button + enables Next) but does NOT submit. Submission happens via
+      // the Next button, which sends rating + feedback together. This stops
+      // recruiters from accidentally clicking a number and advancing before
+      // filling in feedback they wanted to leave.
+      let selectedRating = null;
+      const ratingBtns = $("calCard").querySelectorAll(".cal-rating-btn");
+      const nextBtn = $("calNextBtn");
+      const nextHint = $("calNextHint");
+
+      function selectRating(n) {
+        selectedRating = n;
+        ratingBtns.forEach((b) => {
+          b.classList.toggle("selected", parseInt(b.dataset.rating, 10) === n);
+        });
+        nextBtn.disabled = false;
+        if (nextHint) {
+          nextHint.textContent =
+            "Rating " + n + " selected. Add feedback (optional) then click Next.";
+        }
+      }
+
+      ratingBtns.forEach((btn) => {
+        btn.addEventListener("click", () => selectRating(parseInt(btn.dataset.rating, 10)));
       });
-      // Number-key shortcuts (1-9 and 0 for 10) — power-user keyboard mode.
+      nextBtn.addEventListener("click", () => {
+        if (selectedRating != null) submitVerdict(selectedRating);
+      });
+
+      // Keyboard shortcuts. Numbers 1-9 + 0(=10) SELECT a rating without
+      // submitting; Enter or Cmd/Ctrl+Enter submits the currently-selected
+      // rating. Power users can run the whole loop on keyboard.
       const fb = $("calFeedbackText");
       if (fb) {
         fb.addEventListener("keydown", (ev) => {
+          // Plain Enter (no Shift) in the textarea submits the selected rating
+          // if there is one — otherwise lets the newline through as normal.
+          if (ev.key === "Enter" && !ev.shiftKey && !ev.metaKey && !ev.ctrlKey) {
+            if (selectedRating != null) {
+              ev.preventDefault();
+              submitVerdict(selectedRating);
+            }
+            return;
+          }
           if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
             ev.preventDefault();
-            // Cmd+Enter still sends a high default rating (8 = "fast-track").
-            submitVerdict(8);
+            if (selectedRating != null) {
+              submitVerdict(selectedRating);
+            }
           }
         });
       }
+      // Global number-key shortcuts (when textarea NOT focused) for fast rating.
+      // Press 1-9 to select that rating; 0 for 10.
+      const docKeyHandler = (ev) => {
+        const target = ev.target;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+          return;  // let the textarea handle its own keys
+        }
+        if (ev.key >= "1" && ev.key <= "9") {
+          selectRating(parseInt(ev.key, 10));
+        } else if (ev.key === "0") {
+          selectRating(10);
+        } else if (ev.key === "Enter" && selectedRating != null) {
+          submitVerdict(selectedRating);
+        }
+      };
+      // Replace any previous handler so we don't leak listeners across renders.
+      if (window._calKeyHandler) {
+        document.removeEventListener("keydown", window._calKeyHandler);
+      }
+      window._calKeyHandler = docKeyHandler;
+      document.addEventListener("keydown", docKeyHandler);
       // Lazy-load enrichment for this candidate.
       loadEnrichment(c.candidateUid);
     }
@@ -2258,8 +2361,11 @@
       }
       const fbEl = $("calFeedbackText");
       const feedbackText = (fbEl && fbEl.value || "").trim();
-      // Disable all rating buttons + textarea while we round-trip.
+      // Disable rating buttons + Next button + textarea while we round-trip
+      // so the recruiter can't double-submit or stack ratings on a slow link.
       $("calCard").querySelectorAll(".cal-rating-btn").forEach((b) => b.disabled = true);
+      const nxt = $("calNextBtn");
+      if (nxt) nxt.disabled = true;
       if (fbEl) fbEl.disabled = true;
       try {
         const res = await api("/api/calibration/verdict", {
@@ -2297,6 +2403,8 @@
       } catch (e) {
         setErr(e.message || String(e));
         $("calCard").querySelectorAll(".cal-rating-btn").forEach((b) => b.disabled = false);
+        const nxt2 = $("calNextBtn");
+        if (nxt2) nxt2.disabled = false;
         if (fbEl) fbEl.disabled = false;
       }
     }
