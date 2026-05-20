@@ -357,54 +357,76 @@ def compute_overall(
         weighted = sum(s * w for s, w in pieces)
         result = max(1, min(10, round(weighted / used_weight)))
 
-    # 3) Tiered domain cap. Earlier (single-tier) design capped at 5
-    #    whenever avg(profession_domain, company_domain) < 5. Benchmark
-    #    showed that wasn't strict enough — candidates with strong
-    #    profession_domain (right kind of role, e.g. PM) but very weak
-    #    company_domain (wrong industry, e.g. healthcare for a creator-
-    #    tools shop) were floating up to 4-7 because the high prof score
-    #    pulled the average above 5, and even when the cap fired it only
-    #    pulled to 5 — recruiter wanted 1-3.
+    # 3) Tiered domain caps on BOTH domain axes independently.
     #
-    #    New rule: cap is driven by `company_domain` alone (industry fit
-    #    is the dominant gate), and is tiered:
+    #    Initial (single-tier) design capped at 5 whenever avg(prof, comp) < 5.
+    #    That wasn't strict enough — strong PM at wrong industry floated to
+    #    5-7 because the high prof pulled the average up.
     #
-    #        company_domain      result is capped at
+    #    Second iteration: cap driven by company_domain alone (industry fit
+    #    as the dominant gate). Helped on PM/CSM benchmarks but introduced
+    #    the inverse failure on AE/sales: candidates with profession_domain
+    #    = 1-2 ("no sales experience at all") still scored 5-6 because their
+    #    employer happened to be in-industry (comp=8). e.g. Noor Gommed
+    #    (prof=2, comp=8) and Tal Ben-Dror (prof=1, comp=8) — overall 5-6,
+    #    recruiter wanted 1-2.
+    #
+    #    Current design: SAME tiered ladder applied to BOTH axes
+    #    independently. The effective cap is the LOWER of the two — either
+    #    "wrong industry" OR "wrong profession" can disqualify the candidate
+    #    independently. Both must be ≥ 5 to avoid any cap.
+    #
+    #        axis_value          result is capped at
     #        ─────────────────   ───────────────────
-    #        ≥ 5                 no cap
+    #        ≥ 5                 no cap (from this axis)
     #        4                   5
     #        3                   5
     #        2                   3
     #        1                   2
     #
-    #    Rationale: profession_domain still contributes via the weighted
-    #    sum (so a PM at the wrong industry isn't punished as hard as a
-    #    QA engineer at the wrong industry), but it can't override the
-    #    industry signal entirely. This treats `company_domain` as a
-    #    soft gate analogous to `location_match` (hard gate) and
-    #    profession_domain as a contributor.
+    #    Examples:
+    #    - prof=9, comp=2  → comp_cap=3, prof_cap=none → effective=3 (right
+    #      role, wrong industry — banker doing PM at a podcasting shop)
+    #    - prof=2, comp=8  → comp_cap=none, prof_cap=3 → effective=3
+    #      (right industry employer, but the candidate has never been a PM)
+    #    - prof=8, comp=8  → no cap (both strong)
+    #    - prof=1, comp=1  → cap=2 (both at floor)
     def _to_int(v: Any) -> int | None:
         try:
             return int(v) if v is not None else None
         except (TypeError, ValueError):
             return None
 
+    def _tiered_cap(axis_val: int | None) -> int | None:
+        """Map a domain axis score (1-10) to its individual cap. None = no cap."""
+        if axis_val is None:
+            return None
+        if axis_val <= 1:
+            return 2
+        if axis_val == 2:
+            return 3
+        if axis_val <= 4:
+            return 5
+        return None  # ≥ 5 contributes no cap
+
     comp = _to_int(sub_scores.get("company_domain"))
     prof = _to_int(sub_scores.get("profession_domain"))
+    comp_cap = _tiered_cap(comp)
+    prof_cap = _tiered_cap(prof)
 
-    cap: int | None = None
-    if comp is not None:
-        if comp <= 1:
-            cap = 2
-        elif comp == 2:
-            cap = 3
-        elif comp <= 4:
-            cap = 5
+    # Effective cap is the LOWER of the two (whichever fires harder).
+    caps_present = [c for c in (comp_cap, prof_cap) if c is not None]
+    cap = min(caps_present) if caps_present else None
 
     if cap is not None and result > cap:
+        triggered_by = (
+            "company+profession" if comp_cap is not None and prof_cap is not None
+            else ("company" if comp_cap is not None else "profession")
+        )
         log.info(
-            "compute_overall: tiered company_domain cap fired "
+            "compute_overall: tiered %s_domain cap fired "
             "(comp=%s, prof=%s) — capping %s to %s",
+            triggered_by,
             comp, prof, result, cap,
         )
         result = cap

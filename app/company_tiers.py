@@ -83,6 +83,11 @@ TIER_1_ISRAELI = [
     "Gong",
     # Productivity / SaaS — top-of-category
     "HiBob",
+    # B2B SaaS / workforce — added 2026-05-21 per AE benchmark feedback
+    # ("connecteam and natural intelligence are tier 1-2"). Promoting both
+    # to tier-1 — they're well-recognised Israeli scale-ups in their niches.
+    "Connecteam",
+    "Natural Intelligence",
     # Mobility / auto (unicorn-tier)
     "Innoviz", "Optibus",
     # Health — top-of-category
@@ -118,6 +123,13 @@ TIER_2_PRODUCT_ISRAELI = [
     "DataLoop", "Lightrun", "Coralogix",
     # Mid-cap marketing / sales / data
     "Lusha", "Yotpo", "Optimove",
+    # Mid-cap dev/creator tools (Israeli, B2B SaaS but not household names)
+    # Added 2026-05-21 per AE benchmark — recruiter explicitly placed
+    # Cloudinary, Artlist, EquityBee, Dealhub, WSC Sports in mid-tier.
+    "Cloudinary", "Artlist", "Lightricks - Beat",
+    "EquityBee", "Equity Bee",
+    "Dealhub", "DealHub", "DealHub.io",
+    "WSC Sports", "WSC",
     # Mid-cap productivity / SaaS
     "Atera", "DataRails", "Verbit", "BigPanda", "Bringg",
     # Mid-cap mobility / auto
@@ -161,6 +173,31 @@ SERVICE_AGENCY_ISRAELI = [
     "John Bryce", "TripleSI", "One Technologies", "Malam Team",
     "Aman", "Taldor", "Mihshuv", "Sela Group",
 ]
+
+# ─── TIER-2 PRODUCT GLOBAL: respected B2B SaaS / data, not household ────
+# US/EU companies that are real product cos but don't rise to TIER_1 fame.
+# Added 2026-05-21 per AE benchmark — recruiter explicitly said ZoomInfo
+# and Gartner are "not top tier" when AI scored them company_tier 7-8.
+# Same grading rule as TIER_2_PRODUCT_ISRAELI: grade company_tier 5-6.
+TIER_2_PRODUCT_GLOBAL = [
+    # Sales / marketing data
+    "ZoomInfo", "ZoomInfo Technologies", "Cognism",
+    # Analyst / research / consulting that the model mistakes for tech-tier-1
+    "Gartner", "Forrester", "IDC",
+    # B2B SaaS — well-known but not household
+    "Pendo", "Pendo.io", "Mixpanel",
+    "Outreach", "Outreach.io", "Salesloft", "Drift",
+    "Lattice",
+    "Vimeo",  # creator-adjacent but mid-tier in scale-of-business
+    "Loom",   # adjacent to creator-tools but mid-tier in revenue scale
+    "Calendly",
+    "ClickUp",
+    "Miro",
+    "InVision",
+    "Algolia",
+    "Segment",  # acquired by Twilio, was mid-cap independently
+]
+
 
 # ─── TIER-1 CANADA: top Canadian tech / SaaS companies ─────────────────
 # Household-name Canadian product companies. Bar: publicly traded with
@@ -333,6 +370,14 @@ def format_company_tiers_block() -> str:
     lines.append(_csv_wrap(TIER_2_PRODUCT_ISRAELI))
 
     lines.append(
+        "\nTIER-2 PRODUCT GLOBAL (respected US/EU B2B SaaS + analyst firms, NOT "
+        "household-name tier-1 — MODERATE POSITIVE, grade 5-6. The AI tends to "
+        "rate these too high because they're well-known to recruiters; calibrate "
+        "DOWN to tier-2):"
+    )
+    lines.append(_csv_wrap(TIER_2_PRODUCT_GLOBAL))
+
+    lines.append(
         "\nTIER-1 CANADA (household-name Canadian product cos: Shopify, OpenText, "
         "Cohere, Wealthsimple, Lightspeed, Constellation, 1Password, Clio, etc. — "
         "STRONG POSITIVE signal, grade 8-10):"
@@ -423,6 +468,7 @@ __all__ = [
     "TIER_1_GLOBAL",
     "TIER_1_ISRAELI",
     "TIER_2_PRODUCT_ISRAELI",
+    "TIER_2_PRODUCT_GLOBAL",
     "TIER_1_CANADA",
     "TIER_1_POLAND",
     "SERVICE_AGENCY_GLOBAL",

@@ -304,16 +304,83 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
 #   - Candidate name/email/process_context (per-candidate)
 #   - Intro (varies by CV/LinkedIn presence)
 #   - PDF document (per-candidate)
-@lru_cache(maxsize=1)
-def _build_system_instructions() -> str:
+# Per-class overlay text for the DOMAIN ADJACENCY RULE. Keyed by class_id;
+# anything not in this map falls through to the default "creator-tools /
+# B2C SaaS" framing. Each overlay is prepended to the standard adjacency
+# rule so the AI sees the role-specific criteria first.
+#
+# Why per-class: a Senior Account Executive should be scored on SaaS sales
+# experience and quota track record (general-tech SaaS is fine; banking is
+# not). A Senior PM should be scored on creator-tools adjacency. A BDR is
+# somewhere between (lead-gen mindset, SaaS-friendly, but earlier-career).
+# Using one global "creator-tools" frame for AE roles over-penalised SaaS
+# candidates from adjacent industries and over-credited candidates with no
+# sales experience but a creator-tools-adjacent employer.
+_CLASS_DOMAIN_OVERLAY: dict[str, str] = {
+    "account_executive": (
+        "=== ROLE-SPECIFIC DOMAIN OVERLAY (Account Executive) ===\n"
+        "This position is an Account Executive (sales). The general "
+        "creator-tools/B2C SaaS framing below applies to company_tier and "
+        "company_domain, but for THIS role the dominant signal is "
+        "QUOTA-CARRYING SAAS SALES EXPERIENCE. Specifically:\n"
+        "  - profession_domain = 9-10: clear AE track record at SaaS "
+        "companies with quota-carrying responsibility, multi-year tenure, "
+        "named accounts, $X+ ACV closed deals. Should be visible in the CV.\n"
+        "  - profession_domain = 6-8: AE-adjacent (Sales Development, "
+        "Account Management with quota, Pre-Sales/Solutions Engineer "
+        "with closing component) at SaaS companies.\n"
+        "  - profession_domain = 3-5: tangential sales (transactional "
+        "retail/insurance sales, BDR/SDR without closing experience, "
+        "Customer Success without expansion-quota responsibility).\n"
+        "  - profession_domain = 1-2: 'no sales experience at all'. "
+        "If you cannot point to specific quota-carrying SaaS sales work, "
+        "this is a 1-2.\n"
+        "For company_domain on AE roles: any SaaS hypergrowth company is "
+        "relevant (5-7), not just creator-tools. Banking / insurance / "
+        "healthcare / hardware / consulting are still IRRELEVANT (1-3). "
+        "General B2B SaaS (CRM, dev tools, marketing tech, sales tech) is "
+        "RELEVANT at 5-7. Creator-tools specifically is the highest "
+        "company_domain (8-10).\n\n"
+    ),
+    "business_development": (
+        "=== ROLE-SPECIFIC DOMAIN OVERLAY (BDR / Business Development) ===\n"
+        "This position is a Business Development Representative. The general "
+        "creator-tools framing applies, but BDR is an earlier-career sales "
+        "role focused on OUTBOUND LEAD GENERATION. Specifically:\n"
+        "  - profession_domain = 9-10: prior BDR/SDR experience at SaaS "
+        "with cold-outreach quota, qualified-meeting metrics, named "
+        "account targeting.\n"
+        "  - profession_domain = 5-8: BDR-adjacent (inside sales, customer-"
+        "facing role with prospecting, business-school grad with sales "
+        "internships, recent grad with quota internships).\n"
+        "  - profession_domain = 1-3: no sales / outreach experience at "
+        "all (engineering background, pure operations, etc.).\n"
+        "For company_domain on BDR roles: any SaaS company is relevant; "
+        "Banking / insurance / healthcare / hardware are IRRELEVANT (1-3).\n\n"
+    ),
+    # Other classes fall through to the default creator-tools framing in
+    # the main DOMAIN ADJACENCY RULE below.
+}
+
+
+@lru_cache(maxsize=16)
+def _build_system_instructions(class_id: str = "") -> str:
     """Assemble the cacheable system prompt once at process start.
 
-    Returns the full static instruction text. Invalidated only by a process
-    restart, which is fine — these instructions only change when we deploy
-    code anyway, and deploys restart the process.
+    Args:
+        class_id: position class id (e.g. "account_executive",
+            "product_management"). When known, a class-specific
+            DOMAIN ADJACENCY overlay is prepended to the generic rule.
+
+    Returns the full static instruction text for that class. Cached per
+    class (lru_cache maxsize=16) so each unique class only builds once;
+    Anthropic's prompt-cache then keys on the exact string content, so
+    same class within a 5-minute window = cache hit.
     """
     from .company_tiers import format_company_tiers_block as _tiers_block
     from .university_tiers import format_university_tiers_block as _uni_block
+
+    overlay = _CLASS_DOMAIN_OVERLAY.get(class_id or "", "")
 
     role_brief = (
         "You are an expert recruiter. Compare each applicant to the open position. "
@@ -427,16 +494,22 @@ def _build_system_instructions() -> str:
 
         "The OVERALL rating is computed server-side with three layers:\n"
         "  - If location_match < 4 (location gate): overall = 1, regardless of everything else.\n"
-        "  - TIERED company_domain cap (industry is the dominant gate — even a 9 "
-        "in profession_domain can't override wrong industry):\n"
-        "      company_domain = 1 → overall capped at 2\n"
-        "      company_domain = 2 → overall capped at 3\n"
-        "      company_domain = 3 or 4 → overall capped at 5\n"
-        "      company_domain ≥ 5 → no cap\n"
-        "    Rationale: a senior PM at a healthcare/banking/travel company should not "
-        "score 4+ for a creator-tools role no matter how strong their PM skills are. "
-        "Industry fit is the dominant gate; profession_domain contributes via the "
-        "weighted sum but can't override a low company_domain.\n"
+        "  - TIERED domain caps on BOTH profession_domain AND company_domain "
+        "independently — either can disqualify the candidate. The effective cap "
+        "is the LOWER of the two:\n"
+        "      axis_value = 1   → overall capped at 2\n"
+        "      axis_value = 2   → overall capped at 3\n"
+        "      axis_value = 3-4 → overall capped at 5\n"
+        "      axis_value ≥ 5   → that axis imposes no cap\n"
+        "    Examples:\n"
+        "      - prof=9, comp=2 → comp gates at 3 (right role, wrong industry — "
+        "banker doing AE at a podcasting shop)\n"
+        "      - prof=2, comp=8 → prof gates at 3 (wrong role, right industry — "
+        "'no sales experience at all' at a creator-tools company)\n"
+        "      - prof=8, comp=8 → no cap, weighted sum stands\n"
+        "    Rationale: both 'wrong role' and 'wrong industry' are disqualifying. "
+        "A candidate with 'no sales experience' should NOT score 6 just because "
+        "they happen to work at an in-industry company.\n"
         "  - Otherwise: weighted sum of the FIVE slider dimensions (profession_domain, "
         "company_domain, company_tier, career_progression, university_tier) using recruiter-set "
         "per-position weights summing to 100. Default weights are profession 23 / company-domain 13 / "
@@ -460,7 +533,9 @@ def _build_system_instructions() -> str:
         "  4-10      → top 50%   (so the median candidate lands at a 4)\n"
         "  1-3       → bottom 50% (location mismatches, wrong domain, agency-only, etc.)\n\n"
 
-        "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
+        + overlay  # class-specific overlay prepended above the general rule
+
+        + "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
         "We hire for a CREATOR-TOOLS / B2C SaaS company (Riverside.fm — podcasting, "
         "video, content creation, SaaS for creators). For ANY role at this company, "
         "candidates from these industries are domain-RELEVANT (good fit):\n"
@@ -718,16 +793,22 @@ def _single_pass(
 
         "The OVERALL rating is computed server-side with three layers:\n"
         "  - If location_match < 4 (location gate): overall = 1, regardless of everything else.\n"
-        "  - TIERED company_domain cap (industry is the dominant gate — even a 9 "
-        "in profession_domain can't override wrong industry):\n"
-        "      company_domain = 1 → overall capped at 2\n"
-        "      company_domain = 2 → overall capped at 3\n"
-        "      company_domain = 3 or 4 → overall capped at 5\n"
-        "      company_domain ≥ 5 → no cap\n"
-        "    Rationale: a senior PM at a healthcare/banking/travel company should not "
-        "score 4+ for a creator-tools role no matter how strong their PM skills are. "
-        "Industry fit is the dominant gate; profession_domain contributes via the "
-        "weighted sum but can't override a low company_domain.\n"
+        "  - TIERED domain caps on BOTH profession_domain AND company_domain "
+        "independently — either can disqualify the candidate. The effective cap "
+        "is the LOWER of the two:\n"
+        "      axis_value = 1   → overall capped at 2\n"
+        "      axis_value = 2   → overall capped at 3\n"
+        "      axis_value = 3-4 → overall capped at 5\n"
+        "      axis_value ≥ 5   → that axis imposes no cap\n"
+        "    Examples:\n"
+        "      - prof=9, comp=2 → comp gates at 3 (right role, wrong industry — "
+        "banker doing AE at a podcasting shop)\n"
+        "      - prof=2, comp=8 → prof gates at 3 (wrong role, right industry — "
+        "'no sales experience at all' at a creator-tools company)\n"
+        "      - prof=8, comp=8 → no cap, weighted sum stands\n"
+        "    Rationale: both 'wrong role' and 'wrong industry' are disqualifying. "
+        "A candidate with 'no sales experience' should NOT score 6 just because "
+        "they happen to work at an in-industry company.\n"
         "  - Otherwise: weighted sum of the FIVE slider dimensions (profession_domain, "
         "company_domain, company_tier, career_progression, university_tier) using recruiter-set "
         "per-position weights summing to 100. Default weights are profession 23 / company-domain 13 / "
@@ -751,7 +832,9 @@ def _single_pass(
         "  4-10      → top 50%   (so the median candidate lands at a 4)\n"
         "  1-3       → bottom 50% (location mismatches, wrong domain, agency-only, etc.)\n\n"
 
-        "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
+        + overlay  # class-specific overlay prepended above the general rule
+
+        + "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
         "We hire for a CREATOR-TOOLS / B2C SaaS company (Riverside.fm — podcasting, "
         "video, content creation, SaaS for creators). For ANY role at this company, "
         "candidates from these industries are domain-RELEVANT (good fit):\n"
@@ -909,10 +992,16 @@ def _single_pass(
     # Subsequent calls reuse the cache at ~10% the cost of the initial write,
     # and the cache is keyed by exact content match so any deploy with
     # changed instructions naturally busts and re-warms the cache.
+    # Pass the position's class_id so the system prompt can include any
+    # role-specific DOMAIN ADJACENCY overlay (Account Executive → SaaS-sales
+    # criteria, BDR → outbound lead-gen criteria, others → default
+    # creator-tools framing). Cached per class via lru_cache(maxsize=16),
+    # so each class only builds once per process; Anthropic prompt cache
+    # then keys on the exact string content.
     system_blocks = [
         {
             "type": "text",
-            "text": _build_system_instructions(),
+            "text": _build_system_instructions(inputs.class_id or ""),
             "cache_control": {"type": "ephemeral"},
         },
     ]

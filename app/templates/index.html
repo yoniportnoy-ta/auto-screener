@@ -2030,14 +2030,34 @@
 
     function renderDimensionBreakdown(c) {
       const dims = c.dimensions || {};
-      const present = DIM_ORDER_FE.filter((k) => dims[k] != null);
-      if (!present.length) return "";  // legacy row, no breakdown to show
+      // Suppress deprecated axes from the display:
+      //  - achievements: fully deprecated, never useful to surface.
+      //  - domain_match: superseded by profession_domain + company_domain.
+      //    Hide whenever the row has either new domain axis. Otherwise (a
+      //    pre-split row), keep it but rename to plain "Domain match" so the
+      //    user isn't distracted by "(legacy)" tags on the old algorithm.
+      const hasNewDomainAxes =
+        dims.profession_domain != null || dims.company_domain != null;
+      const filtered = DIM_ORDER_FE.filter((k) => {
+        if (dims[k] == null) return false;
+        if (k === "achievements") return false;                 // always hide
+        if (k === "domain_match" && hasNewDomainAxes) return false;  // hide when superseded
+        return true;
+      });
+      // For pre-split rows that fall back to showing domain_match, drop the
+      // "(legacy)" suffix so it looks like a normal dimension.
+      const labelFor = (k) =>
+        k === "domain_match" && !hasNewDomainAxes
+          ? "Domain match"
+          : (DIM_LABELS_FE[k] || k);
+      const present = filtered;
+      if (!present.length) return "";  // truly empty row, no breakdown to show
       const rows = present.map((k) => {
         const v = dims[k];
         const band = v >= 7 ? "dim-high" : v >= 4 ? "dim-mid" : "dim-low";
         return `
           <div class="cal-dim-row">
-            <span class="name">${escapeHtml(DIM_LABELS_FE[k] || k)}</span>
+            <span class="name">${escapeHtml(labelFor(k))}</span>
             <span class="score ${band}">${v}/10</span>
           </div>
         `;
