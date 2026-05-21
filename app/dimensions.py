@@ -153,14 +153,24 @@ DIMENSION_DESCRIPTIONS: dict[str, str] = {
     ),
 }
 
-# Defaults for the five sliders, summing to 100. Profession-domain leads
-# (most disqualifying axis); company-tier follows; company-domain captures
-# industry adjacency; progression captures trajectory; university is the
-# weakest stand-alone signal.
+# Defaults for the five sliders, summing to 100. Iteration history:
+#   v1 (pre-2026-05-21): profession 23 / comp-domain 13 / comp-tier 27 /
+#       progression 20 / university 17.
+#   v2 (current): industry fit (company_domain) raised 13→20 because the
+#       AE benchmark showed company_tier was over-weighted relative to
+#       industry fit — candidates from wrong-industry tier-1 companies
+#       (banks, healthcare unicorns) were scoring too high. Took the 7
+#       points from company_tier (27→20). Symmetric weights now express
+#       "what matters is BOTH right industry AND right job, with neither
+#       overpowering the other."
+#
+# Profession-domain still leads slightly (most disqualifying axis).
+# Tier and progression are balanced around 20 each. University remains
+# the weakest stand-alone signal.
 DEFAULT_WEIGHTS: dict[str, int] = {
     "profession_domain": 23,
-    "company_domain": 13,
-    "company_tier": 27,
+    "company_domain": 20,
+    "company_tier": 20,
     "career_progression": 20,
     "university_tier": 17,
 }
