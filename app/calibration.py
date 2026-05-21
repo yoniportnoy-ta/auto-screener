@@ -240,6 +240,82 @@ def rating_to_verdict(rating: int | None) -> Verdict | None:
     return "up"
 
 
+def _mirror_verdict_to_feedback(
+    *,
+    recruiter_name: str,
+    position_uid: str,
+    candidate_uid: str,
+    ai_rating: int | None,
+    recruiter_rating: int,
+    note: str = "",
+) -> None:
+    """Mirror a calibration verdict into the legacy `feedback` table.
+
+    Purpose: the learned_rubric pipeline reads exclusively from `feedback`,
+    so without this mirror, calibration verdicts never feed rubric synthesis
+    (recruiter rates 25 candidates → feedback_count_for_class returns 0 →
+    rubric stays empty for that class).
+
+    Looks up the position's class assignment + candidate name from existing
+    tables. If the position has no class yet (rare — happens for positions
+    rated before class assignment) we skip the mirror; the rubric system
+    needs a class_id anyway, so a class-less feedback row would never be
+    used.
+
+    Best-effort by design: catches and logs all exceptions so a feedback
+    write failure does NOT break the primary verdict write.
+    """
+    try:
+        from .feedback import save_feedback
+        from .models import PositionClass, DebugScoring
+        from sqlalchemy import select, desc
+
+        with db_session() as ses:
+            cls_row = ses.scalar(
+                select(PositionClass).where(PositionClass.position_uid == position_uid)
+            )
+            if not cls_row or not cls_row.class_id:
+                log.debug(
+                    "mirror_verdict: position %s has no class assigned, skipping",
+                    position_uid,
+                )
+                return
+            class_id = cls_row.class_id
+            class_name = cls_row.class_name or class_id
+
+            # Pull candidate_name + position_name from the most recent
+            # debug_scoring row for this candidate/position pair (if any).
+            ds_row = ses.scalar(
+                select(DebugScoring)
+                .where(
+                    (DebugScoring.candidate_uid == candidate_uid)
+                    & (DebugScoring.position_uid == position_uid)
+                )
+                .order_by(desc(DebugScoring.timestamp))
+                .limit(1)
+            )
+            candidate_name = (ds_row.candidate_name if ds_row else "") or ""
+            position_name = (ds_row.position_name if ds_row else "") or ""
+
+        save_feedback(
+            class_id=class_id,
+            class_name=class_name,
+            position_uid=position_uid,
+            position_name=position_name,
+            candidate_uid=candidate_uid,
+            candidate_name=candidate_name,
+            ai_rating=ai_rating,
+            recruiter_rating=recruiter_rating,
+            note=note,
+            recruiter_email=recruiter_name,  # we don't track emails separately yet
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "mirror_verdict_to_feedback failed for candidate=%s position=%s: %s",
+            candidate_uid, position_uid, exc,
+        )
+
+
 def record_verdict(
     recruiter_name: str,
     position_uid: str,
@@ -303,6 +379,23 @@ def record_verdict(
             recruiter_rating=cleaned_rating,
         ))
         ses.commit()
+
+    # Dual-write to the `feedback` table so the learned_rubric pipeline
+    # (which currently only reads from `feedback`) can synthesise rubrics
+    # from calibration verdicts. Without this, every calibration verdict
+    # is invisible to rubric generation — recruiter rates 25 candidates,
+    # rubric_count_for_class still returns 0, and the learned_rubric never
+    # gets built for that class. Best-effort: failures are logged but
+    # don't break the verdict save.
+    if cleaned_rating is not None:
+        _mirror_verdict_to_feedback(
+            recruiter_name=recruiter_name,
+            position_uid=position_uid,
+            candidate_uid=candidate_uid,
+            ai_rating=ai_rating,
+            recruiter_rating=cleaned_rating,
+            note=cleaned_text or "",
+        )
 
     new_threshold = _recompute_threshold(recruiter_name, position_uid)
     agreement = get_agreement(recruiter_name, position_uid)

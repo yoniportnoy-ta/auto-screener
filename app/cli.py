@@ -425,6 +425,111 @@ async def cmd_reset_thresholds(position_uid: str | None = None) -> int:
     return 0
 
 
+async def cmd_backfill_feedback() -> int:
+    """One-shot: copy every calibration_verdict that has a recruiter_rating
+    into the `feedback` table. The learned_rubric pipeline reads from
+    `feedback`, not `calibration_verdicts`, so any verdicts recorded before
+    the dual-write fix in record_verdict are invisible to rubric synthesis.
+
+    Idempotent: skips verdicts whose (candidate_uid, position_uid) already
+    have a feedback row.
+
+    Usage:
+        python -m app.cli backfill-feedback
+
+    Typical workflow:
+      1. backfill-feedback
+      2. refresh-rubrics
+      3. rescore-all <position_uid>
+      4. benchmark <position_uid>
+    """
+    from sqlalchemy import select, desc
+    from .db import db_session
+    from .feedback import save_feedback
+    from .models import (
+        CalibrationVerdict, PositionClass, DebugScoring, Feedback,
+    )
+
+    inserted = 0
+    skipped_dup = 0
+    skipped_no_class = 0
+    skipped_no_rating = 0
+    errors = 0
+
+    with db_session() as ses:
+        verdicts = ses.scalars(
+            select(CalibrationVerdict)
+            .where(CalibrationVerdict.recruiter_rating.is_not(None))
+            .order_by(CalibrationVerdict.created_at)
+        ).all()
+
+    log.info("backfill-feedback: found %d calibration verdicts with ratings", len(verdicts))
+
+    for v in verdicts:
+        try:
+            with db_session() as ses:
+                # Skip if a feedback row already exists for this candidate
+                # in this position (idempotency).
+                existing = ses.scalar(
+                    select(Feedback).where(
+                        (Feedback.candidate_uid == v.candidate_uid)
+                        & (Feedback.position_uid == v.position_uid)
+                    ).limit(1)
+                )
+                if existing:
+                    skipped_dup += 1
+                    continue
+
+                cls_row = ses.scalar(
+                    select(PositionClass).where(
+                        PositionClass.position_uid == v.position_uid
+                    )
+                )
+                if not cls_row or not cls_row.class_id:
+                    skipped_no_class += 1
+                    continue
+
+                ds_row = ses.scalar(
+                    select(DebugScoring)
+                    .where(
+                        (DebugScoring.candidate_uid == v.candidate_uid)
+                        & (DebugScoring.position_uid == v.position_uid)
+                    )
+                    .order_by(desc(DebugScoring.timestamp))
+                    .limit(1)
+                )
+                candidate_name = (ds_row.candidate_name if ds_row else "") or ""
+                position_name = (ds_row.position_name if ds_row else "") or ""
+
+            save_feedback(
+                class_id=cls_row.class_id,
+                class_name=cls_row.class_name or cls_row.class_id,
+                position_uid=v.position_uid,
+                position_name=position_name,
+                candidate_uid=v.candidate_uid,
+                candidate_name=candidate_name,
+                ai_rating=v.ai_rating,
+                recruiter_rating=v.recruiter_rating,
+                note=(v.feedback_text or "").strip(),
+                recruiter_email=v.recruiter_name or "",
+            )
+            inserted += 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "backfill-feedback: failed on verdict id=%s candidate=%s: %s",
+                v.id, v.candidate_uid, exc,
+            )
+            errors += 1
+
+    log.info(
+        "backfill-feedback done: inserted=%d skipped_dup=%d "
+        "skipped_no_class=%d skipped_no_rating=%d errors=%d",
+        inserted, skipped_dup, skipped_no_class, skipped_no_rating, errors,
+    )
+    log.info("next: 'refresh-rubrics' then 'rescore-all <position>'")
+    return 0
+
+
 async def cmd_reset_rubric(position_uid: str | None = None) -> int:
     """Wipe learned_rubrics + recruiter_thresholds, keeping verdicts intact.
 
@@ -683,6 +788,7 @@ COMMANDS = {
     "clear-score-locks": cmd_clear_score_locks,
     "reset-thresholds": cmd_reset_thresholds,
     "reset-rubric": cmd_reset_rubric,
+    "backfill-feedback": cmd_backfill_feedback,
     "reset-for-launch": cmd_reset_for_launch,
     "rescore-all": cmd_rescore_all,
     "reset-and-rescore": cmd_reset_and_rescore,
