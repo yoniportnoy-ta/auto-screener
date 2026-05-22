@@ -465,11 +465,24 @@ async def cmd_backfill_feedback() -> int:
 
     log.info("backfill-feedback: found %d calibration verdicts with ratings", len(verdicts))
 
+    backfilled_axes = 0  # rows where we copied broken_axes onto an existing feedback row
+
     for v in verdicts:
         try:
+            # Normalise the verdict's broken_axes once; reused below.
+            v_axes = None
+            raw_axes = getattr(v, "broken_axes_json", None)
+            if isinstance(raw_axes, list) and raw_axes:
+                v_axes = [str(a) for a in raw_axes if a]
+
             with db_session() as ses:
                 # Skip if a feedback row already exists for this candidate
-                # in this position (idempotency).
+                # in this position (idempotency). EXCEPT: if the existing row
+                # has no broken_axes and the verdict has them, top them up.
+                # This recovers per-axis signal for rows backfilled before
+                # the broken_axes column existed (i.e. before migration
+                # 0012). Without this, every rerun would no-op on
+                # the rows we care about.
                 existing = ses.scalar(
                     select(Feedback).where(
                         (Feedback.candidate_uid == v.candidate_uid)
@@ -477,6 +490,10 @@ async def cmd_backfill_feedback() -> int:
                     ).limit(1)
                 )
                 if existing:
+                    if v_axes and not (existing.broken_axes_json or []):
+                        existing.broken_axes_json = v_axes
+                        ses.commit()
+                        backfilled_axes += 1
                     skipped_dup += 1
                     continue
 
@@ -512,6 +529,7 @@ async def cmd_backfill_feedback() -> int:
                 recruiter_rating=v.recruiter_rating,
                 note=(v.feedback_text or "").strip(),
                 recruiter_email=v.recruiter_name or "",
+                broken_axes=v_axes,
             )
             inserted += 1
         except Exception as exc:  # noqa: BLE001
@@ -523,8 +541,10 @@ async def cmd_backfill_feedback() -> int:
 
     log.info(
         "backfill-feedback done: inserted=%d skipped_dup=%d "
-        "skipped_no_class=%d skipped_no_rating=%d errors=%d",
+        "skipped_no_class=%d skipped_no_rating=%d errors=%d "
+        "broken_axes_topped_up=%d",
         inserted, skipped_dup, skipped_no_class, skipped_no_rating, errors,
+        backfilled_axes,
     )
     log.info("next: 'refresh-rubrics' then 'rescore-all <position>'")
     return 0
