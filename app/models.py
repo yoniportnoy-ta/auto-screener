@@ -128,8 +128,19 @@ class Feedback(Base):
     broken_axes_json: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
     __table_args__ = (
-        CheckConstraint("ai_rating BETWEEN 1 AND 5", name="ck_feedback_ai_rating_range"),
-        CheckConstraint("recruiter_rating BETWEEN 1 AND 5", name="ck_feedback_rec_rating_range"),
+        # Range bumped from 1-5 → 1-10 in migration 0013_feedback_rating_range.
+        # Calibration UI has emitted 1-10 since task #97 (May 2026); the
+        # original 1-5 bound was silently rejecting every dual-write from
+        # `_mirror_verdict_to_feedback` for ~2 weeks. Keep this aligned with
+        # migration 0013 — if you tighten/loosen, write a new migration.
+        CheckConstraint(
+            "ai_rating IS NULL OR (ai_rating >= 1 AND ai_rating <= 10)",
+            name="ck_feedback_ai_rating_range",
+        ),
+        CheckConstraint(
+            "recruiter_rating IS NULL OR (recruiter_rating >= 1 AND recruiter_rating <= 10)",
+            name="ck_feedback_rec_rating_range",
+        ),
     )
 
 
