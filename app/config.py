@@ -47,7 +47,15 @@ class Settings(BaseSettings):
 
     # ─── Anthropic ───────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
-    claude_model: str = "claude-sonnet-4-20250514"
+    # Primary model used for per-candidate scoring + enrichment. Haiku 4.5
+    # is ~10x cheaper than Sonnet and faster; the 5-axis judgement task
+    # doesn't need Sonnet's headroom for normal candidates.
+    claude_model: str = "claude-haiku-4-5-20251001"
+    # Optional override for rubric synthesis (which benefits from stronger
+    # reasoning since it's analysing patterns across 20+ feedback rows).
+    # When empty, rubric synth uses `claude_model` (Haiku). Set to a Sonnet
+    # variant via env var to upgrade just the rubric path.
+    claude_rubric_model: str = ""
 
     # ─── Scoring tuning ──────────────────────────────────────────────────────
     scoring_use_v2: bool = True

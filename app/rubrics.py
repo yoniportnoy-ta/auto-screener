@@ -412,12 +412,18 @@ def _synthesise_rubric_text(
     )
 
     client = Anthropic(api_key=settings.anthropic_api_key)
+    # Rubric synth uses the optional `claude_rubric_model` override when set;
+    # otherwise falls back to the same model used for scoring. The intent is
+    # to let an operator pin rubric synth to Sonnet (stronger reasoning on
+    # multi-row pattern extraction) while keeping per-candidate scoring on
+    # Haiku (10x cheaper, fast enough for the 5-axis task).
+    rubric_model = settings.claude_rubric_model or settings.claude_model
     log.info(
-        "rubric: synthesising (%s scope) %s with %d entries",
-        scope_kind, scope_label, len(valid),
+        "rubric: synthesising (%s scope) %s with %d entries using %s",
+        scope_kind, scope_label, len(valid), rubric_model,
     )
     msg = client.messages.create(
-        model=settings.claude_model,
+        model=rubric_model,
         max_tokens=MAX_RUBRIC_TOKENS,
         temperature=0.3,
         system="You synthesise recruiter feedback into actionable scoring rubrics for an AI screener.",
