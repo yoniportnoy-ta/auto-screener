@@ -2050,10 +2050,11 @@
         saveState();
         renderSessionHeader();
         if (silent) {
-          // Skip brief + weights — go straight to blind calibration.
-          state.step = 6;
+          // Skip brief + weights — jump straight to the calibration view
+          // (legacy step 5 = "stepDone" holds the calibration card).
+          state.step = 5;
           saveState();
-          gotoStep(6);
+          gotoStep(5);
           startCalibration();
           return;
         }
@@ -2074,9 +2075,9 @@
           // Class assignment failed in silent mode — fall through to calibration
           // anyway with no class set. The scoring path tolerates empty class_id
           // (no class overlay → falls through to default DOMAIN ADJACENCY).
-          state.step = 6;
+          state.step = 5;
           saveState();
-          gotoStep(6);
+          gotoStep(5);
           startCalibration();
         } else {
           $("classStatus").innerHTML =
@@ -3634,6 +3635,12 @@
       // Render whichever step was last active.
       gotoStep(state.step || 1);
       refreshAdminVisibility();
+      // Kick off the unscreened-counts fetch in the background as early
+      // as possible — by the time the user lands on the position picker
+      // (after picking a recruiter), the Comeet roundtrip is likely
+      // already done. Fire-and-forget; renderPositions() re-renders
+      // automatically when the cache lands.
+      hydrateUnscreenedCounts();
       try {
         await renderRecruiters();
         if (state.step >= 2 && state.recruiter) await renderPositions();
