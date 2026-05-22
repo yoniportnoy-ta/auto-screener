@@ -1876,55 +1876,79 @@
     //     recruiter leads, no count threshold. Used for re-entering a
     //     position you've already calibrated, or for legacy positions
     //     with thin CV pipelines.
+    // In-memory cache of unscreened counts; populated asynchronously by
+    // hydrateUnscreenedCounts() and re-used across re-renders so the
+    // expensive Comeet call only fires once per page load.
+    let _unscreenedCountsCache = null;
+    let _unscreenedCountsPromise = null;
+
+    function hydrateUnscreenedCounts() {
+      // Idempotent — returns the same promise on repeat calls so a
+      // toggle-flip during loading doesn't fire a second Comeet roundtrip.
+      if (_unscreenedCountsPromise) return _unscreenedCountsPromise;
+      _unscreenedCountsPromise = api("/api/positions/unscreened-counts")
+        .then((c) => { _unscreenedCountsCache = c || {}; return _unscreenedCountsCache; })
+        .catch(() => { _unscreenedCountsCache = {}; return _unscreenedCountsCache; });
+      return _unscreenedCountsPromise;
+    }
+
     async function renderPositions() {
       const wrap = $("positionList");
       wrap.innerHTML = '<div class="working"><div class="spinner"></div> Loading positions…</div>';
       const calibMode = state.calibMode !== false;  // default ON
+      let positions;
       try {
-        // Fetch positions + unscreened counts in parallel. The counts
-        // endpoint hits Comeet under the hood; can be slow on cold cache,
-        // so we tolerate it dropping out (positions still render with 0).
-        const [positions, countsRaw] = await Promise.all([
-          loadPositionsOnce(),
-          api("/api/positions/unscreened-counts").catch(() => ({})),
-        ]);
-        const counts = countsRaw || {};
-        let mine = positions.filter((p) => p.leadRecruiter === state.recruiter);
-        // Decorate with unscreened count from the counts map (default 0 when missing).
-        mine.forEach((p) => { p._unscreened = counts[p.uid] ?? 0; });
-        if (calibMode) {
-          mine = mine.filter((p) => p._unscreened >= CALIBRATION_MIN_UNSCREENED);
-          // Sort by count desc when in calibration mode (highest pipeline first)
-          mine.sort((a, b) => (b._unscreened || 0) - (a._unscreened || 0));
-        } else {
-          mine.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-        }
-        // Render the mode toggle above the list so the recruiter can flip.
+        positions = await loadPositionsOnce();
+      } catch (e) {
+        setErr(e.message || String(e));
+        return;
+      }
+      // Render in two passes:
+      //   Pass 1: positions immediately, with "(…)" placeholder for counts.
+      //           Filter+sort uses the cache if it's already warm.
+      //   Pass 2: when counts arrive (or were already cached), patch the
+      //           "(…)" placeholders + re-filter if calibMode is on.
+      // Net: the UI never blocks on the slow Comeet call.
+
+      const counts = _unscreenedCountsCache || {};
+      const haveCounts = !!_unscreenedCountsCache;
+      const COUNT_PENDING = -1;
+      const mine = positions
+        .filter((p) => p.leadRecruiter === state.recruiter)
+        .map((p) => {
+          p._unscreened = haveCounts ? (counts[p.uid] ?? 0) : COUNT_PENDING;
+          return p;
+        });
+
+      function renderList(items, mode) {
         const toggleHtml =
           '<div class="position-mode-toggle">' +
           '  <label class="cal-mode-label">' +
           '    <input type="checkbox" id="calModeToggle" ' +
-                 (calibMode ? "checked" : "") + ' />' +
+                 (mode ? "checked" : "") + ' />' +
           '    <span>Calibration mode</span>' +
           '    <span class="cal-mode-hint">(only positions with ' +
                  CALIBRATION_MIN_UNSCREENED + '+ CVs to screen)</span>' +
           '  </label>' +
           '</div>';
-        if (!mine.length) {
+        if (!items.length) {
           wrap.innerHTML = toggleHtml +
             '<div class="hint">' +
-            (calibMode
-              ? "No positions for " + escapeHtml(state.recruiter) +
-                " have " + CALIBRATION_MIN_UNSCREENED + "+ unscreened CVs right now. " +
-                "Uncheck calibration mode to see all positions."
+            (mode
+              ? (haveCounts
+                ? "No positions for " + escapeHtml(state.recruiter) +
+                  " have " + CALIBRATION_MIN_UNSCREENED + "+ unscreened CVs right now. " +
+                  "Uncheck calibration mode to see all positions."
+                : '<span class="spinner-inline"></span> Loading counts…')
               : "No open positions for " + escapeHtml(state.recruiter) + ".") +
             '</div>';
         } else {
           let inner = toggleHtml;
-          mine.forEach((p) => {
-            const countSuffix = p._unscreened >= 0
-              ? ' <span class="pos-count">(' + p._unscreened + ')</span>'
-              : "";
+          items.forEach((p) => {
+            const countSuffix =
+              p._unscreened === COUNT_PENDING
+                ? ' <span class="pos-count pos-count-loading">(…)</span>'
+                : ' <span class="pos-count">(' + p._unscreened + ')</span>';
             inner +=
               '<button class="position-card" type="button" data-uid="' +
               escapeHtml(p.uid) + '" data-name="' + escapeHtml(p.name || p.uid) + '">' +
@@ -1939,25 +1963,17 @@
               const name = card.dataset.name;
               state.positionUid = uid;
               state.positionName = name;
-              // Picking a new position invalidates the class + brief.
               state.classId = "";
               state.className = "";
               state.brief = "";
-              // Persist the mode so reloads keep the recruiter's choice.
-              state.calibMode = calibMode;
+              state.calibMode = mode;
               saveState();
               renderSessionHeader();
               gotoStep(3);
-              // In calibration mode the auto-class runs silently and we
-              // jump straight to the blind calibration screen — no brief
-              // step, no weights tuning, no class confirmation.
-              doAutoClass({ silent: calibMode });
-              // Kick off background pre-scoring so the calibration queue is
-              // likely pre-warmed by the time the recruiter starts rating.
+              doAutoClass({ silent: mode });
               kickPrewarm(uid);
             });
           });
-          // Wire the toggle to re-render with the new mode.
           const tog = $("calModeToggle");
           if (tog) {
             tog.addEventListener("change", () => {
@@ -1967,8 +1983,29 @@
             });
           }
         }
-      } catch (e) {
-        setErr(e.message || String(e));
+      }
+
+      // Pass 1: render now. If counts already cached, filter+sort properly.
+      // If not, show ALL recruiter's positions with "(…)" so they're not staring at a blank page.
+      let visible;
+      if (haveCounts && calibMode) {
+        visible = mine
+          .filter((p) => p._unscreened >= CALIBRATION_MIN_UNSCREENED)
+          .sort((a, b) => (b._unscreened || 0) - (a._unscreened || 0));
+      } else {
+        visible = mine.slice().sort((a, b) =>
+          (a.name || "").localeCompare(b.name || ""));
+      }
+      renderList(visible, calibMode);
+
+      // Pass 2: when counts arrive (if they weren't already), re-render
+      // so the filter + sort apply correctly.
+      if (!haveCounts) {
+        hydrateUnscreenedCounts().then(() => {
+          // Only re-render if we're still on this step — recruiter may
+          // have navigated away during the wait.
+          if (state.step === 2) renderPositions();
+        });
       }
     }
 
