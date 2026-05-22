@@ -799,12 +799,15 @@ async def cmd_backfill_tags(position_uid: str | None = None) -> int:
 
 
 async def cmd_reset_debug_scoring(position_uid: str | None = None) -> int:
-    """Wipe ALL debug_scoring rows globally. Preserves rubrics + feedback +
-    verdicts + thresholds + position classes + geo overlays.
+    """Wipe ALL debug_scoring rows AND all score_done locks globally.
+    Preserves rubrics + feedback + verdicts + thresholds + position classes
+    + geo overlays.
 
-    Used once before launching the new calibration framework so every
-    position starts with a fresh baseline of AI scores against the
-    deployed prompt + 3-layer rubric stack.
+    The score_done lock wipe was added 2026-05-22 after a trial revealed
+    that wiping debug_scoring alone leaves the scan flow's lock layer
+    pointing at the now-deleted scoring history → every candidate is
+    skipped as "already scored" on the next scan. Two-stage reset keeps
+    that gotcha invisible.
 
     No `position_uid` arg — this is a global reset by design. Pass
     nothing.
@@ -813,7 +816,7 @@ async def cmd_reset_debug_scoring(position_uid: str | None = None) -> int:
         python -m app.cli reset-debug-scoring
     """
     from .db import db_session
-    from .models import DebugScoring
+    from .models import CandidateLock, DebugScoring
 
     if position_uid:
         log.warning(
@@ -824,13 +827,29 @@ async def cmd_reset_debug_scoring(position_uid: str | None = None) -> int:
         )
 
     with db_session() as ses:
-        before = ses.query(DebugScoring).count()
+        ds_before = ses.query(DebugScoring).count()
         ses.query(DebugScoring).delete()
+        # Wipe score_done locks so the scan flow re-queues every candidate
+        # under the new prompts. Note/last-review locks are preserved —
+        # those track recruiter-facing state, not AI-scored state.
+        locks_before = (
+            ses.query(CandidateLock)
+            .filter(CandidateLock.key.like("score_done:%"))
+            .count()
+        )
+        ses.query(CandidateLock).filter(
+            CandidateLock.key.like("score_done:%")
+        ).delete(synchronize_session=False)
         ses.commit()
-    log.info("reset-debug-scoring done: deleted %d rows", before)
+    log.info(
+        "reset-debug-scoring done: deleted %d debug_scoring rows + %d "
+        "score_done locks",
+        ds_before, locks_before,
+    )
     log.info(
         "next: 'rescore-all <position_uid>' on each position you want "
-        "scored under the new framework."
+        "scored under the new framework, OR let the calibration UI's "
+        "lazy-fill score candidates on demand as the recruiter opens batches."
     )
     return 0
 

@@ -356,6 +356,50 @@ class PositionRescoreBody(BaseModel):
     position_uid: str = Field(min_length=1)
 
 
+@router.post("/position/clear-locks")
+def position_clear_locks(body: PositionRescoreBody) -> dict[str, Any]:
+    """Clear `score_done` locks for every candidate currently in this
+    position's Comeet pipeline.
+
+    The locks live in `candidate_locks` and persist across debug_scoring
+    wipes — so after a global `reset-debug-scoring` the scan flow still
+    treats those candidates as "already scored" and skips them. This
+    endpoint fixes that: pulls the current candidate list from Comeet
+    and DELETEs the matching `score_done:<uid>` rows.
+
+    Mirrors `python -m app.cli clear-score-locks <position_uid>` from
+    cli.py. Exists as an HTTP route so the operator can trigger it
+    without a working shell.
+    """
+    from sqlalchemy import delete
+    from ..comeet_client import ComeetClient
+    from ..db import db_session
+    from ..models import CandidateLock
+
+    pos_uid = body.position_uid.strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+    try:
+        with ComeetClient() as client:
+            candidates = client.list_candidates_for_position(pos_uid)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Comeet API failed: {exc}")
+    uids = {str(c.get("uid")) for c in candidates if c.get("uid")}
+    if not uids:
+        return {"ok": True, "deletedLocks": 0, "candidateCount": 0}
+    keys = [f"score_done:{u}" for u in uids]
+    with db_session() as ses:
+        deleted = ses.execute(
+            delete(CandidateLock).where(CandidateLock.key.in_(keys))
+        ).rowcount or 0
+    return {
+        "ok": True,
+        "positionUid": pos_uid,
+        "deletedLocks": int(deleted),
+        "candidateCount": len(uids),
+    }
+
+
 @router.post("/position/rescore-all")
 def position_rescore_all(body: PositionRescoreBody) -> dict[str, Any]:
     """Re-score every previously-scored candidate for this position who is
