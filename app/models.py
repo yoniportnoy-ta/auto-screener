@@ -119,6 +119,13 @@ class Feedback(Base):
     ai_rating: Mapped[int | None] = mapped_column(Integer)
     recruiter_rating: Mapped[int | None] = mapped_column(Integer)  # = "Verdict" in sheets
     note: Mapped[str | None] = mapped_column(Text)
+    # Per-axis disagreement tags. Populated only when the recruiter↔AI
+    # delta is large enough (|recruiter - ai| >= 1.5) and the recruiter
+    # selected one or more broken axes in the follow-up modal. Empty list
+    # means "AI got every axis right" or the delta was below threshold.
+    # Used by the rubric synth to weight per-axis anchors more strongly
+    # for the axes the recruiter explicitly flagged as wrong.
+    broken_axes_json: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
     __table_args__ = (
         CheckConstraint("ai_rating BETWEEN 1 AND 5", name="ck_feedback_ai_rating_range"),
@@ -321,6 +328,10 @@ class CalibrationVerdict(Base):
     # bucket is still computed from this (1-3=down, 4-6=question, 7-10=up)
     # for backwards compatibility with the existing threshold logic.
     recruiter_rating: Mapped[int | None] = mapped_column(Integer)
+    # Per-axis disagreement tags. Same shape + semantics as Feedback.broken_axes_json
+    # — captured here at verdict time so the calibration log preserves which
+    # axes the recruiter flagged, even if the Feedback mirror fails.
+    broken_axes_json: Mapped[list[str] | None] = mapped_column(JSON, default=None)
 
     __table_args__ = (
         CheckConstraint(

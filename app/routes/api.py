@@ -1271,6 +1271,19 @@ def calibration_queue(
     }
 
 
+# Canonical set of axis ids the broken-axes follow-up can flag. Anything
+# outside this set is dropped on the floor at the API layer — we never
+# trust client-side strings into the rubric pipeline. Keep this in sync
+# with DIM_ORDER_FE in index.html and the keys in dimensions.py weights.
+_VALID_BROKEN_AXES = frozenset({
+    "profession_domain",
+    "company_domain",
+    "company_tier",
+    "career_progression",
+    "university_tier",
+})
+
+
 class CalibrationVerdictBody(BaseModel):
     recruiter: str = Field(min_length=1, max_length=200)
     position_uid: str = Field(min_length=1)
@@ -1285,6 +1298,11 @@ class CalibrationVerdictBody(BaseModel):
     # Precise 1-10 ground-truth from the recruiter. Optional for backward
     # compatibility but the calibration UI now always sends it.
     recruiter_rating: int | None = Field(default=None, ge=1, le=10)
+    # Per-axis disagreement tag from the follow-up modal. Sent only when
+    # |recruiter_rating - ai_rating| >= 1.5 and the recruiter selected
+    # one or more axes. Server-side validated against the canonical axis
+    # set; unknown ids are silently dropped.
+    broken_axes: list[str] | None = Field(default=None, max_length=5)
 
 
 @router.post("/calibration/verdict")
@@ -1294,6 +1312,18 @@ def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
     pos = _resolve_pos(body.position_uid)
     if not pos:
         raise HTTPException(400, "position_uid required")
+    # Sanitise broken_axes: keep only canonical ids, dedup, normalise empty
+    # list → None so the DB stores NULL instead of [] (cleaner for queries).
+    clean_axes: list[str] | None = None
+    if body.broken_axes:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in body.broken_axes:
+            v = (raw or "").strip().lower()
+            if v in _VALID_BROKEN_AXES and v not in seen:
+                seen.add(v)
+                out.append(v)
+        clean_axes = out or None
     result = cal.record_verdict(
         recruiter_name=body.recruiter.strip(),
         position_uid=pos,
@@ -1303,6 +1333,7 @@ def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
         ai_confidence=body.ai_confidence,
         feedback_text=body.feedback_text,
         recruiter_rating=body.recruiter_rating,
+        broken_axes=clean_axes,
     )
     return result
 

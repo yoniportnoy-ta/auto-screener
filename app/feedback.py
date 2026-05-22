@@ -32,6 +32,7 @@ class FeedbackEntry:
     ai_rating: int | None
     recruiter_rating: int | None
     note: str
+    broken_axes: list[str]
 
     @property
     def margin(self) -> int:
@@ -52,8 +53,16 @@ def save_feedback(
     recruiter_rating: int | None,
     note: str = "",
     recruiter_email: str = "",
+    broken_axes: list[str] | None = None,
 ) -> int:
-    """Insert a feedback row. Returns the new row id."""
+    """Insert a feedback row. Returns the new row id.
+
+    `broken_axes` is the optional per-axis disagreement tag from the
+    calibration follow-up modal. Stored verbatim (caller is responsible
+    for sanitising against the canonical axis set). Empty / None means
+    "no per-axis signal" — the rubric pipeline will treat it as a
+    holistic-only verdict.
+    """
     with db_session() as session:
         row = Feedback(
             class_id=class_id,
@@ -66,12 +75,14 @@ def save_feedback(
             recruiter_rating=recruiter_rating,
             note=(note or "").strip()[:2000],
             recruiter_email=(recruiter_email or "").strip()[:200],
+            broken_axes_json=list(broken_axes) if broken_axes else None,
         )
         session.add(row)
         session.flush()
         log.info(
-            "feedback saved id=%s class=%s candidate=%s ai=%s rec=%s",
+            "feedback saved id=%s class=%s candidate=%s ai=%s rec=%s broken=%s",
             row.id, class_id, candidate_uid, ai_rating, recruiter_rating,
+            row.broken_axes_json or "-",
         )
         return row.id
 
@@ -140,6 +151,7 @@ def _to_entry(row: Feedback) -> FeedbackEntry:
         ai_rating=row.ai_rating,
         recruiter_rating=row.recruiter_rating,
         note=row.note or "",
+        broken_axes=list(row.broken_axes_json or []),
     )
 
 

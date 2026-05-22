@@ -21,7 +21,7 @@ from .models import LearnedRubric
 
 log = logging.getLogger(__name__)
 
-MAX_RUBRIC_TOKENS = 900
+MAX_RUBRIC_TOKENS = 1200  # bumped from 900 to fit the new PER-AXIS section
 
 
 def get_learned_rubric_for_class(class_id: str, class_name: str) -> str:
@@ -100,7 +100,14 @@ def _save_rubric(class_id: str, class_name: str, rubric_text: str, feedback_coun
 
 
 def _regenerate_rubric(class_id: str, class_name: str) -> str:
-    """Call Claude to synthesize a rubric from the class's full feedback log."""
+    """Call Claude to synthesize a rubric from the class's full feedback log.
+
+    Recruiters tag specific broken axes on large disagreements (|delta| >= 1.5)
+    via the calibration follow-up modal. We surface both the per-row tags
+    AND a class-level tally so the LLM can anchor per-axis corrections
+    instead of just one global "AI over-rates" pattern. That's the whole
+    point of multi-select axis tagging: targeted rubric updates.
+    """
     rows = list_feedback_for_class(class_id)
     valid = [r for r in rows if r.ai_rating and r.recruiter_rating]
     if len(valid) < settings.learned_rubric_min_samples:
@@ -108,6 +115,31 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
 
     # Largest disagreements first (most informative), then newest.
     valid.sort(key=lambda r: (-r.margin, -r.timestamp.timestamp()))
+
+    # Aggregate per-axis disagreement counts across the whole class — feeds
+    # the "PER-AXIS CALIBRATION" section of the rubric. We count each axis
+    # once per feedback row that flagged it; direction (AI over- vs
+    # under-rated) is inferred from the sign of (recruiter - ai).
+    axis_tally: dict[str, dict[str, int]] = {}
+    for row in valid:
+        axes = getattr(row, "broken_axes", None) or []
+        if not axes:
+            continue
+        # Sign of the global delta tells us whether AI was high or low
+        # on this candidate. We attribute that direction to every tagged
+        # axis (the recruiter said "the AI broke ON these axes" — same
+        # direction as the overall miss).
+        if row.ai_rating is None or row.recruiter_rating is None:
+            continue
+        ai_too_high = row.ai_rating > row.recruiter_rating
+        ai_too_low = row.ai_rating < row.recruiter_rating
+        for ax in axes:
+            slot = axis_tally.setdefault(ax, {"over": 0, "under": 0, "n": 0})
+            slot["n"] += 1
+            if ai_too_high:
+                slot["over"] += 1
+            elif ai_too_low:
+                slot["under"] += 1
 
     feedback_lines: list[str] = []
     for idx, row in enumerate(valid, start=1):
@@ -117,29 +149,57 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
         line += f" — AI: {row.ai_rating} → Recruiter: {row.recruiter_rating}"
         if row.margin >= 2:
             line += f" (BIG MISS, margin {row.margin})"
+        axes = getattr(row, "broken_axes", None) or []
+        if axes:
+            line += f"\n   Recruiter flagged broken axes: {', '.join(axes)}"
         if row.note:
             note = " ".join(row.note.split())[:280]
             line += f'\n   Note: "{note}"'
         feedback_lines.append(line)
+
+    # Build the per-axis tally block. Sorted by frequency desc so the
+    # most-broken axes lead.
+    axis_summary_block = ""
+    if axis_tally:
+        ordered = sorted(axis_tally.items(), key=lambda kv: -kv[1]["n"])
+        lines = []
+        for ax, stats in ordered:
+            direction_parts = []
+            if stats["over"]:
+                direction_parts.append(f"AI over-rated in {stats['over']}")
+            if stats["under"]:
+                direction_parts.append(f"AI under-rated in {stats['under']}")
+            direction = "; ".join(direction_parts) if direction_parts else "mixed"
+            lines.append(f"  - {ax}: flagged in {stats['n']} verdicts ({direction})")
+        axis_summary_block = (
+            "\nPER-AXIS DISAGREEMENT TALLY (recruiter explicitly tagged these axes "
+            "as wrong on large disagreements):\n" + "\n".join(lines) + "\n"
+        )
 
     prompt = (
         f'You are analysing recruiter feedback for the position class "{class_name}" to derive '
         f"a scoring rubric the AI screener should follow.\n\n"
         f"Below are {len(valid)} candidate evaluations: AI gave a rating; the recruiter then "
         "gave their own rating. The recruiter is the ground truth — your job is to synthesise their "
-        "judgement into a rubric the AI can apply on future candidates.\n\n"
-        "Format your output as PROSE under FOUR headings:\n\n"
-        "1) STRONG SIGNAL (4–5 territory): the patterns the recruiter rewards. Be SPECIFIC — quote "
+        "judgement into a rubric the AI can apply on future candidates.\n"
+        + axis_summary_block +
+        "\nFormat your output as PROSE under FIVE headings:\n\n"
+        "1) STRONG SIGNAL (8-10 territory): the patterns the recruiter rewards. Be SPECIFIC — quote "
         'concrete patterns from the notes (e.g. "led migration of monolith to microservices", '
         '"shipped revenue features with measurable lift") not vague platitudes ("strong communication").\n\n'
-        "2) WEAK SIGNAL (1–2 territory): the patterns the recruiter rejects. Again, specific phrases "
+        "2) WEAK SIGNAL (1-3 territory): the patterns the recruiter rejects. Again, specific phrases "
         "from the notes wherever possible.\n\n"
-        "3) BORDERLINE (3 territory): the candidates that lean on judgement — what tips them either way.\n\n"
-        "4) AI BIAS CORRECTIONS: where the AI tends to misjudge (over-rate vs under-rate). Anchor "
-        'each bias to specific examples by name from the feedback. State the correction concretely '
-        '(e.g. "When candidate has X without Y, AI tends to rate 4 but recruiter rates 2 — correct '
+        "3) BORDERLINE (4-6 territory): the candidates that lean on judgement — what tips them either way.\n\n"
+        "4) AI BIAS CORRECTIONS (holistic): where the AI tends to misjudge overall (over-rate vs under-rate). "
+        'Anchor each bias to specific examples by name from the feedback. State the correction concretely '
+        '(e.g. "When candidate has X without Y, AI tends to rate 7 but recruiter rates 4 — correct '
         "this pattern by …\").\n\n"
-        "Maximum 500 words. Plain prose. No JSON, no markdown headings, just the four numbered sections.\n\n"
+        "5) PER-AXIS CALIBRATION: use the PER-AXIS DISAGREEMENT TALLY above. For each axis the "
+        "recruiter flagged, write a SPECIFIC anchor correction. Skip axes that weren't flagged. "
+        'Example: "company_domain — recruiter flagged 18 of 25 verdicts as over-rated. The AI '
+        'counts general-SaaS companies as 7-8 but recruiter caps them at 5-6 unless they\'re creator-tools. '
+        'Anchor: SaaS companies that don\'t make creator/video/audio tools max out at 6 on company_domain."\n\n'
+        "Maximum 700 words. Plain prose. No JSON, no markdown headings, just the five numbered sections.\n\n"
         "FEEDBACK DATA:\n" + "\n".join(feedback_lines)
     )
 

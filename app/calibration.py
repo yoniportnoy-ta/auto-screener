@@ -248,6 +248,7 @@ def _mirror_verdict_to_feedback(
     ai_rating: int | None,
     recruiter_rating: int,
     note: str = "",
+    broken_axes: list[str] | None = None,
 ) -> None:
     """Mirror a calibration verdict into the legacy `feedback` table.
 
@@ -308,6 +309,7 @@ def _mirror_verdict_to_feedback(
             recruiter_rating=recruiter_rating,
             note=note,
             recruiter_email=recruiter_name,  # we don't track emails separately yet
+            broken_axes=broken_axes,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(
@@ -325,6 +327,7 @@ def record_verdict(
     ai_confidence: float | None,
     feedback_text: str | None = None,
     recruiter_rating: int | None = None,
+    broken_axes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a verdict + recompute the recruiter's threshold.
 
@@ -364,6 +367,23 @@ def record_verdict(
     round_num = _current_round_num(recruiter_name, position_uid)
 
     cleaned_text = (feedback_text or "").strip()[:2000] or None
+    # Normalise broken_axes: drop empties, cap at 5 entries (we only have
+    # five axes, anything beyond that is junk). The API layer already
+    # validates against the canonical set, but we belt-and-braces it here
+    # so direct callers (CLI backfill, future internal scripts) can't
+    # poison the rubric with garbage axis ids.
+    clean_axes: list[str] | None = None
+    if broken_axes:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in broken_axes:
+            v = (raw or "").strip().lower()
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+            if len(out) >= 5:
+                break
+        clean_axes = out or None
 
     with db_session() as ses:
         ses.add(CalibrationVerdict(
@@ -377,6 +397,7 @@ def record_verdict(
             round_num=round_num,
             feedback_text=cleaned_text,
             recruiter_rating=cleaned_rating,
+            broken_axes_json=clean_axes,
         ))
         ses.commit()
 
@@ -395,6 +416,7 @@ def record_verdict(
             ai_rating=ai_rating,
             recruiter_rating=cleaned_rating,
             note=cleaned_text or "",
+            broken_axes=clean_axes,
         )
 
     new_threshold = _recompute_threshold(recruiter_name, position_uid)

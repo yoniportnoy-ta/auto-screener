@@ -726,6 +726,121 @@
       cursor: not-allowed;
     }
 
+    /* Broken-axes follow-up overlay. Triggers after the recruiter clicks
+       Next when |recruiter - AI| >= 1.5 — asks them to pin the
+       disagreement on specific axes so the rubric can learn per-axis
+       corrections, not just a global "AI was wrong" delta. */
+    .cal-broken-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 1rem;
+    }
+    .cal-broken-overlay.show {
+      display: flex;
+    }
+    .cal-broken-card {
+      background: var(--panel, #1a1a1a);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem 1.6rem;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+    }
+    .cal-broken-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 0.4rem 0;
+    }
+    .cal-broken-sub {
+      font-size: 0.84rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+      margin-bottom: 1.1rem;
+    }
+    .cal-broken-delta {
+      font-weight: 600;
+      color: var(--warn);
+    }
+    .cal-broken-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      margin-bottom: 1.2rem;
+    }
+    .cal-broken-axis {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0.6rem 0.8rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .cal-broken-axis:hover {
+      border-color: var(--accent);
+    }
+    .cal-broken-axis input[type="checkbox"] {
+      margin: 0;
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+    .cal-broken-axis.checked {
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.08);
+    }
+    .cal-broken-axis-label {
+      flex: 1;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .cal-broken-axis-score {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .cal-broken-actions {
+      display: flex;
+      gap: 0.6rem;
+      justify-content: flex-end;
+    }
+    .cal-broken-btn {
+      padding: 0.7rem 1.1rem;
+      border-radius: 6px;
+      font-size: 0.92rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .cal-broken-btn:hover {
+      border-color: var(--accent);
+    }
+    .cal-broken-btn.primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .cal-broken-btn.primary:hover {
+      filter: brightness(1.08);
+    }
+    .cal-broken-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .cal-fallback-banner {
       padding: 0.7rem 0.9rem;
       background: rgba(251, 191, 36, 0.08);
@@ -1314,6 +1429,35 @@
       <!-- The candidate card itself. Replaced on every navigation. -->
       <div class="cal-card" id="calCard">
         <div class="working"><div class="spinner"></div> Loading next candidate…</div>
+      </div>
+
+      <!-- Broken-axes follow-up. Appears between rating-submit and verdict-save
+           when |recruiter - AI| >= 1.5. Recruiter multi-selects which axes
+           the AI got most wrong; tags flow into the rubric for per-axis
+           corrections. Skipping = "AI got every axis right; the bias is
+           holistic" (still useful signal). -->
+      <div class="cal-broken-overlay" id="calBrokenOverlay" role="dialog" aria-modal="true">
+        <div class="cal-broken-card">
+          <h3 class="cal-broken-title">Which axes did the AI get wrong?</h3>
+          <p class="cal-broken-sub">
+            You rated <strong id="calBrokenRecScore">—</strong>;
+            AI rated <strong id="calBrokenAiScore">—</strong>
+            (<span class="cal-broken-delta" id="calBrokenDelta">—</span>).
+            Tag the specific axes the AI got most wrong — they feed the
+            per-axis rubric correction.
+          </p>
+          <div class="cal-broken-grid" id="calBrokenGrid">
+            <!-- populated dynamically with the candidate's per-dim sub-scores -->
+          </div>
+          <div class="cal-broken-actions">
+            <button class="cal-broken-btn" id="calBrokenSkipBtn" type="button">
+              Skip — bias is holistic
+            </button>
+            <button class="cal-broken-btn primary" id="calBrokenSubmitBtn" type="button">
+              Save with tags
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Round-summary modal: shown after every 5 verdicts -->
@@ -2364,6 +2508,102 @@
       }
     }
 
+    // Threshold for triggering the broken-axes follow-up modal. Picked at
+    // 1.5 (not 2) because the AE-position benchmark showed half the
+    // systematic bias sits in the 1.5-1.9 delta band — going to 2 would
+    // miss it. Trade-off is more popups (~40-50% of ratings) but each
+    // popup is two clicks max so the friction is bounded.
+    const BROKEN_AXES_DELTA_THRESHOLD = 1.5;
+    const BROKEN_AXES_LIST = [
+      { key: "profession_domain",  label: "Profession domain" },
+      { key: "company_domain",     label: "Company domain" },
+      { key: "company_tier",       label: "Company tier" },
+      { key: "career_progression", label: "Career progression" },
+      { key: "university_tier",    label: "University tier" },
+    ];
+
+    // Pop the broken-axes modal and resolve with the user's selection.
+    // Returns Promise<string[]> — the chosen axes (possibly empty if
+    // user clicked Skip).
+    function promptBrokenAxes(c, recruiterRating) {
+      return new Promise((resolve) => {
+        const overlay = $("calBrokenOverlay");
+        const grid = $("calBrokenGrid");
+        const submitBtn = $("calBrokenSubmitBtn");
+        const skipBtn = $("calBrokenSkipBtn");
+        const dims = c.dimensions || {};
+        const ai = c.rating != null ? Number(c.rating) : null;
+        const delta = ai != null ? (recruiterRating - ai) : null;
+
+        // Header context
+        $("calBrokenRecScore").textContent = String(recruiterRating);
+        $("calBrokenAiScore").textContent = ai != null ? String(ai) : "—";
+        $("calBrokenDelta").textContent =
+          delta != null
+            ? (delta > 0 ? "AI under-rated by " + delta : "AI over-rated by " + (-delta))
+            : "—";
+
+        // One row per axis. Show the AI's per-dim score next to each so the
+        // recruiter has a concrete number to react to ("AI scored
+        // company_domain a 9 — that's the broken one").
+        grid.innerHTML = BROKEN_AXES_LIST.map((ax) => {
+          const v = dims[ax.key];
+          const scoreLabel = v != null ? "AI: " + v + "/10" : "—";
+          return (
+            '<label class="cal-broken-axis" data-axis="' + ax.key + '">' +
+              '<input type="checkbox" data-axis="' + ax.key + '" />' +
+              '<span class="cal-broken-axis-label">' + ax.label + '</span>' +
+              '<span class="cal-broken-axis-score">' + scoreLabel + '</span>' +
+            '</label>'
+          );
+        }).join("");
+
+        // Wire checkbox visual + cleanup. We add then remove listeners on
+        // each invocation to avoid leaking handlers across modal opens.
+        const cleanup = [];
+        grid.querySelectorAll(".cal-broken-axis").forEach((row) => {
+          const cb = row.querySelector('input[type="checkbox"]');
+          const onChange = () => {
+            row.classList.toggle("checked", cb.checked);
+          };
+          cb.addEventListener("change", onChange);
+          cleanup.push(() => cb.removeEventListener("change", onChange));
+        });
+
+        function close(axes) {
+          overlay.classList.remove("show");
+          cleanup.forEach((fn) => fn());
+          submitBtn.removeEventListener("click", onSubmit);
+          skipBtn.removeEventListener("click", onSkip);
+          document.removeEventListener("keydown", onKey);
+          resolve(axes);
+        }
+        function onSubmit() {
+          const chosen = Array.from(
+            grid.querySelectorAll('input[type="checkbox"]:checked')
+          ).map((el) => el.dataset.axis);
+          close(chosen);
+        }
+        function onSkip() {
+          close([]);
+        }
+        function onKey(ev) {
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            onSkip();
+          } else if (ev.key === "Enter") {
+            ev.preventDefault();
+            onSubmit();
+          }
+        }
+
+        submitBtn.addEventListener("click", onSubmit);
+        skipBtn.addEventListener("click", onSkip);
+        document.addEventListener("keydown", onKey);
+        overlay.classList.add("show");
+      });
+    }
+
     async function submitVerdict(verdictOrRating) {
       const c = calQueue[calCurrentIdx];
       if (!c) return;
@@ -2387,6 +2627,23 @@
       const nxt = $("calNextBtn");
       if (nxt) nxt.disabled = true;
       if (fbEl) fbEl.disabled = true;
+
+      // When recruiter↔AI delta crosses the threshold, pop the broken-axes
+      // modal BEFORE writing the verdict so we capture per-axis signal in
+      // the same payload. Skipped when no precise rating (legacy thumb
+      // clients) or no AI rating to compare against.
+      let brokenAxes = null;
+      if (recruiterRating != null && c.rating != null) {
+        const delta = Math.abs(recruiterRating - Number(c.rating));
+        if (delta >= BROKEN_AXES_DELTA_THRESHOLD) {
+          try {
+            brokenAxes = await promptBrokenAxes(c, recruiterRating);
+          } catch (_) {
+            brokenAxes = null;  // any failure → fall back to no tags, don't block save
+          }
+        }
+      }
+
       try {
         const res = await api("/api/calibration/verdict", {
           method: "POST",
@@ -2400,6 +2657,7 @@
             ai_confidence: c.confidence,
             feedback_text: feedbackText || null,
             recruiter_rating: recruiterRating,
+            broken_axes: brokenAxes,
           }),
         });
         // Refresh toolbar — show the CURRENT round's agreement (not
