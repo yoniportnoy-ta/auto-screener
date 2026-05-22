@@ -1240,16 +1240,40 @@ def _resolve_pos(uid: str) -> str:
     return uid
 
 
+# Fields that leak the AI's assessment to the recruiter. Stripped from
+# the queue payload when `blind=true` to prevent anchoring bias during
+# rating. The recruiter retrieves them post-submit via /calibration/reveal.
+_AI_REVEAL_FIELDS = (
+    "rating",
+    "confidence",
+    "summary",
+    "strengths",
+    "gaps",
+    "bucket",
+    "dimensions",
+    "locationGateFailed",
+    "domainCapApplied",
+)
+
+
 @router.get("/calibration/queue")
 def calibration_queue(
     recruiter: str,
     position_uid: str,
     n: int = 5,
+    blind: bool = False,
 ) -> dict[str, Any]:
     """Next batch of candidates the recruiter should review.
 
     Filtered to candidates currently bucketed as 👍 by the recruiter's
     threshold, minus anyone they've already verdicted this session.
+
+    `blind=true` strips every AI-derived field from each candidate
+    payload (rating, dims, confidence, bucket, gate flags, summary,
+    strengths, gaps). Used by the new calibration framework where the
+    recruiter rates 1-10 without seeing the AI's score. After they
+    submit, the frontend hits /calibration/reveal to fetch the AI side
+    for comparison + the broken-axes modal.
     """
     from .. import calibration as cal
     recruiter = (recruiter or "").strip()
@@ -1259,9 +1283,18 @@ def calibration_queue(
     if not pos:
         raise HTTPException(400, "position_uid required")
     q = cal.get_calibration_queue(recruiter, pos, n=max(1, min(n, 20)))
+    candidates = q["candidates"]
+    if blind:
+        # Strip in-place — the recruiter must not see any AI-derived
+        # field until they submit their own rating.
+        candidates = [
+            {k: v for k, v in c.items() if k not in _AI_REVEAL_FIELDS}
+            for c in candidates
+        ]
     return {
         "positionUid": pos,
-        "candidates": q["candidates"],
+        "blind": bool(blind),
+        "candidates": candidates,
         "isCalibrated": q["isCalibrated"],
         "totalScored": q.get("totalScored", 0),
         "totalVerdicted": q.get("totalVerdicted", 0),
@@ -1269,6 +1302,85 @@ def calibration_queue(
         "scoredThisCall": q.get("scoredThisCall", 0),
         "state": cal.get_session_state(recruiter, pos),
     }
+
+
+@router.get("/calibration/reveal")
+def calibration_reveal(
+    position_uid: str,
+    candidate_uid: str,
+) -> dict[str, Any]:
+    """Return the AI's assessment for one candidate.
+
+    Called by the frontend AFTER the recruiter submits their 1-10 rating
+    in blind mode, so the calibration card can flip from "blind" to
+    "reveal" and the broken-axes modal can show per-axis dim sub-scores.
+
+    Reads the most recent DebugScoring row for this (candidate, position)
+    pair. Returns 404 when no scoring row exists (shouldn't happen if
+    the candidate came from the calibration queue).
+    """
+    from ..db import db_session
+    from ..models import DebugScoring
+    from sqlalchemy import select, desc
+
+    pos = _resolve_pos(position_uid)
+    cand = (candidate_uid or "").strip()
+    if not (pos and cand):
+        raise HTTPException(400, "position_uid and candidate_uid required")
+
+    with db_session() as ses:
+        row = ses.scalar(
+            select(DebugScoring)
+            .where(
+                (DebugScoring.candidate_uid == cand)
+                & (DebugScoring.position_uid == pos)
+            )
+            .order_by(desc(DebugScoring.timestamp))
+            .limit(1)
+        )
+        if not row:
+            raise HTTPException(404, "no scoring row for this candidate")
+        dims = {
+            "profession_domain": row.dim_profession_domain,
+            "company_domain": row.dim_company_domain,
+            "company_tier": row.dim_company_tier,
+            "career_progression": row.dim_career_progression,
+            "location_match": row.dim_location_match,
+            "university_tier": row.dim_university_tier,
+            "domain_match": row.dim_domain_match,  # legacy
+            "achievements": row.dim_achievements,  # deprecated
+        }
+        return {
+            "candidateUid": cand,
+            "positionUid": pos,
+            "rating": row.final_rating,
+            "confidence": row.confidence,
+            "summary": row.summary or "",
+            "strengths": row.strengths_json or [],
+            "gaps": row.gaps_json or [],
+            "dimensions": dims,
+            "locationGateFailed": (
+                row.dim_location_match is not None
+                and row.dim_location_match < 4
+            ),
+            "domainCapApplied": (
+                # mirror app.calibration._domain_cap_applied logic
+                _domain_cap_applied_signal(row)
+            ),
+        }
+
+
+def _domain_cap_applied_signal(row) -> bool:
+    """Did the soft cap fire on this candidate? Mirrors calibration._domain_cap_applied."""
+    prof = row.dim_profession_domain
+    comp = row.dim_company_domain
+    present = [x for x in (prof, comp) if x is not None]
+    final = row.final_rating or 0
+    if present:
+        avg = sum(present) / len(present)
+        return avg < 5 and final == 5
+    legacy = row.dim_domain_match
+    return legacy is not None and legacy < 5 and final == 5
 
 
 # Canonical set of axis ids the broken-axes follow-up can flag. Anything
@@ -1336,6 +1448,269 @@ def calibration_verdict(body: CalibrationVerdictBody) -> dict[str, Any]:
         broken_axes=clean_axes,
     )
     return result
+
+
+class BatchCompleteBody(BaseModel):
+    recruiter: str = Field(min_length=1, max_length=200)
+    position_uid: str = Field(min_length=1)
+    round_num: int | None = None
+
+
+@router.post("/calibration/batch-complete")
+def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
+    """Fires after every batch of 5 verdicts.
+
+    Triggers position-rubric refresh (when eligible) + computes a per-batch
+    benchmark snapshot the frontend uses for the mini-chart. The snapshot
+    is computed from existing data (CalibrationVerdict rows for this
+    position) so no extra writes — the chart can be re-derived from the
+    raw verdicts at any time.
+
+    Returns:
+      {
+        "rubric": {"refreshed": bool, "source": "position"|"class"|None,
+                   "feedback_count": int, "rubric_length": int},
+        "batches": [
+          {"round": 1, "n": 5, "avg_delta": 1.4, "agreement_pct": 0.6,
+           "per_axis": {"company_tier": 3, ...}},
+          ...
+        ],
+      }
+    """
+    from .. import calibration as cal
+    from ..position_classes import get_position_class
+    from ..rubrics import refresh_position_rubric, POSITION_RUBRIC_MIN_SAMPLES
+    from ..db import db_session
+    from ..models import CalibrationVerdict
+    from sqlalchemy import select
+
+    pos = _resolve_pos(body.position_uid)
+    if not pos:
+        raise HTTPException(400, "position_uid required")
+    recruiter = (body.recruiter or "").strip()
+    if not recruiter:
+        raise HTTPException(400, "recruiter required")
+
+    # ── 1. Refresh position rubric if eligible ──────────────────────────
+    cls = get_position_class(pos)
+    rubric_result: dict[str, Any] = {"refreshed": False, "source": None}
+    if cls and cls.get("classId"):
+        rr = refresh_position_rubric(pos, cls["classId"], cls.get("className") or cls["classId"])
+        if rr.get("ok"):
+            rubric_result = {
+                "refreshed": True,
+                "source": "position",
+                "feedback_count": rr.get("feedback_count", 0),
+                "rubric_length": rr.get("rubric_length", 0),
+            }
+        else:
+            # Position rubric not eligible (< MIN_SAMPLES). The class
+            # rubric is still in play as cold-start fallback.
+            rubric_result = {
+                "refreshed": False,
+                "source": "class",
+                "reason": rr.get("error", ""),
+                "min_samples_needed": POSITION_RUBRIC_MIN_SAMPLES,
+                "feedback_count": rr.get("feedback_count", 0),
+            }
+
+    # ── 2. Compute per-batch benchmark snapshots ────────────────────────
+    # Pull every verdict for this (recruiter, position), bucket by
+    # round_num. For each round compute: count, avg(ai - recruiter),
+    # agreement % (recruiter & AI same side of running threshold), and
+    # per-axis flag counts from broken_axes_json.
+    with db_session() as ses:
+        rows = ses.scalars(
+            select(CalibrationVerdict).where(
+                (CalibrationVerdict.recruiter_name == recruiter)
+                & (CalibrationVerdict.position_uid == pos)
+                & (CalibrationVerdict.recruiter_rating.is_not(None))
+            ).order_by(CalibrationVerdict.created_at)
+        ).all()
+
+    # Running threshold = lowest 👍 the recruiter has clicked so far,
+    # OR the legacy 7+ bucket boundary when nothing has been 👍'd yet.
+    # We back-compute "same side of threshold" per-batch using the
+    # running threshold AT THAT POINT IN TIME — so the agreement curve
+    # reflects how alignment improved as the rubric learned.
+    by_round: dict[int, list] = {}
+    for r in rows:
+        rn = r.round_num or 1
+        by_round.setdefault(rn, []).append(r)
+
+    running_threshold = None  # lowest 👍 rating to date
+    batches = []
+    for rn in sorted(by_round.keys()):
+        bucket = by_round[rn]
+        n = len(bucket)
+        if n == 0:
+            continue
+        # Update running threshold from EARLIER rounds only (this round's
+        # 👍s aren't known yet at the moment we compute its agreement).
+        deltas: list[float] = []
+        agree_n = 0
+        agree_d = 0
+        per_axis: dict[str, int] = {}
+        for v in bucket:
+            if v.ai_rating is not None and v.recruiter_rating is not None:
+                deltas.append(v.ai_rating - v.recruiter_rating)
+            # Agreement = same side of running threshold (when known).
+            if (
+                running_threshold is not None
+                and v.ai_rating is not None
+                and v.recruiter_rating is not None
+            ):
+                ai_pass = v.ai_rating >= running_threshold
+                rec_pass = v.recruiter_rating >= running_threshold
+                agree_d += 1
+                if ai_pass == rec_pass:
+                    agree_n += 1
+            # Per-axis tally
+            ax = v.broken_axes_json
+            if isinstance(ax, list):
+                for a in ax:
+                    per_axis[a] = per_axis.get(a, 0) + 1
+        # Update running threshold AFTER computing this round, so the
+        # next round uses the bar this round established.
+        for v in bucket:
+            if (
+                v.recruiter_rating is not None
+                and v.verdict == "up"
+                and (running_threshold is None or v.recruiter_rating < running_threshold)
+            ):
+                running_threshold = v.recruiter_rating
+        batches.append({
+            "round": rn,
+            "n": n,
+            "avg_delta": (sum(deltas) / len(deltas)) if deltas else None,
+            "agreement_pct": (agree_n / agree_d) if agree_d else None,
+            "agreement_n": agree_d,
+            "per_axis": per_axis,
+            "running_threshold": running_threshold,
+        })
+
+    return {
+        "positionUid": pos,
+        "rubric": rubric_result,
+        "batches": batches,
+        "thresholdAtFinish": running_threshold,
+    }
+
+
+class FinalizeBody(BaseModel):
+    recruiter: str = Field(min_length=1, max_length=200)
+    position_uid: str = Field(min_length=1)
+    chosen_threshold: int | None = Field(default=None, ge=1, le=10)
+
+
+@router.post("/calibration/finalize")
+def calibration_finalize(body: FinalizeBody) -> dict[str, Any]:
+    """Fires after all 25 ratings done. Computes the meta-benchmark.
+
+    If `chosen_threshold` is supplied, also saves it as the
+    RecruiterThreshold.thumbs_up_min_rating for this (recruiter, position),
+    which is what the auto-tagging cron uses to gate Comeet tags.
+
+    Returns the per-batch table (same as batch-complete) plus aggregate
+    stats: total ratings, final bias, agreement under the final threshold,
+    per-axis disagreement totals.
+    """
+    from ..db import db_session
+    from ..models import CalibrationVerdict, RecruiterThreshold
+    from sqlalchemy import select, desc
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    pos = _resolve_pos(body.position_uid)
+    recruiter = (body.recruiter or "").strip()
+    if not (pos and recruiter):
+        raise HTTPException(400, "recruiter and position_uid required")
+
+    # Save the chosen threshold first (if provided), so the agreement
+    # metric below uses it.
+    if body.chosen_threshold is not None:
+        with db_session() as ses:
+            stmt = pg_insert(RecruiterThreshold).values(
+                recruiter_name=recruiter,
+                position_uid=pos,
+                thumbs_up_min_rating=body.chosen_threshold,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["recruiter_name", "position_uid"],
+                set_={"thumbs_up_min_rating": stmt.excluded.thumbs_up_min_rating},
+            )
+            ses.execute(stmt)
+
+    # Pull all verdicts, compute aggregate stats + per-batch curve under
+    # the FINAL threshold.
+    final_threshold = body.chosen_threshold
+    with db_session() as ses:
+        rows = ses.scalars(
+            select(CalibrationVerdict).where(
+                (CalibrationVerdict.recruiter_name == recruiter)
+                & (CalibrationVerdict.position_uid == pos)
+                & (CalibrationVerdict.recruiter_rating.is_not(None))
+            ).order_by(CalibrationVerdict.created_at)
+        ).all()
+        if final_threshold is None:
+            # Fall back to whatever's on file.
+            t_row = ses.scalar(
+                select(RecruiterThreshold).where(
+                    (RecruiterThreshold.recruiter_name == recruiter)
+                    & (RecruiterThreshold.position_uid == pos)
+                )
+            )
+            final_threshold = t_row.thumbs_up_min_rating if t_row else None
+
+    # Per-batch under the FINAL threshold (honest "if we had this rubric +
+    # threshold from the start" metric).
+    by_round: dict[int, list] = {}
+    for r in rows:
+        by_round.setdefault(r.round_num or 1, []).append(r)
+    batches = []
+    total_axis: dict[str, int] = {}
+    deltas_all: list[float] = []
+    agree_n = 0
+    agree_d = 0
+    for rn in sorted(by_round.keys()):
+        bucket = by_round[rn]
+        deltas: list[float] = []
+        b_agree_n = 0
+        b_agree_d = 0
+        per_axis: dict[str, int] = {}
+        for v in bucket:
+            if v.ai_rating is not None and v.recruiter_rating is not None:
+                d = v.ai_rating - v.recruiter_rating
+                deltas.append(d)
+                deltas_all.append(d)
+                if final_threshold is not None:
+                    ai_pass = v.ai_rating >= final_threshold
+                    rec_pass = v.recruiter_rating >= final_threshold
+                    b_agree_d += 1
+                    agree_d += 1
+                    if ai_pass == rec_pass:
+                        b_agree_n += 1
+                        agree_n += 1
+            ax = v.broken_axes_json
+            if isinstance(ax, list):
+                for a in ax:
+                    per_axis[a] = per_axis.get(a, 0) + 1
+                    total_axis[a] = total_axis.get(a, 0) + 1
+        batches.append({
+            "round": rn,
+            "n": len(bucket),
+            "avg_delta": (sum(deltas) / len(deltas)) if deltas else None,
+            "agreement_pct": (b_agree_n / b_agree_d) if b_agree_d else None,
+            "per_axis": per_axis,
+        })
+    return {
+        "positionUid": pos,
+        "totalRatings": len(rows),
+        "finalThreshold": final_threshold,
+        "bias": (sum(deltas_all) / len(deltas_all)) if deltas_all else None,
+        "agreementOverall": (agree_n / agree_d) if agree_d else None,
+        "perAxisTotals": total_axis,
+        "batches": batches,
+    }
 
 
 @router.get("/calibration/state")

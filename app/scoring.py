@@ -25,7 +25,8 @@ from .anchors import format_anchors_for_prompt, get_anchors_for_candidate
 from .config import settings
 from .debug_log import append_debug_log
 from .feedback import list_feedback_for_class
-from .rubrics import get_learned_rubric_for_class
+from .geo_overlays import get_geo_overlay
+from .rubrics import get_rubric_for_position
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ class ScoreInputs:
     process_context: str                   # extra text describing the candidate's history
     resume_pdf_b64: str | None = None      # base64 of the candidate's resume PDF, if available
     resume_url_existed_but_failed: bool = False
+    # Position's location from Comeet (e.g. "Poland", "Tel-Aviv", "BR").
+    # Drives the geo overlay layer of the system prompt. Empty = no overlay.
+    position_location: str = ""
 
 
 # ─── JD criteria extraction (cached) ─────────────────────────────────────────
@@ -181,10 +185,17 @@ def score_candidate(inputs: ScoreInputs) -> ScoreResult:
     ) if inputs.position_uid else ""
     criteria_block = _criteria_block(criteria_json)
 
-    # 2) Learned rubric for the class (cached, count-keyed — auto-busts on new feedback)
-    learned_rubric = (
-        get_learned_rubric_for_class(inputs.class_id, inputs.class_name)
-        if inputs.class_id and inputs.class_name else ""
+    # 2) Three-layer rubric lookup. Tries position-specific rubric first
+    # (synthesised from THIS position's feedback), falls back to the class
+    # rubric (synthesised from all feedback in the class). Returns the
+    # source label so we can log which layer fired.
+    learned_rubric, rubric_source = (
+        get_rubric_for_position(
+            position_uid=inputs.position_uid,
+            class_id=inputs.class_id,
+            class_name=inputs.class_name,
+        )
+        if inputs.class_id and inputs.class_name else ("", "")
     )
 
     # 3) Per-candidate anchors
@@ -381,24 +392,31 @@ _CLASS_DOMAIN_OVERLAY: dict[str, str] = {
 }
 
 
-@lru_cache(maxsize=16)
-def _build_system_instructions(class_id: str = "") -> str:
-    """Assemble the cacheable system prompt once at process start.
+@lru_cache(maxsize=64)
+def _build_system_instructions(class_id: str = "", geo_key: str = "") -> str:
+    """Assemble the cacheable system prompt for a (class, geo) pair.
 
     Args:
         class_id: position class id (e.g. "account_executive",
             "product_management"). When known, a class-specific
             DOMAIN ADJACENCY overlay is prepended to the generic rule.
+            Acts as the cold-start layer until a position-specific
+            rubric exists.
+        geo_key: normalised geo overlay key (e.g. "Poland", "Israel").
+            Inserts a geo-specific fraud-pattern / candidate-pool
+            overlay. Empty = no overlay. Pulled from
+            `app.geo_overlays.normalise_location` at the call site.
 
-    Returns the full static instruction text for that class. Cached per
-    class (lru_cache maxsize=16) so each unique class only builds once;
-    Anthropic's prompt-cache then keys on the exact string content, so
-    same class within a 5-minute window = cache hit.
+    Cache size bumped from 16 → 64 to fit the (class × geo) cross-
+    product (~5 classes × ~5 geos = 25 entries). Anthropic's prompt-
+    cache keys on the exact string content so identical (class, geo)
+    within 5 min = cache hit.
     """
     from .company_tiers import format_company_tiers_block as _tiers_block
     from .university_tiers import format_university_tiers_block as _uni_block
 
     overlay = _CLASS_DOMAIN_OVERLAY.get(class_id or "", "")
+    geo_overlay = get_geo_overlay(geo_key) if geo_key else ""
 
     role_brief = (
         "You are an expert recruiter. Compare each applicant to the open position. "
@@ -551,7 +569,8 @@ def _build_system_instructions(class_id: str = "") -> str:
         "  4-10      → top 50%   (so the median candidate lands at a 4)\n"
         "  1-3       → bottom 50% (location mismatches, wrong domain, agency-only, etc.)\n\n"
 
-        + overlay  # class-specific overlay prepended above the general rule
+        + geo_overlay  # geo-specific fraud + candidate-pool patterns (Layer 2)
+        + overlay      # class-specific role-shape framing (Layer 3 — cold-start)
 
         + "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
         "We hire for a CREATOR-TOOLS / B2C SaaS company (Riverside.fm — podcasting, "
@@ -855,7 +874,8 @@ def _single_pass(
         "  4-10      → top 50%   (so the median candidate lands at a 4)\n"
         "  1-3       → bottom 50% (location mismatches, wrong domain, agency-only, etc.)\n\n"
 
-        + overlay  # class-specific overlay prepended above the general rule
+        + geo_overlay  # geo-specific fraud + candidate-pool patterns (Layer 2)
+        + overlay      # class-specific role-shape framing (Layer 3 — cold-start)
 
         + "=== DOMAIN ADJACENCY RULE (READ THIS — affects ~30% of candidates) ===\n"
         "We hire for a CREATOR-TOOLS / B2C SaaS company (Riverside.fm — podcasting, "
@@ -1020,16 +1040,21 @@ def _single_pass(
     # Subsequent calls reuse the cache at ~10% the cost of the initial write,
     # and the cache is keyed by exact content match so any deploy with
     # changed instructions naturally busts and re-warms the cache.
-    # Pass the position's class_id so the system prompt can include any
-    # role-specific DOMAIN ADJACENCY overlay (Account Executive → SaaS-sales
-    # criteria, BDR → outbound lead-gen criteria, others → default
-    # creator-tools framing). Cached per class via lru_cache(maxsize=16),
-    # so each class only builds once per process; Anthropic prompt cache
-    # then keys on the exact string content.
+    # Pass the position's class_id + geo so the cached system prompt
+    # includes both the role-shape DOMAIN ADJACENCY overlay (class layer)
+    # AND the geo-specific overlay (fraud patterns, candidate-pool norms).
+    # Cached per (class, geo) via lru_cache(maxsize=64). Anthropic prompt
+    # cache then keys on the exact string content, so the same (class, geo)
+    # pair within a 5-minute window = cache hit.
+    from .geo_overlays import normalise_location as _normalise_location
+    geo_key = _normalise_location(inputs.position_location)
     system_blocks = [
         {
             "type": "text",
-            "text": _build_system_instructions(inputs.class_id or ""),
+            "text": _build_system_instructions(
+                inputs.class_id or "",
+                geo_key,
+            ),
             "cache_control": {"type": "ephemeral"},
         },
     ]

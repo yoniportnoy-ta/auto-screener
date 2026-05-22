@@ -348,6 +348,7 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
         process_context=process_ctx,
         resume_pdf_b64=resume_pdf_b64,
         resume_url_existed_but_failed=resume_failed,
+        position_location=sess.position_country or sess.position_full_location or "",
     )
 
     try:
@@ -522,6 +523,7 @@ def score_one_candidate_now(
     except Exception as exc:  # noqa: BLE001
         log.info("feedback-context injection failed: %s", exc)
 
+    from .comeet_client import position_country as _pos_country
     inputs = ScoreInputs(
         candidate=candidate,
         position_uid=position_uid,
@@ -532,6 +534,7 @@ def score_one_candidate_now(
         process_context=process_ctx,
         resume_pdf_b64=resume_pdf_b64,
         resume_url_existed_but_failed=resume_failed,
+        position_location=_pos_country(position) or "",
     )
 
     try:

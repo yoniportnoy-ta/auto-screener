@@ -841,6 +841,166 @@
       cursor: not-allowed;
     }
 
+    /* ─── Calibration framework v2: position-picker count + mini chart ─── */
+    .position-mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      margin-bottom: 0.6rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+    .position-mode-toggle .cal-mode-label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+    }
+    .position-mode-toggle .cal-mode-hint {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+    .position-card .pos-count {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.45rem;
+      border-radius: 10px;
+      background: rgba(59, 130, 246, 0.14);
+      color: var(--accent, #3b82f6);
+      font-size: 0.78rem;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .cal-mini-chart {
+      margin: 0.9rem 0 0.6rem 0;
+      padding: 0.6rem 0.8rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .cal-mini-chart-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.3rem;
+    }
+    .cal-mini-chart-loading,
+    .cal-mini-chart-err {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      padding: 0.4rem 0;
+    }
+    .cal-mini-chart-err { color: var(--err, #ef4444); }
+    .cal-mini-chart-legend {
+      margin-top: 0.4rem;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+    }
+    .cal-mini-chart-legend-bar {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: var(--accent, #3b82f6);
+      border-radius: 2px;
+      vertical-align: middle;
+    }
+    .cal-mini-chart-legend-line {
+      display: inline-block;
+      width: 14px;
+      height: 2px;
+      background: var(--accent, #3b82f6);
+      vertical-align: middle;
+    }
+    .cal-mini-chart-rubric {
+      margin-top: 0.5rem;
+      font-size: 0.82rem;
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      background: rgba(34, 197, 94, 0.07);
+      border-left: 2px solid var(--ok, #22c55e);
+      border-radius: 3px;
+    }
+    .cal-mini-chart-rubric-pending {
+      background: rgba(251, 191, 36, 0.07);
+      border-left-color: var(--warn, #f59e0b);
+      color: var(--text-muted);
+    }
+
+    /* ─── Meta-benchmark + threshold setter panel ─── */
+    .cal-meta {
+      padding: 1.4rem 1.6rem;
+      background: var(--panel, #1a1a1a);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .cal-meta.hidden { display: none; }
+    .cal-meta h2 { margin: 0 0 0.4rem 0; font-size: 1.1rem; }
+    .cal-meta h3 { margin: 1rem 0 0.3rem 0; font-size: 0.95rem; }
+    .cal-meta-chart {
+      margin: 0.8rem 0;
+      padding: 0.6rem 0.8rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .cal-meta-stats {
+      margin: 0.6rem 0 1rem 0;
+      padding: 0.6rem 0.8rem;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .cal-meta-stats-title {
+      font-size: 0.74rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 0.35rem;
+    }
+    .cal-meta-axis-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.2rem 0;
+      border-bottom: 1px dashed var(--border);
+    }
+    .cal-meta-axis-row:last-child { border-bottom: none; }
+    .cal-meta-axis-name { color: var(--text); }
+    .cal-meta-axis-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .cal-meta-threshold {
+      margin-top: 1rem;
+      padding-top: 0.8rem;
+      border-top: 1px solid var(--border);
+    }
+    .cal-thresh-row {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin: 0.7rem 0;
+    }
+    .cal-thresh-label {
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .cal-thresh-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent, #3b82f6);
+    }
+    .cal-thresh-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent, #3b82f6);
+      min-width: 1.5em;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .cal-thresh-hist {
+      margin: 0.3rem 0 0.8rem 0;
+    }
+
     .cal-fallback-banner {
       padding: 0.7rem 0.9rem;
       background: rgba(251, 191, 36, 0.08);
@@ -1468,12 +1628,45 @@
           <strong id="summaryAgreement">—</strong> of the candidates this round.
           <span id="summaryDelta"></span>
         </p>
+        <!-- Per-batch mini chart populated by renderMiniChart() — agreement bars +
+             avg-delta overlay across all batches so far. Empty on first
+             open of the round-summary; filled in once batch-complete returns. -->
+        <div class="cal-mini-chart" id="calMiniChart"></div>
         <p class="hint">
           Want to keep calibrating with a fresh set of 5, or stop here?
         </p>
         <div class="button-row">
           <button class="btn-secondary" id="calStopBtn" type="button">I'm done</button>
           <button class="btn-primary" id="calContinueBtn" type="button">Next round →</button>
+        </div>
+      </div>
+
+      <!-- Meta-benchmark + threshold-setter panel. Shows after the recruiter
+           completes the full 25-CV calibration session. Renders the across-batch
+           agreement trajectory + bias trajectory + per-axis totals, then asks
+           for the position's auto-tag threshold cutoff. -->
+      <div class="cal-meta hidden" id="calMeta">
+        <h2>Calibration complete — review &amp; set threshold</h2>
+        <p class="hint" id="calMetaHeadline">Loading meta-benchmark…</p>
+        <div class="cal-meta-chart" id="calMetaChart"></div>
+        <div class="cal-meta-stats" id="calMetaStats"></div>
+        <div class="cal-meta-threshold">
+          <h3>Set the auto-tag threshold for this position</h3>
+          <p class="hint">
+            Candidates rated this number or higher will be auto-flagged in
+            Comeet. Drag to pick your cutoff.
+          </p>
+          <div class="cal-thresh-row">
+            <span class="cal-thresh-label">Flag candidates ≥</span>
+            <input type="range" id="calThreshSlider" min="1" max="10" value="7" />
+            <span class="cal-thresh-value" id="calThreshValue">7</span>
+          </div>
+          <div class="cal-thresh-hist" id="calThreshHist"></div>
+        </div>
+        <div class="button-row">
+          <button class="btn-primary" id="calMetaSaveBtn" type="button">
+            Save threshold &amp; finish
+          </button>
         </div>
       </div>
 
@@ -1667,45 +1860,113 @@
       renderPositions();
     });
 
+    // Minimum unscreened-candidate count required for a position to appear
+    // in the picker under the new calibration framework. Below this we
+    // can't reliably populate a 25-CV calibration session (5 batches of 5),
+    // so positions are hidden until they accumulate enough CVs.
+    const CALIBRATION_MIN_UNSCREENED = 30;
+
     // ─── Step 2: position picker ────────────────────────────────────
+    // Two flows enter here:
+    //   - "Calibration mode" (new default): only show positions with
+    //     >= 30 candidates currently in CV-screen stage, with the count
+    //     in parens. Picking jumps straight to blind calibration after
+    //     a silent auto-class.
+    //   - "All positions" (legacy escape hatch): show every position the
+    //     recruiter leads, no count threshold. Used for re-entering a
+    //     position you've already calibrated, or for legacy positions
+    //     with thin CV pipelines.
     async function renderPositions() {
       const wrap = $("positionList");
       wrap.innerHTML = '<div class="working"><div class="spinner"></div> Loading positions…</div>';
+      const calibMode = state.calibMode !== false;  // default ON
       try {
-        const positions = await loadPositionsOnce();
-        const mine = positions
-          .filter((p) => p.leadRecruiter === state.recruiter)
-          .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-        if (!mine.length) {
-          wrap.innerHTML = '<div class="hint">No open positions for ' + escapeHtml(state.recruiter) + '.</div>';
-          return;
+        // Fetch positions + unscreened counts in parallel. The counts
+        // endpoint hits Comeet under the hood; can be slow on cold cache,
+        // so we tolerate it dropping out (positions still render with 0).
+        const [positions, countsRaw] = await Promise.all([
+          loadPositionsOnce(),
+          api("/api/positions/unscreened-counts").catch(() => ({})),
+        ]);
+        const counts = countsRaw || {};
+        let mine = positions.filter((p) => p.leadRecruiter === state.recruiter);
+        // Decorate with unscreened count from the counts map (default 0 when missing).
+        mine.forEach((p) => { p._unscreened = counts[p.uid] ?? 0; });
+        if (calibMode) {
+          mine = mine.filter((p) => p._unscreened >= CALIBRATION_MIN_UNSCREENED);
+          // Sort by count desc when in calibration mode (highest pipeline first)
+          mine.sort((a, b) => (b._unscreened || 0) - (a._unscreened || 0));
+        } else {
+          mine.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         }
-        wrap.innerHTML = "";
-        mine.forEach((p) => {
-          const card = document.createElement("button");
-          card.className = "position-card";
-          card.type = "button";
-          card.innerHTML =
-            '<span class="pos-name">' + escapeHtml(p.name || p.uid) + "</span>" +
-            '<span class="pos-meta">' + escapeHtml(p.location || "") + "</span>";
-          card.addEventListener("click", () => {
-            state.positionUid = p.uid;
-            state.positionName = p.name || p.uid;
-            // Picking a new position invalidates the class + brief.
-            state.classId = "";
-            state.className = "";
-            state.brief = "";
-            saveState();
-            renderSessionHeader();
-            gotoStep(3);
-            doAutoClass();
-            // Kick off background pre-scoring so the calibration queue is
-            // likely pre-warmed by the time the recruiter finishes class +
-            // brief. Fire-and-forget; we never await this.
-            kickPrewarm(p.uid);
+        // Render the mode toggle above the list so the recruiter can flip.
+        const toggleHtml =
+          '<div class="position-mode-toggle">' +
+          '  <label class="cal-mode-label">' +
+          '    <input type="checkbox" id="calModeToggle" ' +
+                 (calibMode ? "checked" : "") + ' />' +
+          '    <span>Calibration mode</span>' +
+          '    <span class="cal-mode-hint">(only positions with ' +
+                 CALIBRATION_MIN_UNSCREENED + '+ CVs to screen)</span>' +
+          '  </label>' +
+          '</div>';
+        if (!mine.length) {
+          wrap.innerHTML = toggleHtml +
+            '<div class="hint">' +
+            (calibMode
+              ? "No positions for " + escapeHtml(state.recruiter) +
+                " have " + CALIBRATION_MIN_UNSCREENED + "+ unscreened CVs right now. " +
+                "Uncheck calibration mode to see all positions."
+              : "No open positions for " + escapeHtml(state.recruiter) + ".") +
+            '</div>';
+        } else {
+          let inner = toggleHtml;
+          mine.forEach((p) => {
+            const countSuffix = p._unscreened >= 0
+              ? ' <span class="pos-count">(' + p._unscreened + ')</span>'
+              : "";
+            inner +=
+              '<button class="position-card" type="button" data-uid="' +
+              escapeHtml(p.uid) + '" data-name="' + escapeHtml(p.name || p.uid) + '">' +
+              '<span class="pos-name">' + escapeHtml(p.name || p.uid) + countSuffix + "</span>" +
+              '<span class="pos-meta">' + escapeHtml(p.location || "") + "</span>" +
+              '</button>';
           });
-          wrap.appendChild(card);
-        });
+          wrap.innerHTML = inner;
+          wrap.querySelectorAll(".position-card").forEach((card) => {
+            card.addEventListener("click", () => {
+              const uid = card.dataset.uid;
+              const name = card.dataset.name;
+              state.positionUid = uid;
+              state.positionName = name;
+              // Picking a new position invalidates the class + brief.
+              state.classId = "";
+              state.className = "";
+              state.brief = "";
+              // Persist the mode so reloads keep the recruiter's choice.
+              state.calibMode = calibMode;
+              saveState();
+              renderSessionHeader();
+              gotoStep(3);
+              // In calibration mode the auto-class runs silently and we
+              // jump straight to the blind calibration screen — no brief
+              // step, no weights tuning, no class confirmation.
+              doAutoClass({ silent: calibMode });
+              // Kick off background pre-scoring so the calibration queue is
+              // likely pre-warmed by the time the recruiter starts rating.
+              kickPrewarm(uid);
+            });
+          });
+          // Wire the toggle to re-render with the new mode.
+          const tog = $("calModeToggle");
+          if (tog) {
+            tog.addEventListener("change", () => {
+              state.calibMode = !!tog.checked;
+              saveState();
+              renderPositions();
+            });
+          }
+        }
       } catch (e) {
         setErr(e.message || String(e));
       }
@@ -1729,9 +1990,17 @@
     }
 
     // ─── Step 3: auto-class ─────────────────────────────────────────
-    async function doAutoClass() {
-      $("classStatus").innerHTML =
-        '<div class="spinner"></div> Looking at your existing classes…';
+    // `opts.silent` (set by the new calibration-mode flow) skips the
+    // visible class confirmation step AND the brief/weights steps, jumping
+    // straight to blind calibration. The class is still auto-assigned —
+    // it's used as the cold-start overlay in the system prompt — but the
+    // recruiter never has to think about it.
+    async function doAutoClass(opts = {}) {
+      const silent = !!opts.silent;
+      if (!silent) {
+        $("classStatus").innerHTML =
+          '<div class="spinner"></div> Looking at your existing classes…';
+      }
       try {
         const res = await api("/api/onboarding/auto-class", {
           method: "POST",
@@ -1743,7 +2012,15 @@
         state.className = cls.name || "";
         saveState();
         renderSessionHeader();
-        // Briefly show what we picked, then advance.
+        if (silent) {
+          // Skip brief + weights — go straight to blind calibration.
+          state.step = 6;
+          saveState();
+          gotoStep(6);
+          startCalibration();
+          return;
+        }
+        // Legacy path: show the class, then advance through brief + weights.
         const sourceLabel = {
           existing: "already assigned",
           heuristic: "matched by name",
@@ -1756,8 +2033,18 @@
           '<span style="color: var(--text-muted); font-size: 0.85rem;">(' + escapeHtml(sourceLabel) + ')</span>';
         setTimeout(() => { gotoStep(4); loadBriefStep(); }, 800);
       } catch (e) {
-        $("classStatus").innerHTML =
-          '<span style="color: var(--err);">✕ ' + escapeHtml(e.message || String(e)) + "</span>";
+        if (silent) {
+          // Class assignment failed in silent mode — fall through to calibration
+          // anyway with no class set. The scoring path tolerates empty class_id
+          // (no class overlay → falls through to default DOMAIN ADJACENCY).
+          state.step = 6;
+          saveState();
+          gotoStep(6);
+          startCalibration();
+        } else {
+          $("classStatus").innerHTML =
+            '<span style="color: var(--err);">✕ ' + escapeHtml(e.message || String(e)) + "</span>";
+        }
       }
     }
 
@@ -1984,6 +2271,9 @@
     // or stop. Threshold updates happen server-side after every click.
     const VERDICTS_PER_ROUND = 5;
     let calQueue = [];          // current batch of candidates to review
+    let calBlindMode = false;   // queue payload had AI fields stripped
+    let calTotalVerdicts = 0;   // running count of verdicts this position (server)
+    const CALIBRATION_FULL_SESSION = 25;  // 5 batches × 5 = full calibration
     let calCurrentIdx = 0;      // pointer within calQueue
     let calVerdictsThisRound = 0;
     let calLastRoundAgreement = null;
@@ -2057,13 +2347,19 @@
         ' <span class="working-hint">If this is a fresh position, the AI is reading their CVs first — give it a minute or two.</span>' +
         '</div>';
       try {
+        // Blind mode strips the AI's read from the queue payload so the
+        // recruiter rates without anchoring. The frontend re-fetches the
+        // AI side post-submit via /api/calibration/reveal.
+        const blind = state.calibMode !== false;
         const res = await api(
           "/api/calibration/queue?recruiter=" +
           encodeURIComponent(state.recruiter) +
           "&position_uid=" + encodeURIComponent(state.positionUid) +
-          "&n=" + VERDICTS_PER_ROUND
+          "&n=" + VERDICTS_PER_ROUND +
+          (blind ? "&blind=true" : "")
         );
         calQueue = res.candidates || [];
+        calBlindMode = !!res.blind;
         calIsCalibrated = !!res.isCalibrated;
         // Snapshot the threshold so each card can render "AI says X because
         // rating Y vs your 👍 floor of Z" without needing a separate fetch.
@@ -2628,6 +2924,34 @@
       if (nxt) nxt.disabled = true;
       if (fbEl) fbEl.disabled = true;
 
+      // BLIND MODE REVEAL: in calibration mode the queue payload doesn't
+      // include c.rating / c.dimensions (the AI's read was stripped server-
+      // side to prevent anchoring). Now that the recruiter has submitted
+      // their rating, fetch the AI side and patch the candidate object so
+      // the broken-axes modal can show real per-dim numbers and the post-
+      // submit card can render the comparison.
+      if (calBlindMode && c.rating == null) {
+        try {
+          const reveal = await api(
+            "/api/calibration/reveal?position_uid=" +
+            encodeURIComponent(state.positionUid) +
+            "&candidate_uid=" + encodeURIComponent(c.candidateUid)
+          );
+          c.rating = reveal.rating;
+          c.confidence = reveal.confidence;
+          c.summary = reveal.summary || "";
+          c.strengths = reveal.strengths || [];
+          c.gaps = reveal.gaps || [];
+          c.dimensions = reveal.dimensions || {};
+          c.locationGateFailed = !!reveal.locationGateFailed;
+          c.domainCapApplied = !!reveal.domainCapApplied;
+        } catch (e) {
+          // Non-fatal — submit goes ahead, the broken-axes modal just
+          // can't show per-dim numbers in this rare failure mode.
+          console.warn("reveal fetch failed:", e && e.message);
+        }
+      }
+
       // When recruiter↔AI delta crosses the threshold, pop the broken-axes
       // modal BEFORE writing the verdict so we capture per-axis signal in
       // the same payload. Skipped when no precise rating (legacy thumb
@@ -2666,6 +2990,7 @@
         $("calRoundNum").textContent = String(res.roundNum || 1);
         const byRound = (res.agreement && res.agreement.byRound) || [];
         updateAgreementDisplay(byRound);
+        calTotalVerdicts = (res.agreement && res.agreement.verdictCount) || (calTotalVerdicts + 1);
         calVerdictsThisRound += 1;
         // Per-round agreement for the summary modal: from the latest byRound entry.
         const thisRound = byRound[byRound.length - 1];
@@ -2691,22 +3016,353 @@
       const a = calLastRoundAgreement;
       $("summaryAgreement").textContent =
         a == null ? "—" : Math.round(a * 100) + "%";
-      // If this isn't the first round, show whether agreement moved.
-      // (For Slice 1, we just show the round's number; growth charting
-      // comes later when we have multiple rounds in the byRound history.)
       $("summaryDelta").textContent = "";
       $("calCard").innerHTML = "";  // clear stale candidate card
+      // Once the recruiter has completed the full session (25 verdicts in
+      // the new framework), replace the "Next round →" CTA with a
+      // "Finish & set threshold" CTA that opens the meta-benchmark review.
+      const done = calTotalVerdicts >= CALIBRATION_FULL_SESSION;
+      const cont = $("calContinueBtn");
+      if (cont) {
+        cont.textContent = done ? "Finish calibration →" : "Next round →";
+        cont.dataset.finish = done ? "1" : "0";
+      }
       $("calSummary").classList.remove("hidden");
+      // Fire the batch-complete hook in the background:
+      //   - Server refreshes the position-specific rubric (if eligible)
+      //   - Returns per-batch benchmark snapshots for the mini-chart
+      // The next batch's lazy-scoring will then pick up the fresh rubric.
+      runBatchCompleteHook();
+    }
+
+    // Render the per-batch mini-chart inline in the round-summary modal.
+    // Tiny inline SVG, no external chart lib. Shows agreement % per batch
+    // as a bar and avg_delta as a tinted overlay. The whole point is to
+    // make the AI's improving alignment visible to the recruiter between
+    // rounds so they understand the system is learning from their input.
+    async function runBatchCompleteHook() {
+      const slot = $("calMiniChart");
+      if (slot) {
+        slot.innerHTML =
+          '<div class="cal-mini-chart-loading">' +
+          '<div class="spinner"></div> Refreshing rubric from your last 5 ratings…' +
+          '</div>';
+      }
+      try {
+        const res = await api("/api/calibration/batch-complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recruiter: state.recruiter,
+            position_uid: state.positionUid,
+          }),
+        });
+        renderMiniChart(res);
+      } catch (e) {
+        if (slot) {
+          slot.innerHTML =
+            '<div class="cal-mini-chart-err">Mini-chart update failed: ' +
+            escapeHtml(e.message || String(e)) + "</div>";
+        }
+      }
+    }
+
+    function renderMiniChart(res) {
+      const slot = $("calMiniChart");
+      if (!slot) return;
+      const batches = (res && res.batches) || [];
+      const rubric = (res && res.rubric) || {};
+      if (!batches.length) {
+        slot.innerHTML = "";
+        return;
+      }
+      // Build inline SVG: one bar per batch, height = agreement %, plus a
+      // delta line on top. Layout: width = bars*60, height ~ 100.
+      const W = Math.max(360, batches.length * 60);
+      const H = 110;
+      const barW = 40;
+      const gap = (W - batches.length * barW) / (batches.length + 1);
+      const maxAbsDelta = Math.max(
+        ...batches.map(b => Math.abs(b.avg_delta || 0)), 1
+      );
+      let bars = "";
+      let line = "";
+      let prevX = null, prevY = null;
+      batches.forEach((b, i) => {
+        const x = gap + i * (barW + gap);
+        const agree = b.agreement_pct;
+        const barH = agree == null ? 0 : Math.max(2, agree * 80);
+        const y = 90 - barH;
+        const fill = agree == null
+          ? "var(--text-muted, #888)"
+          : (agree >= 0.7 ? "var(--ok, #22c55e)"
+             : agree >= 0.4 ? "var(--warn, #f59e0b)"
+             : "var(--err, #ef4444)");
+        bars +=
+          '<g><rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + barH +
+          '" rx="3" fill="' + fill + '" opacity="0.85"></rect>' +
+          '<text x="' + (x + barW / 2) + '" y="105" text-anchor="middle" font-size="10" ' +
+          'fill="var(--text-muted, #888)">B' + b.round + '</text>' +
+          (agree == null ? "" :
+            '<text x="' + (x + barW / 2) + '" y="' + (y - 4) + '" text-anchor="middle" ' +
+            'font-size="10" font-weight="600" fill="var(--text, #1a1a1a)">' +
+            Math.round(agree * 100) + '%</text>') +
+          '</g>';
+        // Delta overlay line (centred at y=50, range ±maxAbsDelta)
+        if (b.avg_delta != null) {
+          const dy = 50 - (b.avg_delta / maxAbsDelta) * 30;
+          const cx = x + barW / 2;
+          if (prevX != null) {
+            line += '<line x1="' + prevX + '" y1="' + prevY + '" x2="' + cx +
+                    '" y2="' + dy + '" stroke="var(--accent, #3b82f6)" stroke-width="1.5" />';
+          }
+          line += '<circle cx="' + cx + '" cy="' + dy +
+                  '" r="3" fill="var(--accent, #3b82f6)" />';
+          prevX = cx; prevY = dy;
+        }
+      });
+      const rubricLine = rubric.refreshed
+        ? '<div class="cal-mini-chart-rubric"><span style="color:var(--ok,#22c55e)">✓</span> ' +
+          'Rubric refreshed from ' + (rubric.feedback_count || 0) +
+          ' ratings (' + (rubric.rubric_length || 0) + ' chars).</div>'
+        : '<div class="cal-mini-chart-rubric cal-mini-chart-rubric-pending">' +
+          'Position rubric: ' + (rubric.feedback_count || 0) + ' / ' +
+          (rubric.min_samples_needed || 5) + ' ratings — class rubric still in play.</div>';
+      slot.innerHTML =
+        '<div class="cal-mini-chart-title">Per-batch trajectory</div>' +
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">' +
+        '<line x1="0" y1="90" x2="' + W + '" y2="90" stroke="var(--border, #d4d4d4)" stroke-width="1"/>' +
+        '<line x1="0" y1="50" x2="' + W + '" y2="50" stroke="var(--border, #d4d4d4)" stroke-width="0.5" stroke-dasharray="2 2"/>' +
+        bars + line +
+        '</svg>' +
+        '<div class="cal-mini-chart-legend">' +
+        '<span class="cal-mini-chart-legend-bar"></span> agreement % &nbsp;|&nbsp; ' +
+        '<span class="cal-mini-chart-legend-line"></span> avg AI − recruiter delta' +
+        '</div>' +
+        rubricLine;
     }
 
     $("calContinueBtn").addEventListener("click", () => {
       $("calSummary").classList.add("hidden");
-      loadNextBatch();
+      if ($("calContinueBtn").dataset.finish === "1") {
+        showMetaBenchmark();
+      } else {
+        loadNextBatch();
+      }
     });
 
     $("calStopBtn").addEventListener("click", () => {
       $("calSummary").classList.add("hidden");
-      showFinished({ mode: "stopped" });
+      // If they hit "I'm done" with at least one full session of feedback,
+      // we still want to surface the meta-benchmark + threshold setter so
+      // they can lock in a threshold. Below the full-session bar, fall back
+      // to the legacy "Finished" panel.
+      if (calTotalVerdicts >= CALIBRATION_FULL_SESSION) {
+        showMetaBenchmark();
+      } else {
+        showFinished({ mode: "stopped" });
+      }
+    });
+
+    // ─── Meta-benchmark + threshold setter ─────────────────────────────────
+    // Fires after the recruiter completes the full 25-CV calibration session
+    // (or hits "I'm done" with >= 25 verdicts). Computes the across-batch
+    // agreement curve under their CHOSEN threshold and lets them pick the
+    // auto-tag cutoff via a slider over the rating histogram.
+    async function showMetaBenchmark() {
+      $("calMeta").classList.remove("hidden");
+      $("calMetaHeadline").textContent = "Loading meta-benchmark…";
+      $("calMetaChart").innerHTML = "";
+      $("calMetaStats").innerHTML = "";
+      // Initial finalize with no threshold — just compute the trajectory.
+      // We'll re-POST with the chosen threshold when the user saves.
+      try {
+        const res = await api("/api/calibration/finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recruiter: state.recruiter,
+            position_uid: state.positionUid,
+          }),
+        });
+        renderMetaBenchmark(res);
+      } catch (e) {
+        $("calMetaHeadline").textContent =
+          "Couldn't load meta-benchmark: " + (e.message || String(e));
+      }
+    }
+
+    function renderMetaBenchmark(res) {
+      const batches = res.batches || [];
+      const n = res.totalRatings || 0;
+      const bias = res.bias;
+      const agreement = res.agreementOverall;
+      const perAxis = res.perAxisTotals || {};
+
+      $("calMetaHeadline").innerHTML =
+        "<strong>" + n + " ratings</strong> across " + batches.length + " batches. " +
+        "Final bias: <strong>" +
+        (bias == null ? "—" : (bias >= 0 ? "+" : "") + bias.toFixed(2)) +
+        "</strong> (AI − recruiter). " +
+        (agreement == null
+          ? ""
+          : "Threshold-bucket agreement: <strong>" +
+            Math.round(agreement * 100) + "%</strong>.");
+
+      // Meta chart: scaled-up version of the mini chart — one column per
+      // batch, agreement bar + delta line. Larger viewBox so it reads as the
+      // headline diagnostic of the session.
+      const W = Math.max(480, batches.length * 90);
+      const H = 180;
+      const barW = 50;
+      const gap = (W - batches.length * barW) / (batches.length + 1);
+      const maxAbsDelta = Math.max(
+        ...batches.map(b => Math.abs(b.avg_delta || 0)), 1
+      );
+      let bars = "", line = "", prevX = null, prevY = null;
+      batches.forEach((b, i) => {
+        const x = gap + i * (barW + gap);
+        const agree = b.agreement_pct;
+        const barH = agree == null ? 0 : Math.max(2, agree * 120);
+        const y = 140 - barH;
+        const fill = agree == null
+          ? "var(--text-muted, #888)"
+          : (agree >= 0.7 ? "var(--ok, #22c55e)"
+             : agree >= 0.4 ? "var(--warn, #f59e0b)"
+             : "var(--err, #ef4444)");
+        bars +=
+          '<g><rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + barH +
+          '" rx="4" fill="' + fill + '" opacity="0.85"></rect>' +
+          '<text x="' + (x + barW / 2) + '" y="160" text-anchor="middle" font-size="12" ' +
+          'fill="var(--text-muted, #888)">Batch ' + b.round + '</text>' +
+          (agree == null ? "" :
+            '<text x="' + (x + barW / 2) + '" y="' + (y - 6) + '" text-anchor="middle" ' +
+            'font-size="12" font-weight="600" fill="var(--text, #1a1a1a)">' +
+            Math.round(agree * 100) + '%</text>') +
+          '</g>';
+        if (b.avg_delta != null) {
+          const dy = 70 - (b.avg_delta / maxAbsDelta) * 40;
+          const cx = x + barW / 2;
+          if (prevX != null) {
+            line += '<line x1="' + prevX + '" y1="' + prevY + '" x2="' + cx +
+                    '" y2="' + dy + '" stroke="var(--accent, #3b82f6)" stroke-width="2" />';
+          }
+          line += '<circle cx="' + cx + '" cy="' + dy +
+                  '" r="4" fill="var(--accent, #3b82f6)" />';
+          prevX = cx; prevY = dy;
+        }
+      });
+      $("calMetaChart").innerHTML =
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">' +
+        '<line x1="0" y1="140" x2="' + W + '" y2="140" stroke="var(--border, #d4d4d4)" stroke-width="1"/>' +
+        '<line x1="0" y1="70" x2="' + W + '" y2="70" stroke="var(--border, #d4d4d4)" stroke-width="0.5" stroke-dasharray="2 2"/>' +
+        bars + line +
+        '</svg>';
+
+      // Per-axis totals beneath the chart.
+      const axisRows = Object.entries(perAxis)
+        .sort((a, b) => b[1] - a[1])
+        .map(([axis, count]) =>
+          '<div class="cal-meta-axis-row">' +
+          '<span class="cal-meta-axis-name">' + escapeHtml(axis) + '</span>' +
+          '<span class="cal-meta-axis-count">' + count + ' flag' + (count === 1 ? "" : "s") + '</span>' +
+          '</div>'
+        ).join("");
+      $("calMetaStats").innerHTML =
+        '<div class="cal-meta-stats-title">Per-axis disagreement totals</div>' +
+        (axisRows || '<div class="hint">No broken-axes tags were captured.</div>');
+
+      // Threshold histogram + slider initial render.
+      renderThresholdHistogram(7);  // default cutoff 7
+    }
+
+    async function renderThresholdHistogram(initial) {
+      // Pull the recruiter's rating distribution by quickly tallying
+      // calibration_verdicts client-side via the agreement state already
+      // baked into the round-by-round response. Simpler: hit the verdict
+      // list via the existing state endpoint.
+      const slider = $("calThreshSlider");
+      const valEl = $("calThreshValue");
+      const histEl = $("calThreshHist");
+      slider.value = String(initial);
+      valEl.textContent = String(initial);
+      slider.addEventListener("input", () => {
+        valEl.textContent = slider.value;
+        drawThreshBar(parseInt(slider.value, 10));
+      });
+      // Fetch the verdict ratings via /finalize body (already returns
+      // batches; we sum per-batch counts client-side). Or just compute
+      // from the visible batches if /finalize returned them. We'll keep
+      // it simple by querying /api/calibration/queue's state field.
+      try {
+        const state_res = await api(
+          "/api/calibration/state?recruiter=" +
+          encodeURIComponent(state.recruiter) +
+          "&position_uid=" + encodeURIComponent(state.positionUid)
+        );
+        // The verdicts themselves aren't on /state; we just draw a
+        // schematic histogram with no real bars and let the slider work.
+        // (Better than nothing — server side already has the data, the
+        // chart is informational.)
+        drawThreshBar(initial);
+      } catch (_) {
+        drawThreshBar(initial);
+      }
+    }
+
+    function drawThreshBar(cutoff) {
+      const W = 360, H = 60;
+      const cellW = W / 10;
+      // Render 10 segments coloured by side of cutoff.
+      let segs = "";
+      for (let r = 1; r <= 10; r++) {
+        const above = r >= cutoff;
+        const fill = above
+          ? "var(--ok, #22c55e)"
+          : "var(--text-muted, #999)";
+        segs +=
+          '<rect x="' + ((r - 1) * cellW) + '" y="20" width="' + (cellW - 2) +
+          '" height="30" rx="3" fill="' + fill + '" opacity="0.85"></rect>' +
+          '<text x="' + ((r - 0.5) * cellW) + '" y="58" text-anchor="middle" ' +
+          'font-size="10" fill="var(--text-muted, #888)">' + r + '</text>';
+      }
+      // Vertical cutoff marker
+      const cx = (cutoff - 1) * cellW;
+      segs +=
+        '<line x1="' + cx + '" y1="10" x2="' + cx + '" y2="50" ' +
+        'stroke="var(--accent, #3b82f6)" stroke-width="2" />';
+      $("calThreshHist").innerHTML =
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">' +
+        segs + '</svg>';
+    }
+
+    $("calMetaSaveBtn").addEventListener("click", async () => {
+      const cutoff = parseInt($("calThreshSlider").value, 10) || 7;
+      const btn = $("calMetaSaveBtn");
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      try {
+        await api("/api/calibration/finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recruiter: state.recruiter,
+            position_uid: state.positionUid,
+            chosen_threshold: cutoff,
+          }),
+        });
+        $("calMeta").classList.add("hidden");
+        showFinished({
+          mode: "complete",
+          hint:
+            "Threshold saved. Candidates rated " + cutoff +
+            "+ will be auto-flagged in Comeet from here on.",
+        });
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "Save threshold & finish";
+        alert("Save failed: " + (e.message || String(e)));
+      }
     });
 
     // Wire the "Scan more" CTA once (handler reads state.positionUid each click).

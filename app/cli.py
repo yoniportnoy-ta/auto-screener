@@ -798,6 +798,103 @@ async def cmd_backfill_tags(position_uid: str | None = None) -> int:
     return 0
 
 
+async def cmd_reset_debug_scoring(position_uid: str | None = None) -> int:
+    """Wipe ALL debug_scoring rows globally. Preserves rubrics + feedback +
+    verdicts + thresholds + position classes + geo overlays.
+
+    Used once before launching the new calibration framework so every
+    position starts with a fresh baseline of AI scores against the
+    deployed prompt + 3-layer rubric stack.
+
+    No `position_uid` arg — this is a global reset by design. Pass
+    nothing.
+
+    Usage:
+        python -m app.cli reset-debug-scoring
+    """
+    from .db import db_session
+    from .models import DebugScoring
+
+    if position_uid:
+        log.warning(
+            "reset-debug-scoring: position_uid arg %r ignored — this command "
+            "wipes ALL debug_scoring rows globally. Use reset-position for "
+            "per-position wipes.",
+            position_uid,
+        )
+
+    with db_session() as ses:
+        before = ses.query(DebugScoring).count()
+        ses.query(DebugScoring).delete()
+        ses.commit()
+    log.info("reset-debug-scoring done: deleted %d rows", before)
+    log.info(
+        "next: 'rescore-all <position_uid>' on each position you want "
+        "scored under the new framework."
+    )
+    return 0
+
+
+async def cmd_reset_position(position_uid: str | None = None) -> int:
+    """Wipe everything for ONE position. Used post-trial to reset the
+    test position to a clean state without affecting any other position.
+
+    Deletes:
+      - debug_scoring rows for this position_uid
+      - calibration_verdicts rows for this position_uid
+      - feedback rows for this position_uid
+      - recruiter_thresholds for this position_uid (every recruiter)
+      - position-specific learned_rubric (the (class_id, position_uid)
+        row in learned_rubrics; the class-level rubric stays intact)
+
+    Preserves:
+      - position_classes (class assignment + recruiter notes)
+      - applied_tags (so re-tagging is idempotent)
+      - the class-level learned_rubric (used by other positions in the
+        same class)
+
+    Usage:
+        python -m app.cli reset-position <position_uid>
+    """
+    from .db import db_session
+    from .models import (
+        CalibrationVerdict, DebugScoring, Feedback, LearnedRubric,
+        RecruiterThreshold,
+    )
+
+    uid = (position_uid or "").strip()
+    if not uid:
+        log.error("reset-position requires a position_uid arg")
+        return 2
+
+    counts: dict[str, int] = {}
+    with db_session() as ses:
+        counts["debug_scoring"] = (
+            ses.query(DebugScoring).filter(DebugScoring.position_uid == uid).delete()
+        )
+        counts["calibration_verdicts"] = (
+            ses.query(CalibrationVerdict).filter(CalibrationVerdict.position_uid == uid).delete()
+        )
+        counts["feedback"] = (
+            ses.query(Feedback).filter(Feedback.position_uid == uid).delete()
+        )
+        counts["recruiter_thresholds"] = (
+            ses.query(RecruiterThreshold).filter(RecruiterThreshold.position_uid == uid).delete()
+        )
+        counts["position_rubric"] = (
+            ses.query(LearnedRubric).filter(LearnedRubric.position_uid == uid).delete()
+        )
+        ses.commit()
+
+    log.info(
+        "reset-position %s done: %s",
+        uid,
+        ", ".join(f"{k}={v}" for k, v in counts.items()),
+    )
+    log.info("position class assignment + recruiter notes preserved.")
+    return 0
+
+
 COMMANDS = {
     "scan-all": cmd_scan_all,
     "prewarm-all": cmd_prewarm_all,
@@ -813,12 +910,14 @@ COMMANDS = {
     "rescore-all": cmd_rescore_all,
     "reset-and-rescore": cmd_reset_and_rescore,
     "benchmark": cmd_benchmark,
+    "reset-debug-scoring": cmd_reset_debug_scoring,
+    "reset-position": cmd_reset_position,
 }
 
 # Commands that accept an optional position_uid positional arg.
 COMMANDS_WITH_POSITION = {
     "backfill-tags", "clear-score-locks", "reset-thresholds",
-    "reset-rubric", "rescore-all", "benchmark",
+    "reset-rubric", "rescore-all", "benchmark", "reset-position",
 }
 
 

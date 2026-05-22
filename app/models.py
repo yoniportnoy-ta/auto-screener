@@ -145,14 +145,30 @@ class Feedback(Base):
 
 
 class LearnedRubric(Base):
-    """One row per position class. The rubric is Claude-synthesised from feedback.
+    """Three-layer scoring rubric storage.
 
-    Replaces the _LearnedRubrics tab.
+    Keyed by (class_id, position_uid). Two flavours:
+      - Class-level rubric: position_uid='' (empty string sentinel).
+        Synthesised from all feedback in this class. Used as the
+        cold-start when a position has < MIN feedback rows of its own.
+      - Position-level rubric: position_uid=<actual uid>. Synthesised
+        from feedback for THIS position only. Takes precedence over
+        the class rubric once a position has >=5 feedback rows.
+
+    Read order in scoring: try (class_id, X) first; fall back to
+    (class_id, ''). NULL is not used — the empty-string sentinel keeps
+    the composite primary key clean.
     """
 
     __tablename__ = "learned_rubrics"
 
     class_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Empty string '' = class-level rubric (the legacy row). Non-empty
+    # = position-specific rubric for the named position. Migration 0014
+    # backfilled existing rows to '' and added this column to the PK.
+    position_uid: Mapped[str] = mapped_column(
+        String(64), primary_key=True, server_default="", default=""
+    )
     class_name: Mapped[str] = mapped_column(String(120))
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     feedback_count: Mapped[int] = mapped_column(Integer, default=0)

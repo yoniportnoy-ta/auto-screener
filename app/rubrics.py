@@ -16,16 +16,35 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .config import settings
 from .db import db_session
-from .feedback import feedback_count_for_class, list_feedback_for_class
+from .feedback import (
+    feedback_count_for_class,
+    list_feedback_for_class,
+    list_feedback_for_position,
+)
 from .models import LearnedRubric
 
 log = logging.getLogger(__name__)
 
 MAX_RUBRIC_TOKENS = 1200  # bumped from 900 to fit the new PER-AXIS section
 
+# Sentinel used in learned_rubrics.position_uid for the class-level rubric
+# (i.e. the legacy row that pools all class feedback). Migration 0014
+# backfilled NULLs to '' so the composite PK works.
+CLASS_LEVEL_RUBRIC_KEY = ""
+
+# Minimum feedback rows on a specific position before we switch from the
+# class rubric to that position's bespoke rubric. Lower than the class
+# minimum because position rubrics need less data to be useful (the
+# narrow scope helps).
+POSITION_RUBRIC_MIN_SAMPLES = 5
+
 
 def get_learned_rubric_for_class(class_id: str, class_name: str) -> str:
-    """Returns the rubric text for a class, regenerating if stale.
+    """Class-level rubric (legacy entry point).
+
+    Kept for back-compat with callers that don't yet pass position context.
+    New code should call `get_rubric_for_position` which tries the
+    position-specific rubric first, then falls back to the class rubric.
 
     Empty string when there are too few feedback rows or generation fails.
     """
@@ -35,7 +54,7 @@ def get_learned_rubric_for_class(class_id: str, class_name: str) -> str:
     if count < settings.learned_rubric_min_samples:
         return ""
 
-    cached = _read_cached_rubric(class_id)
+    cached = _read_cached_rubric(class_id, CLASS_LEVEL_RUBRIC_KEY)
     if cached and cached.feedback_count == count and cached.rubric:
         return cached.rubric
 
@@ -50,12 +69,81 @@ def get_learned_rubric_for_class(class_id: str, class_name: str) -> str:
         return cached.rubric if cached else ""
 
     if rubric_text:
-        _save_rubric(class_id, class_name, rubric_text, count)
+        _save_rubric(class_id, CLASS_LEVEL_RUBRIC_KEY, class_name, rubric_text, count)
     return rubric_text or (cached.rubric if cached else "")
 
 
+def get_rubric_for_position(
+    position_uid: str,
+    class_id: str,
+    class_name: str,
+) -> tuple[str, str]:
+    """Three-layer rubric lookup: position-specific first, then class.
+
+    Returns:
+        (rubric_text, source)
+        rubric_text: prose to inject in the scoring prompt; "" if nothing
+            applicable.
+        source: "position" | "class" | "" (none) — for logging + the
+            scoring debug log so we know which layer was applied.
+
+    Read order:
+      1. learned_rubrics row at (class_id, position_uid) — bespoke rubric
+         for THIS position, synthesised from this position's feedback only.
+         Used when the position has accumulated >= POSITION_RUBRIC_MIN_SAMPLES
+         feedback rows.
+      2. learned_rubrics row at (class_id, '') — the class-level rubric
+         used as cold-start fallback when no position-specific rubric
+         exists yet.
+
+    Stale-cache regeneration is opportunistic: if the cached row's
+    feedback_count is behind the current count, we synthesise fresh on
+    this call (slow path) and overwrite. Cheap when warm.
+    """
+    if not class_id:
+        return ("", "")
+
+    # ── 1. Try position-specific rubric ────────────────────────────────
+    if position_uid:
+        pos_feedback_count = _feedback_count_for_position(position_uid)
+        if pos_feedback_count >= POSITION_RUBRIC_MIN_SAMPLES:
+            cached = _read_cached_rubric(class_id, position_uid)
+            if cached and cached.feedback_count == pos_feedback_count and cached.rubric:
+                return (cached.rubric, "position")
+            # Stale or missing — regenerate position-specific.
+            if settings.anthropic_api_key:
+                try:
+                    text = _regenerate_position_rubric(
+                        position_uid, class_id, class_name,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.exception(
+                        "position rubric regen failed for %s: %s",
+                        position_uid, exc,
+                    )
+                    text = ""
+                if text:
+                    _save_rubric(
+                        class_id, position_uid, class_name, text, pos_feedback_count,
+                    )
+                    return (text, "position")
+            # Fell through — use cached even if stale, before the class
+            # fallback.
+            if cached and cached.rubric:
+                return (cached.rubric, "position")
+
+    # ── 2. Fall back to class-level rubric ─────────────────────────────
+    class_text = get_learned_rubric_for_class(class_id, class_name)
+    return (class_text, "class" if class_text else "")
+
+
 def refresh_learned_rubric(class_id: str, class_name: str) -> dict:
-    """Force-regenerate, even if cache is fresh. Returns a result dict."""
+    """Force-regenerate the class-level rubric, even if cache is fresh.
+
+    Used by the CLI refresh-rubrics command. Position-specific rubrics
+    regenerate automatically via `get_rubric_for_position` once their
+    feedback_count diverges from the cache.
+    """
     if not settings.anthropic_api_key:
         return {"ok": False, "error": "ANTHROPIC_API_KEY not set"}
     try:
@@ -65,30 +153,93 @@ def refresh_learned_rubric(class_id: str, class_name: str) -> dict:
     if not rubric_text:
         return {"ok": False, "error": f"insufficient feedback (< {settings.learned_rubric_min_samples})"}
     count = feedback_count_for_class(class_id)
-    _save_rubric(class_id, class_name, rubric_text, count)
+    _save_rubric(class_id, CLASS_LEVEL_RUBRIC_KEY, class_name, rubric_text, count)
     return {
         "ok": True, "class_id": class_id, "class_name": class_name,
         "rubric_length": len(rubric_text), "feedback_count": count,
     }
 
 
+def refresh_position_rubric(position_uid: str, class_id: str, class_name: str) -> dict:
+    """Force-regenerate a position-specific rubric.
+
+    Used by the batch-complete hook after a calibration batch lands a
+    fresh set of feedback rows on this position.
+    """
+    if not settings.anthropic_api_key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY not set"}
+    if not (position_uid and class_id):
+        return {"ok": False, "error": "position_uid and class_id required"}
+    pos_feedback_count = _feedback_count_for_position(position_uid)
+    if pos_feedback_count < POSITION_RUBRIC_MIN_SAMPLES:
+        return {
+            "ok": False,
+            "error": f"insufficient feedback (< {POSITION_RUBRIC_MIN_SAMPLES})",
+            "feedback_count": pos_feedback_count,
+        }
+    try:
+        text = _regenerate_position_rubric(position_uid, class_id, class_name)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+    if not text:
+        return {"ok": False, "error": "rubric synthesis produced empty text"}
+    _save_rubric(class_id, position_uid, class_name, text, pos_feedback_count)
+    return {
+        "ok": True,
+        "position_uid": position_uid,
+        "class_id": class_id,
+        "rubric_length": len(text),
+        "feedback_count": pos_feedback_count,
+    }
+
+
 # ─── Internals ───────────────────────────────────────────────────────────────
-def _read_cached_rubric(class_id: str) -> LearnedRubric | None:
+def _feedback_count_for_position(position_uid: str) -> int:
+    """Count of valid feedback rows (both ai_rating and recruiter_rating present)
+    for one position."""
+    if not position_uid:
+        return 0
+    rows = list_feedback_for_position(position_uid)
+    return sum(1 for r in rows if r.ai_rating and r.recruiter_rating)
+
+
+def _read_cached_rubric(class_id: str, position_uid: str) -> LearnedRubric | None:
+    """Load one rubric row by composite key (class_id, position_uid).
+
+    Use position_uid='' (CLASS_LEVEL_RUBRIC_KEY) for the class-level row,
+    or the actual position uid for the position-specific row.
+    """
     with db_session() as session:
-        return session.scalar(select(LearnedRubric).where(LearnedRubric.class_id == class_id))
+        return session.scalar(
+            select(LearnedRubric).where(
+                (LearnedRubric.class_id == class_id)
+                & (LearnedRubric.position_uid == position_uid)
+            )
+        )
 
 
-def _save_rubric(class_id: str, class_name: str, rubric_text: str, feedback_count: int) -> None:
+def _save_rubric(
+    class_id: str,
+    position_uid: str,
+    class_name: str,
+    rubric_text: str,
+    feedback_count: int,
+) -> None:
+    """UPSERT a rubric row keyed by (class_id, position_uid).
+
+    position_uid='' → class-level row.
+    """
     with db_session() as session:
         stmt = pg_insert(LearnedRubric).values(
             class_id=class_id,
+            position_uid=position_uid,
             class_name=class_name,
             generated_at=datetime.now(timezone.utc),
             feedback_count=feedback_count,
             rubric=rubric_text,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[LearnedRubric.class_id],
+            index_elements=[LearnedRubric.class_id, LearnedRubric.position_uid],
             set_={
                 "class_name": stmt.excluded.class_name,
                 "generated_at": stmt.excluded.generated_at,
@@ -97,6 +248,35 @@ def _save_rubric(class_id: str, class_name: str, rubric_text: str, feedback_coun
             },
         )
         session.execute(stmt)
+
+
+def _regenerate_position_rubric(
+    position_uid: str,
+    class_id: str,
+    class_name: str,
+) -> str:
+    """Call Claude to synthesise a rubric from ONE position's feedback only.
+
+    Same prompt structure as the class-level synth, but the input pool is
+    narrower — only the recruiter ratings on this specific position. The
+    output is a tighter, more position-specific rubric that overrides the
+    class rubric for that position only.
+
+    Returns "" when there are too few rows. Caller is responsible for
+    persisting via `_save_rubric(class_id, position_uid, ...)`.
+    """
+    rows = list_feedback_for_position(position_uid)
+    valid = [r for r in rows if r.ai_rating and r.recruiter_rating]
+    if len(valid) < POSITION_RUBRIC_MIN_SAMPLES:
+        return ""
+    # Reuse the synthesis machinery — only difference is the prompt
+    # framing names the POSITION rather than the class, and the data
+    # block is filtered.
+    return _synthesise_rubric_text(
+        scope_label=f'position "{class_name}" ({position_uid})',
+        feedback_rows=valid,
+        scope_kind="position",
+    )
 
 
 def _regenerate_rubric(class_id: str, class_name: str) -> str:
@@ -112,6 +292,26 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
     valid = [r for r in rows if r.ai_rating and r.recruiter_rating]
     if len(valid) < settings.learned_rubric_min_samples:
         return ""
+    return _synthesise_rubric_text(
+        scope_label=f'position class "{class_name}"',
+        feedback_rows=valid,
+        scope_kind="class",
+    )
+
+
+def _synthesise_rubric_text(
+    *,
+    scope_label: str,
+    feedback_rows: list,
+    scope_kind: str,
+) -> str:
+    """Shared synthesis path for class + position rubrics.
+
+    `scope_label` flows into the prompt header.
+    `scope_kind`: "class" | "position" — affects guidance wording.
+    Returns the rubric prose or "" on failure.
+    """
+    valid = feedback_rows
 
     # Largest disagreements first (most informative), then newest.
     valid.sort(key=lambda r: (-r.margin, -r.timestamp.timestamp()))
@@ -176,9 +376,17 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
             "as wrong on large disagreements):\n" + "\n".join(lines) + "\n"
         )
 
+    scope_hint = (
+        "This rubric will apply to all positions in this class as a "
+        "cold-start baseline."
+        if scope_kind == "class"
+        else "This rubric will apply ONLY to this specific position. Lean "
+        "into the position-specific patterns the recruiter has shown."
+    )
+
     prompt = (
-        f'You are analysing recruiter feedback for the position class "{class_name}" to derive '
-        f"a scoring rubric the AI screener should follow.\n\n"
+        f"You are analysing recruiter feedback for {scope_label} to derive "
+        f"a scoring rubric the AI screener should follow. {scope_hint}\n\n"
         f"Below are {len(valid)} candidate evaluations: AI gave a rating; the recruiter then "
         "gave their own rating. The recruiter is the ground truth — your job is to synthesise their "
         "judgement into a rubric the AI can apply on future candidates.\n"
@@ -204,7 +412,10 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
     )
 
     client = Anthropic(api_key=settings.anthropic_api_key)
-    log.info("rubric: regenerating for class=%s with %d entries", class_id, len(valid))
+    log.info(
+        "rubric: synthesising (%s scope) %s with %d entries",
+        scope_kind, scope_label, len(valid),
+    )
     msg = client.messages.create(
         model=settings.claude_model,
         max_tokens=MAX_RUBRIC_TOKENS,
@@ -216,4 +427,11 @@ def _regenerate_rubric(class_id: str, class_name: str) -> str:
     return text
 
 
-__all__ = ["get_learned_rubric_for_class", "refresh_learned_rubric"]
+__all__ = [
+    "get_learned_rubric_for_class",
+    "get_rubric_for_position",
+    "refresh_learned_rubric",
+    "refresh_position_rubric",
+    "POSITION_RUBRIC_MIN_SAMPLES",
+    "CLASS_LEVEL_RUBRIC_KEY",
+]
