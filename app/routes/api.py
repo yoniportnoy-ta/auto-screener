@@ -22,10 +22,12 @@ from ..feedback import save_feedback
 from ..position_classes import (
     assign_position_class,
     create_custom_class,
+    get_industry_preferences,
     get_position_class,
     list_all_classes,
     list_auto_screen_positions,
     set_auto_screen_enabled,
+    set_industry_preferences,
     set_recruiter_notes,
 )
 from ..scan import score_one_candidate_now
@@ -1273,16 +1275,21 @@ def onboarding_auto_class(body: AutoClassBody) -> dict[str, Any]:
 class OnboardingBriefBody(BaseModel):
     position_uid: str = Field(min_length=1)
     brief: str = Field(max_length=10000)
+    # Industry preference lists. Both optional — when null, the existing
+    # values stay as-is (no-op overwrite). When supplied as empty string,
+    # the corresponding column is cleared. This lets the brief screen save
+    # only what the recruiter typed without forcing them to re-enter
+    # industries they already configured.
+    industries_up: str | None = Field(default=None, max_length=4000)
+    industries_down: str | None = Field(default=None, max_length=4000)
 
 
 @router.post("/onboarding/brief")
 def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
-    """Save the recruiter's free-text brief for a position. Persisted to
-    the position_classes.recruiter_notes column so future scans include it
-    in the scoring prompt automatically.
+    """Save the recruiter's free-text brief + optional industry preferences
+    for a position. Persisted to position_classes — used by every scan of
+    this position via the scoring prompt composer.
     """
-    from ..position_classes import set_recruiter_notes
-
     pos_uid = body.position_uid.strip()
     if pos_uid.isdigit():
         from ..scan import _resolve_numeric_position_uid
@@ -1292,6 +1299,16 @@ def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
 
     try:
         set_recruiter_notes(pos_uid, body.brief)
+        # When the body explicitly carries either field, persist both
+        # together. Treating None as "not provided" keeps backward
+        # compatibility with older clients (Chrome extension, scheduled
+        # tasks) that don't know about the new fields yet.
+        if body.industries_up is not None or body.industries_down is not None:
+            set_industry_preferences(
+                pos_uid,
+                industries_up=body.industries_up or "",
+                industries_down=body.industries_down or "",
+            )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, str(exc))
     return {"positionUid": pos_uid, "saved": True}
@@ -1299,15 +1316,23 @@ def onboarding_brief(body: OnboardingBriefBody) -> dict[str, Any]:
 
 @router.get("/onboarding/brief")
 def get_onboarding_brief(position_uid: str) -> dict[str, Any]:
-    """Read back the saved brief for a position so the wizard can show a
-    locked/readonly view when one already exists (vs an empty textarea)."""
+    """Read back the saved brief + industry prefs for a position so the
+    wizard can pre-fill the form instead of showing empty textareas when
+    the recruiter is re-entering."""
     from ..position_classes import get_recruiter_notes
 
     pos = _resolve_pos(position_uid)
     if not pos:
         raise HTTPException(400, "position_uid required")
     brief = get_recruiter_notes(pos)
-    return {"positionUid": pos, "brief": brief, "hasBrief": bool(brief)}
+    up, down = get_industry_preferences(pos)
+    return {
+        "positionUid": pos,
+        "brief": brief,
+        "hasBrief": bool(brief),
+        "industriesUp": up,
+        "industriesDown": down,
+    }
 
 
 @router.get("/onboarding/weights")
@@ -1612,6 +1637,7 @@ def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
     from ..rubrics import refresh_position_rubric, POSITION_RUBRIC_MIN_SAMPLES
     from ..db import db_session
     from ..models import CalibrationVerdict
+    from ..benchmark_stats import compute_benchmark_stats, is_dirty_feedback
     from sqlalchemy import select
 
     pos = _resolve_pos(body.position_uid)
@@ -1646,9 +1672,11 @@ def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
 
     # ── 2. Compute per-batch benchmark snapshots ────────────────────────
     # Pull every verdict for this (recruiter, position), bucket by
-    # round_num. For each round compute: count, avg(ai - recruiter),
-    # agreement % (recruiter & AI same side of running threshold), and
-    # per-axis flag counts from broken_axes_json.
+    # round_num. compute_benchmark_stats handles: dirty-verdict filtering,
+    # bias/MAE/RMSE, std-dev + discrimination ratio, false_negatives /
+    # false_positives, and per-axis tallies. We layer the running-threshold
+    # agreement on top because that's the only stat needing cross-round
+    # state (each round's threshold depends on earlier rounds' 👍s).
     with db_session() as ses:
         rows = ses.scalars(
             select(CalibrationVerdict).where(
@@ -1670,38 +1698,22 @@ def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
 
     running_threshold = None  # lowest 👍 rating to date
     batches = []
+    # Aggregate totals so the UI can render a header summary without
+    # walking the per-round payload itself.
+    total_dirty = 0
+    total_fn = 0
+    total_fp = 0
     for rn in sorted(by_round.keys()):
         bucket = by_round[rn]
-        n = len(bucket)
-        if n == 0:
+        n_raw = len(bucket)
+        if n_raw == 0:
             continue
-        # Update running threshold from EARLIER rounds only (this round's
-        # 👍s aren't known yet at the moment we compute its agreement).
-        deltas: list[float] = []
-        agree_n = 0
-        agree_d = 0
-        per_axis: dict[str, int] = {}
-        for v in bucket:
-            if v.ai_rating is not None and v.recruiter_rating is not None:
-                deltas.append(v.ai_rating - v.recruiter_rating)
-            # Agreement = same side of running threshold (when known).
-            if (
-                running_threshold is not None
-                and v.ai_rating is not None
-                and v.recruiter_rating is not None
-            ):
-                ai_pass = v.ai_rating >= running_threshold
-                rec_pass = v.recruiter_rating >= running_threshold
-                agree_d += 1
-                if ai_pass == rec_pass:
-                    agree_n += 1
-            # Per-axis tally
-            ax = v.broken_axes_json
-            if isinstance(ax, list):
-                for a in ax:
-                    per_axis[a] = per_axis.get(a, 0) + 1
-        # Update running threshold AFTER computing this round, so the
-        # next round uses the bar this round established.
+        # All numeric stats come from compute_benchmark_stats. We pass
+        # running_threshold so agreement_pct in the response reflects the
+        # threshold KNOWN AT THIS POINT (None until the first 👍).
+        stats = compute_benchmark_stats(bucket, threshold=running_threshold)
+        # Advance the running threshold AFTER computing this round so the
+        # next round uses the bar this round just established.
         for v in bucket:
             if (
                 v.recruiter_rating is not None
@@ -1709,13 +1721,26 @@ def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
                 and (running_threshold is None or v.recruiter_rating < running_threshold)
             ):
                 running_threshold = v.recruiter_rating
+
+        total_dirty += stats["dirty_count"]
+        total_fn += stats["false_negatives"]
+        total_fp += stats["false_positives"]
         batches.append({
             "round": rn,
-            "n": n,
-            "avg_delta": (sum(deltas) / len(deltas)) if deltas else None,
-            "agreement_pct": (agree_n / agree_d) if agree_d else None,
-            "agreement_n": agree_d,
-            "per_axis": per_axis,
+            "n": n_raw,                       # raw verdict count (incl. dirty)
+            "n_clean": stats["count"],         # numeric stats denominator
+            "dirty_count": stats["dirty_count"],
+            "avg_delta": stats["bias"],        # legacy alias
+            "bias": stats["bias"],
+            "mae": stats["mae"],
+            "agreement_pct": stats["agreement_pct"],
+            "agreement_n": stats["agreement_n"],
+            "std_ai": stats["std_ai"],
+            "std_recruiter": stats["std_recruiter"],
+            "discrimination_ratio": stats["discrimination_ratio"],
+            "false_negatives": stats["false_negatives"],
+            "false_positives": stats["false_positives"],
+            "per_axis": stats["per_axis"],
             "running_threshold": running_threshold,
         })
 
@@ -1724,6 +1749,13 @@ def calibration_batch_complete(body: BatchCompleteBody) -> dict[str, Any]:
         "rubric": rubric_result,
         "batches": batches,
         "thresholdAtFinish": running_threshold,
+        # Header totals for the round-summary UI banner. dirty_count > 0
+        # means stale-cache or API errors polluted this session and the
+        # numeric metrics already exclude those verdicts — UI surfaces a
+        # "n verdicts excluded" hint.
+        "dirtyCount": total_dirty,
+        "falseNegatives": total_fn,
+        "falsePositives": total_fp,
     }
 
 
@@ -1747,6 +1779,7 @@ def calibration_finalize(body: FinalizeBody) -> dict[str, Any]:
     """
     from ..db import db_session
     from ..models import CalibrationVerdict, RecruiterThreshold
+    from ..benchmark_stats import compute_benchmark_stats
     from sqlalchemy import select, desc
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -1791,54 +1824,52 @@ def calibration_finalize(body: FinalizeBody) -> dict[str, Any]:
             )
             final_threshold = t_row.thumbs_up_min_rating if t_row else None
 
-    # Per-batch under the FINAL threshold (honest "if we had this rubric +
-    # threshold from the start" metric).
+    # Per-batch under the FINAL threshold ("honest replay" — what the
+    # agreement curve would look like if we'd had this threshold from the
+    # start). Aggregate totals come from a single all-rows call so the
+    # header stays consistent with the per-batch numbers.
+    overall_stats = compute_benchmark_stats(rows, threshold=final_threshold)
+
     by_round: dict[int, list] = {}
     for r in rows:
         by_round.setdefault(r.round_num or 1, []).append(r)
     batches = []
-    total_axis: dict[str, int] = {}
-    deltas_all: list[float] = []
-    agree_n = 0
-    agree_d = 0
     for rn in sorted(by_round.keys()):
         bucket = by_round[rn]
-        deltas: list[float] = []
-        b_agree_n = 0
-        b_agree_d = 0
-        per_axis: dict[str, int] = {}
-        for v in bucket:
-            if v.ai_rating is not None and v.recruiter_rating is not None:
-                d = v.ai_rating - v.recruiter_rating
-                deltas.append(d)
-                deltas_all.append(d)
-                if final_threshold is not None:
-                    ai_pass = v.ai_rating >= final_threshold
-                    rec_pass = v.recruiter_rating >= final_threshold
-                    b_agree_d += 1
-                    agree_d += 1
-                    if ai_pass == rec_pass:
-                        b_agree_n += 1
-                        agree_n += 1
-            ax = v.broken_axes_json
-            if isinstance(ax, list):
-                for a in ax:
-                    per_axis[a] = per_axis.get(a, 0) + 1
-                    total_axis[a] = total_axis.get(a, 0) + 1
+        bs = compute_benchmark_stats(bucket, threshold=final_threshold)
         batches.append({
             "round": rn,
             "n": len(bucket),
-            "avg_delta": (sum(deltas) / len(deltas)) if deltas else None,
-            "agreement_pct": (b_agree_n / b_agree_d) if b_agree_d else None,
-            "per_axis": per_axis,
+            "n_clean": bs["count"],
+            "dirty_count": bs["dirty_count"],
+            "avg_delta": bs["bias"],
+            "bias": bs["bias"],
+            "mae": bs["mae"],
+            "agreement_pct": bs["agreement_pct"],
+            "std_ai": bs["std_ai"],
+            "std_recruiter": bs["std_recruiter"],
+            "discrimination_ratio": bs["discrimination_ratio"],
+            "false_negatives": bs["false_negatives"],
+            "false_positives": bs["false_positives"],
+            "per_axis": bs["per_axis"],
         })
     return {
         "positionUid": pos,
         "totalRatings": len(rows),
+        "totalClean": overall_stats["count"],
+        "dirtyCount": overall_stats["dirty_count"],
+        "dirtyUids": overall_stats["dirty_uids"],
         "finalThreshold": final_threshold,
-        "bias": (sum(deltas_all) / len(deltas_all)) if deltas_all else None,
-        "agreementOverall": (agree_n / agree_d) if agree_d else None,
-        "perAxisTotals": total_axis,
+        "bias": overall_stats["bias"],
+        "mae": overall_stats["mae"],
+        "rmse": overall_stats["rmse"],
+        "stdAi": overall_stats["std_ai"],
+        "stdRecruiter": overall_stats["std_recruiter"],
+        "discriminationRatio": overall_stats["discrimination_ratio"],
+        "falseNegatives": overall_stats["false_negatives"],
+        "falsePositives": overall_stats["false_positives"],
+        "agreementOverall": overall_stats["agreement_pct"],
+        "perAxisTotals": overall_stats["per_axis"],
         "batches": batches,
     }
 

@@ -348,6 +348,82 @@
       max-height: 320px;
       overflow-y: auto;
     }
+    /* Industry preference fields under the brief textarea. Two stacked
+       textareas, each with a label and an optional-hint badge. Compact
+       — they're meta to the brief, not the brief itself. */
+    .brief-industries {
+      margin-top: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .brief-industries-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .brief-industries-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+    .brief-industries-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .brief-industries-hint {
+      font-weight: 400;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .brief-industries-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    textarea.brief-industries-input {
+      width: 100%;
+      min-height: 60px;
+      padding: 0.55rem 0.7rem;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      line-height: 1.45;
+      resize: vertical;
+    }
+    textarea.brief-industries-input:focus { outline: none; border-color: var(--accent); }
+    /* Locked-view chip-style display of the saved industries. */
+    .brief-locked-industries {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      padding-top: 0.5rem;
+      margin-top: 0.5rem;
+      border-top: 1px dashed var(--border);
+    }
+    .brief-locked-industries.hidden { display: none; }
+    .brief-locked-industries-row {
+      display: flex;
+      gap: 0.6rem;
+      align-items: baseline;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    .brief-locked-industries-row.hidden { display: none; }
+    .brief-locked-industries-label {
+      font-weight: 600;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      letter-spacing: 0.02em;
+    }
+    .brief-locked-industries-text {
+      color: var(--text);
+      white-space: pre-wrap;
+    }
     .btn-tertiary {
       background: transparent;
       color: var(--text-muted);
@@ -927,6 +1003,18 @@
       border-left-color: var(--warn, #f59e0b);
       color: var(--text-muted);
     }
+    /* Warning tone — used inline in the round-summary diagnostics for
+       AI-collapse (σ ratio < 0.5), false-negative counts, and the
+       dirty-verdict banner. Same red as --err so it pops without being
+       a full banner block. */
+    .cal-mini-chart-warn { color: var(--err, #ef4444); font-weight: 600; }
+    .cal-mini-chart-diag {
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .cal-meta-warn { color: var(--err, #ef4444); font-weight: 600; }
 
     /* ─── Meta-benchmark + threshold setter panel ─── */
     .cal-meta {
@@ -1524,12 +1612,51 @@
           </button>
         </div>
         <div class="brief-locked-text" id="briefLockedText"></div>
+        <!-- Industries section only shows up when at least one list is
+             populated, so the locked view stays compact for positions
+             whose brief is just free text. -->
+        <div id="briefLockedIndustries" class="brief-locked-industries hidden">
+          <div class="brief-locked-industries-row" id="briefLockedUpRow">
+            <span class="brief-locked-industries-label">Weight up:</span>
+            <span class="brief-locked-industries-text" id="briefLockedUpText"></span>
+          </div>
+          <div class="brief-locked-industries-row" id="briefLockedDownRow">
+            <span class="brief-locked-industries-label">Weight down:</span>
+            <span class="brief-locked-industries-text" id="briefLockedDownText"></span>
+          </div>
+        </div>
       </div>
 
       <!-- Edit view: textarea + save -->
       <div id="briefEdit" class="brief-edit hidden">
         <textarea class="brief-input" id="briefText"
           placeholder="e.g. Looking for an iOS engineer with 4+ yrs at high-traffic consumer apps. Must have led at least one feature end-to-end. Prefer candidates with experience in real-time / media-heavy products. Hard rejects: agency-only background, no team-lead experience."></textarea>
+
+        <!-- Industry preferences — high-signal directives that get
+             applied to every candidate. Optional; recruiter can leave
+             both blank if they don't have a strong industry preference.
+             Filled at brief-time to avoid the recruiter having to repeat
+             the same "non-realtime SaaS" / "no fintech" feedback on
+             every candidate during calibration. -->
+        <div class="brief-industries">
+          <div class="brief-industries-row">
+            <label class="brief-industries-label" for="briefIndustriesUp">
+              <span class="brief-industries-title">Industries to weight up <span class="brief-industries-hint">(optional)</span></span>
+              <span class="brief-industries-sub">e.g. real-time SaaS, consumer video, creator-economy, mobile platforms</span>
+            </label>
+            <textarea class="brief-industries-input" id="briefIndustriesUp"
+              placeholder="Comma-separated or one per line. Candidates from these industries get a domain boost."></textarea>
+          </div>
+          <div class="brief-industries-row">
+            <label class="brief-industries-label" for="briefIndustriesDown">
+              <span class="brief-industries-title">Industries to weight down <span class="brief-industries-hint">(optional)</span></span>
+              <span class="brief-industries-sub">e.g. fintech / banking, cybersecurity, government / defense, low-traffic B2B</span>
+            </label>
+            <textarea class="brief-industries-input" id="briefIndustriesDown"
+              placeholder="Comma-separated or one per line. Candidates whose recent companies are mostly in these industries get discounted."></textarea>
+          </div>
+        </div>
+
         <div class="button-row">
           <button class="btn-primary" id="step4Next" disabled>Save brief →</button>
         </div>
@@ -2097,6 +2224,10 @@
     // The Re-enter button drops back into edit mode (textarea pre-filled)
     // so updates are explicit, not accidental.
 
+    // Stash for the locked → edit transition so "Re-enter" can pre-fill
+    // industries too without an extra fetch.
+    let briefSavedIndustries = { up: "", down: "" };
+
     async function loadBriefStep() {
       $("briefLoading").classList.remove("hidden");
       $("briefLocked").classList.add("hidden");
@@ -2108,35 +2239,67 @@
           encodeURIComponent(state.positionUid)
         );
         const brief = (res && res.brief) || "";
+        const up = (res && res.industriesUp) || "";
+        const down = (res && res.industriesDown) || "";
+        briefSavedIndustries = { up, down };
         if (brief) {
-          renderBriefLocked(brief);
+          renderBriefLocked(brief, up, down);
         } else {
-          renderBriefEdit("");
+          renderBriefEdit("", up, down);
         }
         // Load weights in parallel — recruiter can adjust them whether
         // the brief is already saved or being typed for the first time.
         loadWeightsPanel();
       } catch (_) {
         // On error, just show the edit view so the recruiter isn't stuck.
-        renderBriefEdit("");
+        renderBriefEdit("", "", "");
         loadWeightsPanel();
       } finally {
         $("briefLoading").classList.add("hidden");
       }
     }
 
-    function renderBriefLocked(text) {
+    function renderBriefLocked(text, industriesUp, industriesDown) {
       $("briefLockedText").textContent = text;
       $("briefLocked").classList.remove("hidden");
       $("briefEdit").classList.add("hidden");
+
+      // Toggle industries section — only show when at least one list has
+      // content. Each row hides individually so the recruiter only sees
+      // what they explicitly configured.
+      const up = (industriesUp || "").trim();
+      const down = (industriesDown || "").trim();
+      const wrap = $("briefLockedIndustries");
+      const upRow = $("briefLockedUpRow");
+      const downRow = $("briefLockedDownRow");
+      if (up || down) {
+        wrap.classList.remove("hidden");
+        if (up) {
+          $("briefLockedUpText").textContent = up;
+          upRow.classList.remove("hidden");
+        } else {
+          upRow.classList.add("hidden");
+        }
+        if (down) {
+          $("briefLockedDownText").textContent = down;
+          downRow.classList.remove("hidden");
+        } else {
+          downRow.classList.add("hidden");
+        }
+      } else {
+        wrap.classList.add("hidden");
+      }
+      briefSavedIndustries = { up, down };
       // Stash it in session state so the sidebar can show it too.
       state.brief = text;
       saveState();
       renderSessionHeader();
     }
 
-    function renderBriefEdit(prefill) {
+    function renderBriefEdit(prefill, industriesUp, industriesDown) {
       $("briefText").value = prefill || "";
+      $("briefIndustriesUp").value = industriesUp || "";
+      $("briefIndustriesDown").value = industriesDown || "";
       $("step4Next").disabled = !((prefill || "").trim());
       $("briefEdit").classList.remove("hidden");
       $("briefLocked").classList.add("hidden");
@@ -2150,17 +2313,24 @@
 
     $("briefReenterBtn").addEventListener("click", () => {
       // Re-enter with current value pre-filled so they can tweak instead
-      // of retyping from scratch.
-      renderBriefEdit($("briefLockedText").textContent || "");
+      // of retyping from scratch. Industry fields come from the cached
+      // values loaded with the brief — saves a round-trip.
+      renderBriefEdit(
+        $("briefLockedText").textContent || "",
+        briefSavedIndustries.up || "",
+        briefSavedIndustries.down || "",
+      );
     });
 
-    // "Save brief" — write the new brief, then keep the recruiter in
-    // the same step so they can still adjust the weight sliders. (We
-    // used to go straight to calibration here, but with weights below
-    // the brief, we want the recruiter to see both before starting.)
+    // "Save brief" — write the new brief + industry preferences, then
+    // keep the recruiter in the same step so they can still adjust the
+    // weight sliders. Industries are always sent (even when empty) so
+    // clearing the field clears the column server-side.
     $("step4Next").addEventListener("click", async () => {
       const text = $("briefText").value.trim();
       if (!text) return;
+      const up = $("briefIndustriesUp").value.trim();
+      const down = $("briefIndustriesDown").value.trim();
       const btn = $("step4Next");
       btn.disabled = true;
       btn.textContent = "Saving…";
@@ -2168,13 +2338,18 @@
         await api("/api/onboarding/brief", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ position_uid: state.positionUid, brief: text }),
+          body: JSON.stringify({
+            position_uid: state.positionUid,
+            brief: text,
+            industries_up: up,
+            industries_down: down,
+          }),
         });
         state.brief = text;
         saveState();
         renderSessionHeader();
         // Swap to the locked view; the weights panel is already loaded.
-        renderBriefLocked(text);
+        renderBriefLocked(text, up, down);
       } catch (e) {
         setErr(e.message || String(e));
         btn.disabled = false;
@@ -3187,6 +3362,43 @@
         : '<div class="cal-mini-chart-rubric cal-mini-chart-rubric-pending">' +
           'Position rubric: ' + (rubric.feedback_count || 0) + ' / ' +
           (rubric.min_samples_needed || 5) + ' ratings — class rubric still in play.</div>';
+
+      // Last-round diagnostics: surface discrimination ratio + FN/FP counts +
+      // dirty-verdict count so the recruiter can see whether the AI is
+      // still discriminating (drops below 0.5 = AI flattened to one rating)
+      // or making expensive asymmetric misses.
+      const lastBatch = batches[batches.length - 1] || {};
+      const disc = lastBatch.discrimination_ratio;
+      const fn = lastBatch.false_negatives || 0;
+      const fp = lastBatch.false_positives || 0;
+      const dirty = res.dirtyCount || 0;
+      const discTone = (disc != null && disc < 0.5)
+        ? 'cal-mini-chart-warn'
+        : '';
+      const diagBits = [];
+      if (disc != null) {
+        diagBits.push(
+          '<span class="' + discTone + '">σ ratio ' + disc.toFixed(2) +
+          (disc < 0.5 ? ' (AI collapsing)' : '') + '</span>'
+        );
+      }
+      if (fn > 0) {
+        diagBits.push(
+          '<span class="cal-mini-chart-warn">' + fn + ' false-neg</span>'
+        );
+      }
+      if (fp > 0) {
+        diagBits.push(fp + ' false-pos');
+      }
+      const diagLine = diagBits.length
+        ? '<div class="cal-mini-chart-diag">' + diagBits.join(' &nbsp;·&nbsp; ') + '</div>'
+        : '';
+      const dirtyLine = dirty > 0
+        ? '<div class="cal-mini-chart-warn cal-mini-chart-rubric">' +
+          '⚠ ' + dirty + ' verdict' + (dirty === 1 ? '' : 's') +
+          ' excluded (cache/API error in feedback)</div>'
+        : '';
+
       slot.innerHTML =
         '<div class="cal-mini-chart-title">Per-batch trajectory</div>' +
         '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">' +
@@ -3198,6 +3410,8 @@
         '<span class="cal-mini-chart-legend-bar"></span> agreement % &nbsp;|&nbsp; ' +
         '<span class="cal-mini-chart-legend-line"></span> avg AI − recruiter delta' +
         '</div>' +
+        diagLine +
+        dirtyLine +
         rubricLine;
     }
 
@@ -3254,19 +3468,53 @@
     function renderMetaBenchmark(res) {
       const batches = res.batches || [];
       const n = res.totalRatings || 0;
+      const clean = res.totalClean != null ? res.totalClean : n;
+      const dirty = res.dirtyCount || 0;
       const bias = res.bias;
       const agreement = res.agreementOverall;
       const perAxis = res.perAxisTotals || {};
+      const disc = res.discriminationRatio;
+      const fn = res.falseNegatives || 0;
+      const fp = res.falsePositives || 0;
+      const mae = res.mae;
+
+      // Headline: keep it short — just the headline diagnostics. Detailed
+      // breakdown lands in calMetaStats below the chart. New metrics: σ
+      // ratio (AI collapse early-warning), FN/FP counts (asymmetric misses),
+      // dirty count (data quality).
+      let extras = "";
+      if (disc != null) {
+        const tag = disc < 0.5
+          ? '<span class="cal-meta-warn">σ ratio ' + disc.toFixed(2) +
+            ' — AI collapsing</span>'
+          : 'σ ratio ' + disc.toFixed(2);
+        extras += ' &nbsp;·&nbsp; ' + tag;
+      }
+      if (fn > 0) {
+        extras += ' &nbsp;·&nbsp; <span class="cal-meta-warn">' + fn +
+          ' false-neg</span>';
+      }
+      if (fp > 0) {
+        extras += ' &nbsp;·&nbsp; ' + fp + ' false-pos';
+      }
+      if (mae != null) {
+        extras += ' &nbsp;·&nbsp; MAE ' + mae.toFixed(2);
+      }
+      const dirtyTag = dirty > 0
+        ? ' <span class="cal-meta-warn">(' + dirty + ' excluded for cache/API errors)</span>'
+        : '';
 
       $("calMetaHeadline").innerHTML =
-        "<strong>" + n + " ratings</strong> across " + batches.length + " batches. " +
+        "<strong>" + clean + " ratings</strong>" + dirtyTag +
+        " across " + batches.length + " batches. " +
         "Final bias: <strong>" +
         (bias == null ? "—" : (bias >= 0 ? "+" : "") + bias.toFixed(2)) +
         "</strong> (AI − recruiter). " +
         (agreement == null
           ? ""
           : "Threshold-bucket agreement: <strong>" +
-            Math.round(agreement * 100) + "%</strong>.");
+            Math.round(agreement * 100) + "%</strong>.") +
+        extras;
 
       // Meta chart: scaled-up version of the mini chart — one column per
       // batch, agreement bar + delta line. Larger viewBox so it reads as the

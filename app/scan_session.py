@@ -54,6 +54,12 @@ class ScanSession:
     position_full_location: str = ""
     position_notes: str = ""
     recruiter_notes: str = ""
+    # Structured industry preferences captured at brief-time and injected
+    # into the scoring prompt as a dedicated "INDUSTRY PREFERENCES" block.
+    # Separate from recruiter_notes so the prompt composer can use the
+    # right directive language ("weight up / weight down") per field.
+    industries_up: str = ""
+    industries_down: str = ""
     created_at: float = field(default_factory=lambda: time.time())
 
     def to_json(self) -> str:

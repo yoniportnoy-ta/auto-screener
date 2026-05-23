@@ -223,9 +223,16 @@ def rating_to_verdict(rating: int | None) -> Verdict | None:
     """Map a precise 1-10 recruiter rating into the legacy thumb-trichotomy
     bucket for backwards compatibility with threshold math.
 
-      1-3  → down     (auto-reject territory)
-      4-6  → question (uncertain / interview required)
-      7-10 → up       (would advance)
+      1-4  → down     (auto-reject territory — "won't call")
+      5-6  → question (genuine maybe, would need more info)
+      7-10 → up       (would advance to interview)
+
+    Boundary tightened from (1-3=down) on 2026-05-23 after the 76.85A
+    trial calibration: recruiter Rec=4 ratings consistently came with
+    feedback like "would not call" / "too junior" / "uni is good but
+    nothing else." Treating those as "question" was eating 12% of the
+    bucket-agreement metric for no reason — the recruiter never
+    intended a 4 to mean "maybe."
     """
     if rating is None:
         return None
@@ -233,7 +240,7 @@ def rating_to_verdict(rating: int | None) -> Verdict | None:
         r = int(rating)
     except (TypeError, ValueError):
         return None
-    if r <= 3:
+    if r <= 4:
         return "down"
     if r <= 6:
         return "question"

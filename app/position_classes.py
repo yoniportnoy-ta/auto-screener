@@ -87,6 +87,8 @@ def get_position_class(position_uid: str) -> dict | None:
             "level": row.level,
             "autoScreenEnabled": bool(row.auto_screen_enabled),
             "recruiterNotes": row.recruiter_notes or "",
+            "industriesUp": row.industries_up or "",
+            "industriesDown": row.industries_down or "",
         }
 
 
@@ -136,6 +138,76 @@ def get_recruiter_notes(position_uid: str) -> str:
         if not row:
             return ""
         return (row.recruiter_notes or "").strip()
+
+
+def set_industry_preferences(
+    position_uid: str, *, industries_up: str = "", industries_down: str = "",
+) -> dict:
+    """Persist the favor / discount industry lists. Both args optional —
+    pass an empty string to clear that list while leaving the other
+    untouched in caller logic (the API endpoint always sends both fields
+    so we don't need a 'partial update' mode here)."""
+    uid = (position_uid or "").strip()
+    if not uid:
+        raise ValueError("position_uid required")
+    up = (industries_up or "").strip()
+    down = (industries_down or "").strip()
+    with db_session() as session:
+        row = session.scalar(select(PositionClass).where(PositionClass.position_uid == uid))
+        if not row:
+            raise ValueError(
+                "Position has no class assigned yet — pick a class before saving industry preferences."
+            )
+        row.industries_up = up or None
+        row.industries_down = down or None
+    return {"positionUid": uid, "industriesUp": up, "industriesDown": down}
+
+
+def get_industry_preferences(position_uid: str) -> tuple[str, str]:
+    """Return (industries_up, industries_down) for a position. Empty tuple
+    parts when none set. Used by the scoring prompt composer to inject a
+    dedicated section into the candidate context."""
+    uid = (position_uid or "").strip()
+    if not uid:
+        return ("", "")
+    with db_session() as session:
+        row = session.scalar(select(PositionClass).where(PositionClass.position_uid == uid))
+        if not row:
+            return ("", "")
+        return ((row.industries_up or "").strip(), (row.industries_down or "").strip())
+
+
+def format_industry_block(industries_up: str, industries_down: str) -> str:
+    """Build the directive prompt block. Empty string when neither list set.
+
+    Wrapped in a labelled section so the AI treats it as a high-signal
+    directive — same pattern as the recruiter notes block. We bias the
+    language toward "weight up / weight down" rather than "must / must not"
+    because these are signals, not hard gates (location is the only hard
+    gate; everything else is graded). The 4B.F59 / 76.85A iterations showed
+    that the AI obeys signal-strength language without over-applying it as
+    a binary filter."""
+    up = (industries_up or "").strip()
+    down = (industries_down or "").strip()
+    if not up and not down:
+        return ""
+    parts = ["[INDUSTRY PREFERENCES on this position — applied to every candidate]"]
+    if up:
+        parts.append(
+            "INDUSTRIES TO WEIGHT UP (candidates from these industries should "
+            "score higher on company_domain and company_tier — they're the "
+            "kinds of companies this role specifically values):"
+        )
+        parts.append(up)
+    if down:
+        parts.append(
+            "INDUSTRIES TO WEIGHT DOWN (candidates whose recent companies are "
+            "primarily in these industries should be discounted on "
+            "company_domain — domain adjacency is poor for this role even if "
+            "the company names are individually well-known):"
+        )
+        parts.append(down)
+    return "\n".join(parts)
 
 
 def list_auto_screen_positions() -> list[str]:

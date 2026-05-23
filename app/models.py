@@ -73,6 +73,14 @@ class PositionClass(Base):
     # or the JD itself — "agency hires count as a no, regardless of resume",
     # "we want EU candidates only", etc.
     recruiter_notes: Mapped[str | None] = mapped_column(Text, default=None)
+    # Structured industry preferences — "favor candidates from realtime SaaS,
+    # consumer video, creator-economy platforms" / "discount banking, fintech,
+    # cybersecurity, government contracting". Filled at brief-time. Without
+    # these, the AI was burning calibration cycles inferring industry weights
+    # from per-candidate feedback strings (e.g. 76.85A trial: 24 broken_axes
+    # flags on company_tier+company_domain all saying the same thing).
+    industries_up: Mapped[str | None] = mapped_column(Text, default=None)
+    industries_down: Mapped[str | None] = mapped_column(Text, default=None)
     # Per-position weights for the 6 scoring dimensions. Dict shape:
     #   {"domain_match": 25, "company_tier": 20, ...}  sum must be 100.
     # Null means "use defaults". Set via the wizard's weight-slider panel

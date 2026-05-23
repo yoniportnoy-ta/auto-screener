@@ -57,6 +57,14 @@ async def cmd_benchmark(position_uid: str | None = None) -> int:
     from .db import db_session
     from .models import CalibrationVerdict, DebugScoring
     from .scan import _resolve_numeric_position_uid
+    from .benchmark_stats import (
+        compute_benchmark_stats,
+        is_dirty_feedback,
+        FN_AI_MAX,
+        FN_REC_MIN,
+        FP_AI_MIN,
+        FP_REC_MAX,
+    )
 
     pos = (position_uid or "").strip()
     if pos and pos.isdigit():
@@ -125,8 +133,10 @@ async def cmd_benchmark(position_uid: str | None = None) -> int:
                 continue
             latest_scoring[key] = r
 
-    # Build the comparison rows.
+    # Build the comparison rows. Track dirty (cache-error) verdicts
+    # separately so they're displayed but excluded from the summary stats.
     rows: list[dict] = []
+    dirty_rows: list[dict] = []
     for v in verdicts:
         s = latest_scoring.get((v["position_uid"] or "", v["candidate_uid"] or ""))
         if not s:
@@ -139,7 +149,8 @@ async def cmd_benchmark(position_uid: str | None = None) -> int:
             gates.append("LOC")
         if s.dim_domain_match is not None and s.dim_domain_match < 5 and ai <= 5:
             gates.append("DOM")
-        rows.append({
+        is_dirty = is_dirty_feedback(v["feedback_text"])
+        row = {
             "name": s.candidate_name or v["candidate_uid"] or "—",
             "position": s.position_name or v["position_uid"] or "—",
             "ai": ai,
@@ -148,9 +159,14 @@ async def cmd_benchmark(position_uid: str | None = None) -> int:
             "abs_delta": abs(delta),
             "gates": ",".join(gates) or "—",
             "feedback": v["feedback_text"],
-        })
+            "dirty": is_dirty,
+        }
+        if is_dirty:
+            dirty_rows.append(row)
+        else:
+            rows.append(row)
 
-    if not rows:
+    if not rows and not dirty_rows:
         log.info("benchmark: no matched (verdict + scoring) rows")
         return 0
 
@@ -173,27 +189,73 @@ async def cmd_benchmark(position_uid: str | None = None) -> int:
     if len(rows) > 80:
         print(f"... and {len(rows) - 80} more")
 
-    # Summary stats.
-    n = len(rows)
-    abs_deltas = [r["abs_delta"] for r in rows]
-    deltas = [r["delta"] for r in rows]
-    mean_abs = sum(abs_deltas) / n
-    rmse = (sum(d * d for d in deltas) / n) ** 0.5
-    within_1 = sum(1 for d in abs_deltas if d <= 1) / n * 100
-    within_2 = sum(1 for d in abs_deltas if d <= 2) / n * 100
-    bias = sum(deltas) / n
-    overcalls = sum(1 for d in deltas if d > 0)
-    undercalls = sum(1 for d in deltas if d < 0)
+    if dirty_rows:
+        # These are usually one-off — stale enrichment cache or transient
+        # Anthropic 5xxs captured into feedback_text. Show them at the
+        # bottom so the operator knows to look, and exclude them from
+        # the summary stats below.
+        print()
+        print(f"─── ⚠ {len(dirty_rows)} dirty verdict(s) (excluded from stats) ──────────")
+        for r in dirty_rows[:20]:
+            print(
+                f"  {r['name'][:30]:<32} "
+                f"AI={r['ai']:>2} You={r['recruiter']:>2}  "
+                f"{(r['feedback'][:70] or '')}"
+            )
+        if len(dirty_rows) > 20:
+            print(f"  ... and {len(dirty_rows) - 20} more")
+
+    # Summary stats — computed via the shared helper so the CLI agrees
+    # with the round-summary UI and the meta-benchmark down to the digit.
+    # We pass the raw verdict-like dicts so the helper re-runs the dirty
+    # filter (defensive — the rows here are already clean, but using the
+    # helper keeps one source of truth).
+    stats = compute_benchmark_stats(
+        [
+            {
+                "ai_rating": r["ai"],
+                "recruiter_rating": r["recruiter"],
+                "feedback_text": r["feedback"],
+            }
+            for r in rows
+        ],
+    )
+    n = stats["count"]
+    if n == 0:
+        print()
+        print("─── Summary ──────────────────────────────────────────────")
+        print(f"  (no clean verdicts — {len(dirty_rows)} dirty rows excluded)")
+        return 0
+
+    overcalls = sum(1 for r in rows if r["delta"] > 0)
+    undercalls = sum(1 for r in rows if r["delta"] < 0)
+    disc = stats["discrimination_ratio"]
+    disc_warning = ""
+    if disc is not None and disc < 0.5:
+        disc_warning = "  ⚠ AI collapsing (σ ratio < 0.5)"
+    elif disc is not None and disc > 1.5:
+        disc_warning = "  ⚠ AI over-spread (σ ratio > 1.5)"
 
     print()
     print("─── Summary ──────────────────────────────────────────────")
-    print(f"  n            : {n}")
-    print(f"  mean |Δ|     : {mean_abs:.2f}")
-    print(f"  RMSE         : {rmse:.2f}")
-    print(f"  within ±1    : {within_1:.1f}%")
-    print(f"  within ±2    : {within_2:.1f}%")
-    print(f"  bias (AI − you): {bias:+.2f}  "
-          f"({'AI over-rates' if bias > 0 else 'AI under-rates' if bias < 0 else 'no bias'})")
+    print(f"  n            : {n}" + (f"  ({len(dirty_rows)} dirty excluded)" if dirty_rows else ""))
+    print(f"  mean |Δ|     : {stats['mae']:.2f}")
+    print(f"  RMSE         : {stats['rmse']:.2f}")
+    print(f"  within ±1    : {stats['within_1'] * 100:.1f}%")
+    print(f"  within ±2    : {stats['within_2'] * 100:.1f}%")
+    print(f"  bias (AI−you): {stats['bias']:+.2f}  "
+          f"({'AI over-rates' if stats['bias'] > 0 else 'AI under-rates' if stats['bias'] < 0 else 'no bias'})")
+    print(f"  AI σ / Rec σ : "
+          + (f"{stats['std_ai']:.2f} / {stats['std_recruiter']:.2f}"
+             if stats['std_ai'] is not None and stats['std_recruiter'] is not None
+             else "—"))
+    print(f"  σ ratio      : "
+          + (f"{disc:.2f}" if disc is not None else "—")
+          + disc_warning)
+    print(f"  false-neg    : {stats['false_negatives']}  "
+          f"(AI≤{FN_AI_MAX} & you≥{FN_REC_MIN} — would reject who you'd interview)")
+    print(f"  false-pos    : {stats['false_positives']}  "
+          f"(AI≥{FP_AI_MIN} & you≤{FP_REC_MAX} — would advance who you'd skip)")
     print(f"  over-calls   : {overcalls} (AI > you)")
     print(f"  under-calls  : {undercalls} (AI < you)")
     print()

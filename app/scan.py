@@ -36,7 +36,7 @@ from .config import settings
 from .db import db_session
 from .feedback import saturated_candidate_uids_for_position
 from .models import CandidateLock
-from .position_classes import get_position_class as get_class_for_position
+from .position_classes import format_industry_block, get_position_class as get_class_for_position
 from .scan_session import (
     ScanSession,
     delete_session,
@@ -224,6 +224,8 @@ def begin_scan_batch(
         jd_text=jd_text,
         position_notes=position_notes,
         recruiter_notes=cls.get("recruiterNotes") or "",
+        industries_up=cls.get("industriesUp") or "",
+        industries_down=cls.get("industriesDown") or "",
     )
     save_session(sess)
 
@@ -327,6 +329,16 @@ def score_candidate_in_session(session_id: str, candidate_uid: str) -> Candidate
             + "\n\n[RECRUITER NOTES on this position — persistent guidance for all candidates]\n"
             + sess.recruiter_notes
         ).strip()
+    # Industry preferences (favor / discount lists) captured at brief-time.
+    # Treated as a higher-leverage directive than the free-text recruiter
+    # notes since the recruiter explicitly enumerated which domains map
+    # to company_domain up- vs down-weights.
+    industry_block = format_industry_block(
+        getattr(sess, "industries_up", ""),
+        getattr(sess, "industries_down", ""),
+    )
+    if industry_block:
+        process_ctx = (process_ctx + "\n\n" + industry_block).strip()
 
     try:
         fb_ctx = _feedback_context(
@@ -512,6 +524,14 @@ def score_one_candidate_now(
             + "\n\n[RECRUITER NOTES on this position — persistent guidance for all candidates]\n"
             + cls["recruiterNotes"]
         ).strip()
+    # Industry preferences (favor / discount). Same prompt block the batched
+    # path uses — single source of truth in position_classes.format_industry_block.
+    industry_block = format_industry_block(
+        cls.get("industriesUp") or "",
+        cls.get("industriesDown") or "",
+    )
+    if industry_block:
+        process_ctx = (process_ctx + "\n\n" + industry_block).strip()
 
     try:
         fb_ctx = _feedback_context(
