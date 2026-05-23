@@ -383,8 +383,8 @@ def position_full_reset(body: PositionRescoreBody) -> dict[str, Any]:
     from ..comeet_client import ComeetClient
     from ..db import db_session
     from ..models import (
-        CalibrationVerdict, CandidateLock, DebugScoring, Feedback,
-        LearnedRubric, RecruiterThreshold,
+        CalibrationVerdict, CandidateEnrichment, CandidateLock, DebugScoring,
+        Feedback, LearnedRubric, RecruiterThreshold,
     )
 
     pos_uid = body.position_uid.strip()
@@ -409,15 +409,19 @@ def position_full_reset(body: PositionRescoreBody) -> dict[str, Any]:
             delete(LearnedRubric).where(LearnedRubric.position_uid == pos_uid)
         ).rowcount or 0
 
-    # Score-done locks live keyed by candidate uid (not position) so we
-    # need to look up the current Comeet candidate list to know which
-    # locks to drop.
+    # Score-done locks AND candidate_enrichment rows are keyed by
+    # candidate uid (not position uid), so we need the current Comeet
+    # candidate list to know which rows are scoped to this position.
+    # Both get wiped — the recruiter expects "fresh calibration" to mean
+    # *every* persisted artifact tied to this position is gone.
     try:
         with ComeetClient() as client:
             candidates = client.list_candidates_for_position(pos_uid)
     except Exception:  # noqa: BLE001
-        # Comeet hiccup — skip lock deletion rather than failing the reset
+        # Comeet hiccup — skip the candidate-keyed wipes rather than
+        # failing the whole reset.
         counts["score_done_locks"] = -1
+        counts["candidate_enrichment"] = -1
     else:
         uids = {str(c.get("uid")) for c in candidates if c.get("uid")}
         if uids:
@@ -426,8 +430,14 @@ def position_full_reset(body: PositionRescoreBody) -> dict[str, Any]:
                 counts["score_done_locks"] = ses.execute(
                     delete(CandidateLock).where(CandidateLock.key.in_(keys))
                 ).rowcount or 0
+                counts["candidate_enrichment"] = ses.execute(
+                    delete(CandidateEnrichment).where(
+                        CandidateEnrichment.candidate_uid.in_(uids)
+                    )
+                ).rowcount or 0
         else:
             counts["score_done_locks"] = 0
+            counts["candidate_enrichment"] = 0
 
     return {"ok": True, "positionUid": pos_uid, **counts}
 

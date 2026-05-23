@@ -74,6 +74,17 @@ def _empty(candidate_uid: str, error: str | None = None) -> dict[str, Any]:
 
 
 def _read_cache(candidate_uid: str) -> dict[str, Any] | None:
+    """Return cached enrichment ONLY if extraction succeeded last time.
+
+    Treating error rows as a cache miss means a stale error (e.g. from a
+    Claude API config change, model rename, or transient outage) self-heals
+    on the next view — the endpoint re-extracts instead of serving the
+    rotted error forever. The cost is one extra Claude call per
+    previously-errored candidate, which is fine: errors should be rare.
+
+    Success rows still serve from cache (no Claude call) — that's the
+    whole point of the table.
+    """
     with db_session() as ses:
         row = ses.scalar(
             select(CandidateEnrichment).where(
@@ -81,6 +92,10 @@ def _read_cache(candidate_uid: str) -> dict[str, Any] | None:
             )
         )
         if row is None:
+            return None
+        # Stale-error self-heal: ignore rows where extraction failed last
+        # time. Caller will re-extract and overwrite the row via _write_cache.
+        if row.extraction_error:
             return None
         return {
             "candidateUid": candidate_uid,
