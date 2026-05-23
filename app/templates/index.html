@@ -1625,7 +1625,7 @@
         <h2>Round complete</h2>
         <p>
           You agreed with the AI on
-          <strong id="summaryAgreement">—</strong> of the candidates this round.
+          <strong id="summaryAgreement">—</strong> of the candidates so far.
           <span id="summaryDelta"></span>
         </p>
         <!-- Per-batch mini chart populated by renderMiniChart() — agreement bars +
@@ -2314,7 +2314,9 @@
     const CALIBRATION_FULL_SESSION = 25;  // 5 batches × 5 = full calibration
     let calCurrentIdx = 0;      // pointer within calQueue
     let calVerdictsThisRound = 0;
-    let calLastRoundAgreement = null;
+    let calLastRoundAgreement = null;     // last round only (kept for legacy callers)
+    let calSessionAgreement = null;       // lifetime % across all verdicts this session
+    let calSessionAgreementN = 0;          // denominator (excludes ❓ verdicts)
 
     async function startCalibration() {
       // Fresh state each entry; if the recruiter reloaded mid-round, we'll
@@ -3030,11 +3032,22 @@
         updateAgreementDisplay(byRound);
         calTotalVerdicts = (res.agreement && res.agreement.verdictCount) || (calTotalVerdicts + 1);
         calVerdictsThisRound += 1;
-        // Per-round agreement for the summary modal: from the latest byRound entry.
+        // Last-round agreement (legacy, kept for the per-round trend display).
         const thisRound = byRound[byRound.length - 1];
         if (thisRound && thisRound.agreement != null) {
           calLastRoundAgreement = thisRound.agreement;
         }
+        // Session-wide agreement (full-session %), used by showRoundSummary as
+        // the headline. Lifetime denominator excludes ❓ verdicts per the
+        // server's agreement calc; we display N alongside so the recruiter
+        // sees if 100% came from 1 vs 25 ratings.
+        if (res.agreement && res.agreement.overall != null) {
+          calSessionAgreement = res.agreement.overall;
+        }
+        calSessionAgreementN = byRound.reduce(
+          (acc, r) => acc + (r && r.agreement != null ? (r.n || 0) : 0),
+          0,
+        );
         calCurrentIdx += 1;
         if (calVerdictsThisRound >= VERDICTS_PER_ROUND || calCurrentIdx >= calQueue.length) {
           showRoundSummary();
@@ -3051,9 +3064,17 @@
     }
 
     function showRoundSummary() {
-      const a = calLastRoundAgreement;
+      // Headline = SESSION-WIDE agreement (across every verdict so far this
+      // session), not just the most recent round. The previous "last round
+      // only" calc misled when the latest round had n=1 with a single
+      // bucket-match — it displayed 100% even when the lifetime number was
+      // 15%. The session-wide number is the honest signal.
+      const a = calSessionAgreement;
+      const n = calSessionAgreementN;
       $("summaryAgreement").textContent =
-        a == null ? "—" : Math.round(a * 100) + "%";
+        a == null
+          ? "—"
+          : Math.round(a * 100) + "%" + (n > 0 ? " (n=" + n + ")" : "");
       $("summaryDelta").textContent = "";
       $("calCard").innerHTML = "";  // clear stale candidate card
       // Once the recruiter has completed the full session (25 verdicts in

@@ -356,6 +356,82 @@ class PositionRescoreBody(BaseModel):
     position_uid: str = Field(min_length=1)
 
 
+@router.post("/position/full-reset")
+def position_full_reset(body: PositionRescoreBody) -> dict[str, Any]:
+    """Wipe everything for ONE position. Used to start a fresh calibration
+    session on a position without affecting any other position.
+
+    Deletes:
+      - debug_scoring rows for this position_uid
+      - calibration_verdicts rows for this position_uid
+      - feedback rows for this position_uid
+      - recruiter_thresholds for this position_uid (every recruiter)
+      - position-specific learned_rubric (the (class_id, position_uid)
+        row in learned_rubrics; the class-level rubric stays intact)
+      - score_done locks for every candidate in this position's Comeet pool
+
+    Preserves:
+      - position_classes (class assignment + recruiter notes)
+      - applied_tags (so re-tagging is idempotent if needed)
+      - the class-level learned_rubric (used by other positions in the
+        same class as cold-start)
+
+    Mirrors `python -m app.cli reset-position <position_uid>` from cli.py
+    so this can be triggered without a working shell.
+    """
+    from sqlalchemy import delete
+    from ..comeet_client import ComeetClient
+    from ..db import db_session
+    from ..models import (
+        CalibrationVerdict, CandidateLock, DebugScoring, Feedback,
+        LearnedRubric, RecruiterThreshold,
+    )
+
+    pos_uid = body.position_uid.strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+
+    counts: dict[str, int] = {}
+    with db_session() as ses:
+        counts["debug_scoring"] = ses.execute(
+            delete(DebugScoring).where(DebugScoring.position_uid == pos_uid)
+        ).rowcount or 0
+        counts["calibration_verdicts"] = ses.execute(
+            delete(CalibrationVerdict).where(CalibrationVerdict.position_uid == pos_uid)
+        ).rowcount or 0
+        counts["feedback"] = ses.execute(
+            delete(Feedback).where(Feedback.position_uid == pos_uid)
+        ).rowcount or 0
+        counts["recruiter_thresholds"] = ses.execute(
+            delete(RecruiterThreshold).where(RecruiterThreshold.position_uid == pos_uid)
+        ).rowcount or 0
+        counts["position_rubric"] = ses.execute(
+            delete(LearnedRubric).where(LearnedRubric.position_uid == pos_uid)
+        ).rowcount or 0
+
+    # Score-done locks live keyed by candidate uid (not position) so we
+    # need to look up the current Comeet candidate list to know which
+    # locks to drop.
+    try:
+        with ComeetClient() as client:
+            candidates = client.list_candidates_for_position(pos_uid)
+    except Exception:  # noqa: BLE001
+        # Comeet hiccup — skip lock deletion rather than failing the reset
+        counts["score_done_locks"] = -1
+    else:
+        uids = {str(c.get("uid")) for c in candidates if c.get("uid")}
+        if uids:
+            keys = [f"score_done:{u}" for u in uids]
+            with db_session() as ses:
+                counts["score_done_locks"] = ses.execute(
+                    delete(CandidateLock).where(CandidateLock.key.in_(keys))
+                ).rowcount or 0
+        else:
+            counts["score_done_locks"] = 0
+
+    return {"ok": True, "positionUid": pos_uid, **counts}
+
+
 @router.post("/position/clear-locks")
 def position_clear_locks(body: PositionRescoreBody) -> dict[str, Any]:
     """Clear `score_done` locks for every candidate currently in this
