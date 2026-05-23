@@ -50,7 +50,12 @@ class Settings(BaseSettings):
     # Primary model used for per-candidate scoring + enrichment. Haiku 4.5
     # is ~10x cheaper than Sonnet and faster; the 5-axis judgement task
     # doesn't need Sonnet's headroom for normal candidates.
-    claude_model: str = "claude-haiku-4-5-20251001"
+    #
+    # Using the alias form (no date suffix) so the framework picks up the
+    # latest Haiku 4.5 snapshot Anthropic publishes — survives dated-
+    # snapshot deprecation. If you need to pin to a specific date for
+    # reproducibility, override CLAUDE_MODEL in Render env vars.
+    claude_model: str = "claude-haiku-4-5"
     # Optional override for rubric synthesis (which benefits from stronger
     # reasoning since it's analysing patterns across 20+ feedback rows).
     # When empty, rubric synth uses `claude_model` (Haiku). Set to a Sonnet
