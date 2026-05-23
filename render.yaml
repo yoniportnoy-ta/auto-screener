@@ -62,8 +62,12 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: CLAUDE_MODEL
-        value: claude-sonnet-4-20250514
+      # CLAUDE_MODEL deliberately omitted here — the Python default in
+      # app/config.py picks the right model (currently Haiku 4.5). Setting
+      # it via IaC means every deploy overrides any dashboard tweak; if
+      # an operator wants to pin a different model, they can add the env
+      # var in the Render dashboard and it'll persist across deploys.
+      # See `claude_model` in app/config.py for the source of truth.
       - key: SCORING_USE_V2
         value: "1"
       - key: AUTO_TAG_ENABLED
