@@ -444,6 +444,81 @@ def position_full_reset(body: PositionRescoreBody) -> dict[str, Any]:
     return {"ok": True, "positionUid": pos_uid, **counts}
 
 
+@router.post("/position/soft-reset")
+def position_soft_reset(body: PositionRescoreBody) -> dict[str, Any]:
+    """Partial wipe: clear AI state, KEEP recruiter ratings.
+
+    The use case is "I changed the scoring code — clear every cached AI
+    artifact for this position so the next scan recomputes from scratch,
+    but I don't want to throw away my 25 manual ratings."
+
+    Deletes:
+      - debug_scoring rows (every AI score on this position)
+      - position-specific learned_rubric (so synth re-runs on next batch)
+      - candidate_enrichment for this position's candidates (CV/timeline
+        cache, which is the usual source of stale errors)
+      - score_done locks for this position's candidates (so future scans
+        don't skip them as "already scored")
+
+    Preserves:
+      - calibration_verdicts (the 1-10 recruiter ratings + broken_axes
+        flags + feedback text — the calibration history)
+      - feedback rows (mirrored from verdicts — needed for rubric synth)
+      - recruiter_thresholds (the learned 👍 bar)
+      - position_classes (class assignment, recruiter notes, industries)
+
+    Sibling to /position/full-reset which wipes EVERYTHING including
+    the recruiter ratings. Use this when you've patched scoring or
+    rubric logic and want to validate it against your existing labels.
+    """
+    from sqlalchemy import delete
+    from ..comeet_client import ComeetClient
+    from ..db import db_session
+    from ..models import (
+        CandidateEnrichment, CandidateLock, DebugScoring, LearnedRubric,
+    )
+
+    pos_uid = body.position_uid.strip()
+    if not pos_uid:
+        raise HTTPException(400, "position_uid required")
+
+    counts: dict[str, int] = {}
+    with db_session() as ses:
+        counts["debug_scoring"] = ses.execute(
+            delete(DebugScoring).where(DebugScoring.position_uid == pos_uid)
+        ).rowcount or 0
+        counts["position_rubric"] = ses.execute(
+            delete(LearnedRubric).where(LearnedRubric.position_uid == pos_uid)
+        ).rowcount or 0
+
+    # Enrichment + locks are candidate-keyed — need Comeet's roster to
+    # know which rows belong to this position.
+    try:
+        with ComeetClient() as client:
+            candidates = client.list_candidates_for_position(pos_uid)
+    except Exception:  # noqa: BLE001
+        counts["score_done_locks"] = -1
+        counts["candidate_enrichment"] = -1
+    else:
+        uids = {str(c.get("uid")) for c in candidates if c.get("uid")}
+        if uids:
+            keys = [f"score_done:{u}" for u in uids]
+            with db_session() as ses:
+                counts["score_done_locks"] = ses.execute(
+                    delete(CandidateLock).where(CandidateLock.key.in_(keys))
+                ).rowcount or 0
+                counts["candidate_enrichment"] = ses.execute(
+                    delete(CandidateEnrichment).where(
+                        CandidateEnrichment.candidate_uid.in_(uids)
+                    )
+                ).rowcount or 0
+        else:
+            counts["score_done_locks"] = 0
+            counts["candidate_enrichment"] = 0
+
+    return {"ok": True, "positionUid": pos_uid, "kept": "verdicts+feedback+thresholds", **counts}
+
+
 @router.post("/position/clear-locks")
 def position_clear_locks(body: PositionRescoreBody) -> dict[str, Any]:
     """Clear `score_done` locks for every candidate currently in this
