@@ -48,6 +48,16 @@ _UPSERT = (
 )
 
 
+def _decided_at_screen(c: Dict[str, Any]) -> bool:
+    """Candidate already has a completed CV-screen Go/No-go (a past recruiter
+    decision), and didn't withdraw — used by --decided teaching-prep scoring."""
+    completed = c.get("completed_steps") or []
+    if not any(s.get("type") == "Go/No-go" and "cv screen" in (s.get("name") or "").lower()
+               for s in completed):
+        return False
+    return (c.get("status") or "").strip().lower() != "withdrawn"
+
+
 def get_brief(position_uid: str) -> Optional[Dict[str, Any]]:
     with engine.connect() as c:
         try:
@@ -70,9 +80,12 @@ def _already_scored(position_uid: str) -> set:
     return {r[0] for r in rows}
 
 
-def run_round(position_uid: str, limit: Optional[int] = None) -> Dict[str, Any]:
+def run_round(position_uid: str, limit: Optional[int] = None, decided: bool = False) -> Dict[str, Any]:
     brief = get_brief(position_uid)
-    if not brief:
+    # Steady-state scoring needs a taught brief. --decided (teaching prep) can
+    # bootstrap with a generic brief so pipey can surface AI-vs-recruiter
+    # disagreements on already-decided candidates before any brief exists.
+    if not brief and not decided:
         return {"error": "no_brief",
                 "message": f"No learned brief for {position_uid} — teach it first "
                            f"(Comeet Helper: `screen <position>`)."}
@@ -81,23 +94,28 @@ def run_round(position_uid: str, limit: Optional[int] = None) -> Dict[str, Any]:
         position = cc.get_position(position_uid)
         cands = cc.list_candidates_for_position(position_uid)
 
-    in_step = [c for c in cands
-               if c.get("uid") and not c.get("deleted")
-               and candidate_in_allowed_step(c)
-               and isinstance(c.get("resume"), dict) and (c["resume"].get("url"))]
+    def _ok(c):
+        return (c.get("uid") and not c.get("deleted")
+                and isinstance(c.get("resume"), dict) and c["resume"].get("url"))
+    pool = [c for c in cands if _ok(c)
+            and (_decided_at_screen(c) if decided else candidate_in_allowed_step(c))]
+    brief_text = brief["brief"] if brief else (
+        f"POSITION CRITERIA — {(position or {}).get('name', 'this role')}. Screen the candidate "
+        f"for fit to this role using the CV and JD; use the full 0-100 range.")
+    brief_n = brief["built_from_n"] if brief else 0
     done = _already_scored(position_uid)
-    todo = [c for c in in_step if str(c["uid"]) not in done]
+    todo = [c for c in pool if str(c["uid"]) not in done]
     if limit:
         todo = todo[:limit]
 
-    log.info("score_round %s: %d in-step, %d already scored, scoring %d",
-             position_uid, len(in_step), len(done), len(todo))
+    log.info("score_round %s (decided=%s): %d pool, %d already scored, scoring %d",
+             position_uid, decided, len(pool), len(done), len(todo))
 
     scored, skipped, tin, tout = 0, 0, 0, 0
     buckets = {"advance": 0, "borderline": 0, "reject": 0}
     for c in todo:
         try:
-            res = score_candidate(c, position, brief["brief"])
+            res = score_candidate(c, position, brief_text)
         except Exception as exc:  # noqa: BLE001
             log.warning("score_round: %s: %s", c.get("uid"), exc)
             skipped += 1
@@ -109,7 +127,7 @@ def run_round(position_uid: str, limit: Optional[int] = None) -> Dict[str, Any]:
                "candidate_name": candidate_full_name(c), "fit": res["fit"],
                "recommendation": res["recommendation"], "confidence": res["confidence"],
                "dims_json": json.dumps(res["dims"]), "rationale": res["rationale"],
-               "model": res["model"], "brief_built_from_n": brief["built_from_n"],
+               "model": res["model"], "brief_built_from_n": brief_n,
                "in_tokens": res["in_tokens"], "out_tokens": res["out_tokens"]}
         with engine.begin() as conn:
             conn.execute(text(_UPSERT), row)
@@ -118,21 +136,24 @@ def run_round(position_uid: str, limit: Optional[int] = None) -> Dict[str, Any]:
         buckets[res["recommendation"]] = buckets.get(res["recommendation"], 0) + 1
 
     cost = tin * 2.0 / 1_000_000 + tout * 10.0 / 1_000_000  # Sonnet-5 intro rate
-    return {"position_uid": position_uid, "position_name": brief["position_name"],
-            "in_step": len(in_step), "already_scored": len(done), "scored": scored,
+    return {"position_uid": position_uid,
+            "position_name": (brief["position_name"] if brief else (position or {}).get("name")),
+            "mode": "decided" if decided else "in_step", "pool": len(pool),
+            "already_scored": len(done), "scored": scored,
             "skipped": skipped, "recommend": buckets, "cost_usd": round(cost, 2)}
 
 
 def _main() -> None:
     logging.basicConfig(level=logging.INFO)
     if len(sys.argv) < 2:
-        print("usage: python -m app.score_round <position_uid> [--limit N]"); sys.exit(2)
+        print("usage: python -m app.score_round <position_uid> [--limit N] [--decided]"); sys.exit(2)
     pos = sys.argv[1]
     limit = None
     if "--limit" in sys.argv:
         limit = int(sys.argv[sys.argv.index("--limit") + 1])
+    decided = "--decided" in sys.argv
     t0 = time.time()
-    out = run_round(pos, limit=limit)
+    out = run_round(pos, limit=limit, decided=decided)
     out["seconds"] = int(time.time() - t0)
     print(json.dumps(out, indent=2))
 
