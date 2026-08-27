@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 
 from sqlalchemy import text
 
-from app.comeet_client import ComeetClient
+from app.comeet_client import ComeetClient, candidate_full_name
 from app.db import engine
 
 ADVANCE_TYPES = {"Phone Interview", "Video Interview"}
@@ -138,10 +138,14 @@ def main() -> None:
                     "dim_company_domain", "dim_profession_domain", "dim_company_tier",
                     "dim_career_progression", "dim_location_match", "dim_university_tier",
                 ) if ai.get(k) is not None}
+            resume = c.get("resume") or {}
+            resume_url = resume.get("url") if isinstance(resume, dict) else None
             corpus.append({
                 "candidate_uid": cuid,
                 "position_uid": uid,
                 "position_name": name,
+                "candidate_name": candidate_full_name(c),
+                "resume_url": resume_url,
                 "status": meta.get("status"),
                 "category": cat,
                 "screen_label": label,
@@ -169,7 +173,8 @@ def main() -> None:
         conn.execute(text("DROP TABLE IF EXISTS corpus_screen_labels"))
         conn.execute(text(
             "CREATE TABLE corpus_screen_labels ("
-            " candidate_uid text, position_uid text, position_name text, status text,"
+            " candidate_uid text, position_uid text, position_name text,"
+            " candidate_name text, resume_url text, status text,"
             " category text, screen_label int, cv_screen_assignee text, cv_screen_time timestamptz,"
             " n_completed_steps int, has_resume boolean, source text, ai_final_rating int,"
             " ai_dims_json text, time_created timestamptz, mined_at timestamptz default now(),"
@@ -178,12 +183,12 @@ def main() -> None:
         if corpus:
             conn.execute(text(
                 "INSERT INTO corpus_screen_labels "
-                "(candidate_uid, position_uid, position_name, status, category, screen_label,"
-                " cv_screen_assignee, cv_screen_time, n_completed_steps, has_resume, source,"
-                " ai_final_rating, ai_dims_json, time_created) VALUES "
-                "(:candidate_uid, :position_uid, :position_name, :status, :category, :screen_label,"
-                " :cv_screen_assignee, :cv_screen_time, :n_completed_steps, :has_resume, :source,"
-                " :ai_final_rating, :ai_dims_json, :time_created)"
+                "(candidate_uid, position_uid, position_name, candidate_name, resume_url, status,"
+                " category, screen_label, cv_screen_assignee, cv_screen_time, n_completed_steps,"
+                " has_resume, source, ai_final_rating, ai_dims_json, time_created) VALUES "
+                "(:candidate_uid, :position_uid, :position_name, :candidate_name, :resume_url, :status,"
+                " :category, :screen_label, :cv_screen_assignee, :cv_screen_time, :n_completed_steps,"
+                " :has_resume, :source, :ai_final_rating, :ai_dims_json, :time_created)"
             ), corpus)
 
     # 4) Report.
