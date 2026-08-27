@@ -121,6 +121,47 @@ def _prewarm_unscreened_counts() -> None:
     threading.Thread(target=_runner, name="prewarm-unscreened", daemon=True).start()
 
 
+_MINE_INTERVAL_H = 6.0
+
+
+def _periodic_mine_corpus() -> None:
+    """Keep corpus_screen_labels fresh — it's the source of REJECTED candidates
+    for Comeet Helper's teaching queue (the live per-position feed omits them).
+    Re-mines when the corpus is older than _MINE_INTERVAL_H, re-checking every
+    30 min. Serial daemon thread; inherits the service's full env. The miner's
+    rebuild is a single transaction, so readers never see an empty table."""
+    import threading
+    import time as _t
+
+    def _stale() -> bool:
+        try:
+            from sqlalchemy import text
+            from .db import engine
+            with engine.connect() as c:
+                row = c.execute(text(
+                    "SELECT extract(epoch from (now() - max(mined_at))) FROM corpus_screen_labels"
+                )).first()
+            age = row[0] if row and row[0] is not None else None
+            return age is None or age >= _MINE_INTERVAL_H * 3600
+        except Exception:  # noqa: BLE001 — table missing / not migrated -> mine
+            return True
+
+    def _runner() -> None:
+        _t.sleep(45)  # let startup + migrations settle
+        while True:
+            try:
+                if _stale():
+                    log.info("mine-corpus: corpus stale — refreshing corpus_screen_labels")
+                    from app.corpus.mine_screen_labels import main as mine_main
+                    mine_main()
+                    log.info("mine-corpus: refresh complete")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("mine-corpus: refresh failed: %s", exc)
+            _t.sleep(1800)  # re-check every 30 min
+
+    threading.Thread(target=_runner, name="mine-corpus", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -130,6 +171,7 @@ async def lifespan(app: FastAPI):
     )
     _run_pending_migrations()
     _prewarm_unscreened_counts()
+    _periodic_mine_corpus()
     yield
     log.info("shutting down")
 
