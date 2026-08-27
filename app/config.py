@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     port: int = 8000
     screener_api_token: str = Field(default="changeme", description="Shared secret for write endpoints")
+    prime_api_token: str = Field(default="", description="Shared secret for the /position/prime teaching-prep trigger (Comeet Helper)")
 
     # ─── Database ────────────────────────────────────────────────────────────
     database_url: str = Field(default="postgresql://localhost/auto_screener_dev")

@@ -2062,3 +2062,59 @@ def scan_now(body: ScanNowBody) -> dict[str, Any]:
         "errors": result.errors,
         "note": result.note,
     }
+
+
+# ── Teaching-prep priming ────────────────────────────────────────────────
+# Scores already-DECIDED candidates so Comeet Helper's active-learning selector
+# can surface AI-vs-recruiter disagreements. Idempotent (score_round skips
+# already-scored), bounded, and run in a daemon thread so it never blocks the
+# single web worker. In-process guard prevents duplicate concurrent runs.
+import threading as _threading
+
+_PRIMING_LOCK = _threading.Lock()
+_PRIMING_NOW: set[str] = set()
+
+
+def _require_prime_token(
+    x_prime_token: str | None = Header(default=None, alias="X-Prime-Token"),
+) -> None:
+    """Guard the priming trigger with its own secret (separate from the Chrome
+    extension token so rotating one never affects the other). Denied if unset."""
+    expected = (settings.prime_api_token or "").strip()
+    if not expected or not x_prime_token or x_prime_token.strip() != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing prime token")
+
+
+class PrimeBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    limit: int = Field(default=40, ge=1, le=200)
+
+
+def _prime_worker(position_uid: str, limit: int) -> None:
+    try:
+        from ..score_round import run_round
+        out = run_round(position_uid, limit=limit, decided=True)
+        log.info("prime %s: %s", position_uid, out)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("prime %s failed: %s", position_uid, exc)
+    finally:
+        with _PRIMING_LOCK:
+            _PRIMING_NOW.discard(position_uid)
+
+
+@router.post("/position/prime", dependencies=[Depends(_require_prime_token)])
+def position_prime(body: PrimeBody) -> dict[str, Any]:
+    """Kick off (async) a decided-scoring pass for a position — the teaching-prep
+    that lights up the active-learning selector. Returns immediately (202-style)."""
+    pos_uid = body.position_uid.strip()
+    if pos_uid.isdigit():
+        from ..scan import _resolve_numeric_position_uid
+        resolved = _resolve_numeric_position_uid(pos_uid)
+        if resolved:
+            pos_uid = resolved
+    with _PRIMING_LOCK:
+        if pos_uid in _PRIMING_NOW:
+            return {"status": "already_priming", "position_uid": pos_uid}
+        _PRIMING_NOW.add(pos_uid)
+    _threading.Thread(target=_prime_worker, args=(pos_uid, body.limit), daemon=True).start()
+    return {"status": "priming", "position_uid": pos_uid, "limit": body.limit}
