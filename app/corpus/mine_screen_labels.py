@@ -140,12 +140,16 @@ def main() -> None:
                 ) if ai.get(k) is not None}
             resume = c.get("resume") or {}
             resume_url = resume.get("url") if isinstance(resume, dict) else None
+            # Stable Comeet profile link (the S3 resume_url is a 15-min presigned
+            # URL — useless once stored). This is what the teaching card links to.
+            profile_url = c.get("URL") if isinstance(c.get("URL"), str) else None
             corpus.append({
                 "candidate_uid": cuid,
                 "position_uid": uid,
                 "position_name": name,
                 "candidate_name": candidate_full_name(c),
                 "resume_url": resume_url,
+                "profile_url": profile_url,
                 "status": meta.get("status"),
                 "category": cat,
                 "screen_label": label,
@@ -174,7 +178,7 @@ def main() -> None:
         conn.execute(text(
             "CREATE TABLE corpus_screen_labels ("
             " candidate_uid text, position_uid text, position_name text,"
-            " candidate_name text, resume_url text, status text,"
+            " candidate_name text, resume_url text, profile_url text, status text,"
             " category text, screen_label int, cv_screen_assignee text, cv_screen_time timestamptz,"
             " n_completed_steps int, has_resume boolean, source text, ai_final_rating int,"
             " ai_dims_json text, time_created timestamptz, mined_at timestamptz default now(),"
@@ -183,10 +187,10 @@ def main() -> None:
         if corpus:
             conn.execute(text(
                 "INSERT INTO corpus_screen_labels "
-                "(candidate_uid, position_uid, position_name, candidate_name, resume_url, status,"
+                "(candidate_uid, position_uid, position_name, candidate_name, resume_url, profile_url, status,"
                 " category, screen_label, cv_screen_assignee, cv_screen_time, n_completed_steps,"
                 " has_resume, source, ai_final_rating, ai_dims_json, time_created) VALUES "
-                "(:candidate_uid, :position_uid, :position_name, :candidate_name, :resume_url, :status,"
+                "(:candidate_uid, :position_uid, :position_name, :candidate_name, :resume_url, :profile_url, :status,"
                 " :category, :screen_label, :cv_screen_assignee, :cv_screen_time, :n_completed_steps,"
                 " :has_resume, :source, :ai_final_rating, :ai_dims_json, :time_created)"
             ), corpus)
