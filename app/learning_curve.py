@@ -107,12 +107,14 @@ class Pair:
     fit: Optional[int]     # judge 0-100
     recommendation: Optional[str]
     confidence: Optional[float]
+    hard: bool = False     # recruiter tagged "hard to tell from CV alone" — low-signal label
 
 
 def load_pairs(position_uid: str, recruiter: Optional[str] = None) -> List[Pair]:
     """Recruiter decisions joined to judge scores, oldest first (curve order)."""
     sql = (
-        "SELECT r.candidate_uid, r.decision, r.created_at, s.fit, s.recommendation, s.confidence "
+        "SELECT r.candidate_uid, r.decision, r.created_at, s.fit, s.recommendation, s.confidence, "
+        "       r.reasons_json "
         "FROM screen_ratings r "
         "LEFT JOIN candidate_scores s "
         "  ON s.candidate_uid = r.candidate_uid AND s.position_uid = r.position_uid "
@@ -131,11 +133,21 @@ def load_pairs(position_uid: str, recruiter: Optional[str] = None) -> List[Pair]
     except Exception as exc:  # noqa: BLE001 — tables may not exist until first teaching
         log.info("load_pairs: %s", exc)
         return []
-    return [Pair(str(r[0]), (r[1] or "").lower(), float(r[2] or 0), r[3], r[4], r[5]) for r in rows]
+    out = []
+    for r in rows:
+        try:
+            hard = "hard_to_tell" in (json.loads(r[6]) if r[6] else [])
+        except Exception:  # noqa: BLE001
+            hard = False
+        out.append(Pair(str(r[0]), (r[1] or "").lower(), float(r[2] or 0), r[3], r[4], r[5], hard))
+    return out
 
 
 # ── Metrics over a set of pairs ───────────────────────────────────────────
 def _metrics(pairs: Sequence[Pair]) -> Dict[str, Any]:
+    # NOTE: callers (assess) filter hard-tagged pairs BEFORE metrics/curve/bands
+    # so the cumulative curve never emits frozen duplicate points; this function
+    # assumes pairs are already usable.
     scored = [p for p in pairs if p.fit is not None]
     # Spearman: judge fit vs recruiter ordinal (reject<borderline<advance)
     spearman = _spearman([p.fit for p in scored],
@@ -202,8 +214,15 @@ class Assessment:
 
 
 def assess(position_uid: str, recruiter: Optional[str] = None) -> Assessment:
-    pairs = load_pairs(position_uid, recruiter)
+    all_pairs = load_pairs(position_uid, recruiter)
+    # "Hard to tell from CV alone" = the recruiter declaring the CV uninformative,
+    # a forced coin-flip. Filter ONCE here so metrics, the cumulative curve, and
+    # the confidence bands all see the same usable set (and the curve never
+    # plateaus on frozen duplicate points). Hard labels also don't count toward
+    # TEACH_MIN_N — an unreadable CV teaches nothing.
+    pairs = [p for p in all_pairs if not p.hard]
     m = _metrics(pairs)
+    m["n_hard_excluded"] = len(all_pairs) - len(pairs)
     curve = _curve(pairs)
     bands = _confidence_bands(pairs)
     n = m["n"]

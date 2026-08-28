@@ -58,11 +58,25 @@ _DIMS = ("seniority_fit", "company_type_fit", "industry_fit", "core_function_pre
 
 
 def score_candidate(candidate: Dict[str, Any], position: Dict[str, Any], brief: str,
-                    *, client: Optional[Anthropic] = None) -> Optional[Dict[str, Any]]:
+                    *, client: Optional[Anthropic] = None,
+                    system: Optional[str] = None, model: Optional[str] = None,
+                    effort: str = "low", use_thinking: bool = True) -> Optional[Dict[str, Any]]:
     """Score one Comeet candidate dict against `brief`. Returns a result dict or
-    None (no fetchable CV / model returned nothing)."""
+    None (no fetchable CV / model returned nothing).
+
+    system/model/effort/use_thinking exist for benchmark variants (app.bench_screen);
+    production callers use the defaults. Any system override MUST keep the
+    DO-NOT-LEARN fairness rule — enforced here, not trusted."""
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
+    if system is not None:
+        # Enforce the actual fairness rule, not just its heading — an override
+        # must carry the operative prohibitions verbatim-enough to bind.
+        required = ("DO-NOT-LEARN", "national origin", "country of education",
+                    "years-in-country", "nationality/gender/age")
+        missing = [k for k in required if k not in system]
+        if missing:
+            raise ValueError(f"system override is missing fairness-rule elements: {missing}")
     resume = candidate.get("resume") or {}
     url = resume.get("url") if isinstance(resume, dict) else None
     pdf_b64, docx_text, _ = _maybe_fetch_resume(url)
@@ -77,9 +91,13 @@ def score_candidate(candidate: Dict[str, Any], position: Dict[str, Any], brief: 
         f"{brief}\n\nROLE JD (reference):\n{jd[:1500]}\n\nAssess this candidate for advancing past the CV screen for THIS role."})
 
     client = client or Anthropic(api_key=settings.anthropic_api_key)
-    msg = client.messages.create(model=MODEL, max_tokens=1500, thinking={"type": "adaptive"},
-                                 output_config={"effort": "low"}, system=SYSTEM, tools=[TOOL],
-                                 messages=[{"role": "user", "content": content}])
+    use_model = model or MODEL
+    kwargs: Dict[str, Any] = dict(model=use_model, max_tokens=1500, system=system or SYSTEM,
+                                  tools=[TOOL], messages=[{"role": "user", "content": content}])
+    if use_thinking:
+        kwargs["thinking"] = {"type": "adaptive"}
+        kwargs["output_config"] = {"effort": effort}
+    msg = client.messages.create(**kwargs)
     a = next((b.input for b in msg.content if getattr(b, "type", "") == "tool_use"), None)
     if not a or a.get("overall_fit_0_100") is None:
         return None
@@ -89,7 +107,7 @@ def score_candidate(candidate: Dict[str, Any], position: Dict[str, Any], brief: 
         "confidence": a.get("confidence_0_1"),
         "dims": {k: a.get(k) for k in _DIMS},
         "rationale": (a.get("rationale") or "")[:400],
-        "model": MODEL,
+        "model": use_model,
         "in_tokens": msg.usage.input_tokens,
         "out_tokens": msg.usage.output_tokens,
     }
