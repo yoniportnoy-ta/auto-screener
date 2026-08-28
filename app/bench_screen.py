@@ -308,10 +308,6 @@ def _main() -> None:
         sys.exit(2)
 
 
-if __name__ == "__main__":
-    _main()
-
-
 # ── Registered variants (prompts from the 2026-08-28 design panel) ────────
 _ANCHORED_SYSTEM = """You are an expert recruiter performing an initial CV screen for the SPECIFIC role in the POSITION CRITERIA.
 
@@ -369,3 +365,7 @@ register_variant("percentile", _PERCENTILE_SYSTEM)
 register_variant("anchored_med", _ANCHORED_SYSTEM, effort="medium")
 # axis: can the cheap model match? (production scaling cost; intro sonnet pricing ends 2026-08-31)
 register_variant("anchored_haiku", _ANCHORED_SYSTEM, model="claude-haiku-4-5", use_thinking=False)
+
+
+if __name__ == "__main__":
+    _main()  # NOTE: must stay LAST — variant registration above runs first
