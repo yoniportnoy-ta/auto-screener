@@ -1,6 +1,6 @@
 # Auto-Screener Roadmap — Where We Are
 
-**Last updated:** 2026-08-28 · **Owner:** Yoni · **Companions:** `REDESIGN.md`, `OPERATING-PROTOCOL.md`, `TEACHING-LOOP-V1.md`
+**Last updated:** 2026-08-29 · **Owner:** Yoni · **Companions:** `REDESIGN.md`, `OPERATING-PROTOCOL.md`, `TEACHING-LOOP-V1.md`
 
 ---
 
@@ -73,30 +73,53 @@ not "please use the full range."
 
 ---
 
-## 🔄 In flight right now (2026-08-28)
+## 🧪 Benchmark round verdict (2026-08-29, Agency AE, ~$12 total)
 
-- **Prompt-variant benchmark** running on the render host (fixed 99-candidate holdout,
-  50/50 pass-reject, budget-capped ≤$8):
-  `anchored` (evidence rubric) · `percentile` (rank-in-pool) · `anchored_med` (more
-  reasoning) · `anchored_haiku` (cheap model — sonnet-5 intro pricing ends 08-31).
-  Judged on AUC, κ_cv, spread, **coverage@90/85**, $/candidate.
-- **Recruiter rounds open:** Noga (7 cards, proper reject-mix redo), Mor (10), Jade done.
-  Ratings watch armed — agreement updates as they rate.
+Fixed holdout (99 → common 75), 50/50 pass-reject, leakage-free, cross-validated:
+
+| config | AUC | κ_cv | acc | $/cand | note |
+|---|--:|--:|--:|--:|---|
+| v0 (production) ×1 | 0.787 | 0.414 | 0.71 | 0.019 | current judge |
+| **anchored ×3 (mean)** | **0.823** | **0.532** ✅ | **0.76** | 0.056 | **winner — clears the κ≥0.45 gate** |
+| anchored ×1 | 0.764* | 0.295 | 0.65 | 0.019 | single-run is WORSE than v0 on decisions |
+| percentile ×1 | 0.793 | 0.258 | 0.63 | 0.018 | best high-margin bands (m10: 24%@94%) but unstable across subsets |
+| anchored @medium effort | 0.797 | 0.352 | 0.67 | 0.020 | effort doesn't help |
+| anchored @haiku-4.5 | 0.686 | 0.135 | 0.57 | 0.013 | cheap model costs real quality; verbose (≈cap) — rejected |
+
+*(n=99; others n=75 common set)*
+
+**What the round proved:**
+1. **Prompt framing is NOT the lever** — all single-run sonnet configs rank at AUC
+   0.74–0.79. Score compression persisted even under an aggressive rubric: the judge
+   genuinely reads most of this pool as weak vs the brief; passes average fit ~31–35.
+2. **Self-consistency (score 3×, average) IS a lever**: +0.03–0.04 AUC, κ 0.41→0.53,
+   per-candidate run-std only 2.2 (the judge is stable; averaging sharpens the boundary).
+3. **coverage@90 is still ~4–10% (fragile)** — the 70–90% goal needs better BRIEFS,
+   not better prompts (hand-built Eng Director brief previously hit AUC 0.90 — teaching
+   depth moves ranking; wording doesn't).
+4. **The safe wedge exists today:** auto-REJECT precision hits 0.90–1.0 at modest margins
+   across configs (~20–40% of CVs). Since rejects are human-confirmed by protocol anyway,
+   a "pre-rejected, one-click-confirm" queue is deployable before full auto-decide.
 
 ## ⬜ Next (in order)
 
-1. **Benchmark verdict** → adopt winning prompt as the production judge; self-consistency
-   runs (×3) on the winner → variance as a second confidence signal.
-2. **Recalibrate τ + re-measure coverage@90** with the winning variant. Target: a real
-   number > 0. This tells us how far from 70–90% we actually are.
-3. **Confidence gate v1**: auto-act only in ≥90% bands; wire "uncertain → human" routing
-   into Slack (borderline queue to the recruiter).
-4. **Scale teaching**: kickoff remaining published positions (binary rounds, ~5 min each);
-   `kickoff <position> [@recruiter]` in Comeet Helper.
-5. **Phase ② SHADOW for Agency AE** (first candidate to graduate): judge scores incoming
-   CVs continuously; weekly agreement + drift readout.
-6. **Then ③ SELF** behind both gates — auto-advance only at first; rejects stay
-   human-confirmed queues.
+1. **v0 ×3 control** (~$3.4, next budget day): does averaging alone get v0 to κ~0.5?
+   Decides production config: anchored×3 vs v0×3.
+2. **Adopt winner in production scoring** (3-run mean fit) + recalibrate τ; re-measure.
+3. **Deepen briefs** — the real AUC lever: more teaching rounds per position (target
+   20–30 rated cases), richer reason capture; consider LLM-composed brief from
+   ratings+notes+JD (validate vs deterministic builder on the same holdout).
+4. **Ship the reject wedge**: pre-rejected queue at ≥90% precision margin in Slack,
+   one-click recruiter confirm. First real workload relief, fully protocol-safe.
+5. **Confidence gate v1** for advances (auto-advance only in ≥90% bands as they emerge).
+6. **Scale teaching** to remaining published positions (`kickoff <position> [@recruiter]`).
+7. **Phase ② SHADOW for Agency AE** — continuous scoring + weekly agreement/drift readout.
+
+## 🔄 Also open
+
+- Recruiter rounds: Noga (7-card reject-mix redo), Mor (10 cards) — both waiting.
+- Human-ceiling question: recruiters may pass on non-CV signal (source/referral/LinkedIn)
+  — measure inter-recruiter κ via a small double-labeling exercise before chasing AUC>0.9.
 
 ---
 
