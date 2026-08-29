@@ -21,9 +21,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 
+import os
+
 from .db import engine
 from .comeet_client import ComeetClient, candidate_in_allowed_step, candidate_full_name
-from .screen_judge import score_candidate
+from .screen_judge import score_candidate, score_candidate_ensemble
 
 log = logging.getLogger(__name__)
 
@@ -111,11 +113,15 @@ def run_round(position_uid: str, limit: Optional[int] = None, decided: bool = Fa
     log.info("score_round %s (decided=%s): %d pool, %d already scored, scoring %d",
              position_uid, decided, len(pool), len(done), len(todo))
 
+    # JUDGE_RUNS>1 switches production scoring to the ensemble (n-run mean fit) —
+    # the 2026-08-29 benchmark's winning configuration. Default 1 until adopted.
+    judge_runs = max(1, int(os.environ.get("JUDGE_RUNS", "1") or "1"))
     scored, skipped, tin, tout = 0, 0, 0, 0
     buckets = {"advance": 0, "borderline": 0, "reject": 0}
     for c in todo:
         try:
-            res = score_candidate(c, position, brief_text)
+            res = (score_candidate_ensemble(c, position, brief_text, runs=judge_runs)
+                   if judge_runs > 1 else score_candidate(c, position, brief_text))
         except Exception as exc:  # noqa: BLE001
             log.warning("score_round: %s: %s", c.get("uid"), exc)
             skipped += 1

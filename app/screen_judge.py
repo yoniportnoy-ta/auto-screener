@@ -57,6 +57,46 @@ _DIMS = ("seniority_fit", "company_type_fit", "industry_fit", "core_function_pre
          "employment_recency", "relevant_experience_recency", "tenure_pattern", "education")
 
 
+def score_candidate_ensemble(candidate: Dict[str, Any], position: Dict[str, Any], brief: str,
+                             *, runs: int = 3, **kw: Any) -> Optional[Dict[str, Any]]:
+    """Score a candidate `runs` times and average — the 2026-08-29 benchmark
+    showed 3-run mean lifts AUC +0.03-0.04 and κ 0.41→0.53 (clears the gate)
+    while per-run std is only ~2.2. fit = mean, recommendation = majority
+    (ties → borderline), confidence = mean, dims = per-key mean, tokens summed."""
+    results = []
+    for _ in range(max(1, runs)):
+        r = score_candidate(candidate, position, brief, **kw)
+        if r:
+            results.append(r)
+    if not results:
+        return None
+    if len(results) == 1:
+        return results[0]
+    n = len(results)
+    recs = [r["recommendation"] for r in results]
+    rec = max(set(recs), key=recs.count)
+    if recs.count(rec) * 2 <= n:  # no strict majority
+        rec = "borderline"
+    dims = {}
+    for k in _DIMS:
+        vals = [r["dims"].get(k) for r in results if r["dims"].get(k) is not None]
+        dims[k] = round(sum(vals) / len(vals), 1) if vals else None
+    confs = [r["confidence"] for r in results if r["confidence"] is not None]
+    return {
+        "fit": round(sum(r["fit"] for r in results) / n),
+        "recommendation": rec,
+        "confidence": round(sum(confs) / len(confs), 3) if confs else None,
+        "dims": dims,
+        "rationale": results[0]["rationale"],
+        "model": results[0]["model"],
+        "in_tokens": sum(r["in_tokens"] for r in results),
+        "out_tokens": sum(r["out_tokens"] for r in results),
+        "runs": n,
+        "fit_run_std": round((sum((r["fit"] - sum(x["fit"] for x in results) / n) ** 2
+                                  for r in results) / n) ** 0.5, 1),
+    }
+
+
 def score_candidate(candidate: Dict[str, Any], position: Dict[str, Any], brief: str,
                     *, client: Optional[Anthropic] = None,
                     system: Optional[str] = None, model: Optional[str] = None,

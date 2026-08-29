@@ -361,6 +361,9 @@ Rationale (≤240 chars): decisive evidence only. If the brief is thin, judge on
 
 register_variant("anchored", _ANCHORED_SYSTEM)
 register_variant("percentile", _PERCENTILE_SYSTEM)
+# v0 = the production prompt, registered so multi-run (×3 mean) controls can be
+# bought through the same bench path as the challengers — apples to apples.
+register_variant("v0", SYSTEM_V0)
 # axis: does more reasoning effort improve calibration? (same anchored prompt)
 register_variant("anchored_med", _ANCHORED_SYSTEM, effort="medium")
 # axis: can the cheap model match? (production scaling cost; intro sonnet pricing ends 2026-08-31)
