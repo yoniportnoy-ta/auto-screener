@@ -23,7 +23,7 @@ from sqlalchemy import text
 
 from .db import engine
 from .comeet_client import ComeetClient, candidate_full_name
-from .screen_judge import score_candidate
+from .screen_judge import score_candidate, score_candidate_ensemble
 from .score_round import get_brief, _UPSERT, _DDL
 from . import learning_curve as lc
 
@@ -59,8 +59,12 @@ def rejudge(position_uid: str, per_class: int = 50, clear: bool = True) -> Dict[
         position = cc.get_position(position_uid)
         for uid, label in sample:
             try:
+                import os
+                runs = max(1, int(os.environ.get("JUDGE_RUNS", "1") or "1"))
                 cand = cc.get_candidate(uid)
-                res = score_candidate(cand, position, brief["brief"]) if cand else None
+                res = ((score_candidate_ensemble(cand, position, brief["brief"], runs=runs)
+                        if runs > 1 else score_candidate(cand, position, brief["brief"]))
+                       if cand else None)
             except Exception as exc:  # noqa: BLE001
                 log.warning("rejudge %s: %s", uid, exc)
                 skipped += 1

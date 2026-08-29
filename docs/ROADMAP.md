@@ -73,47 +73,47 @@ not "please use the full range."
 
 ---
 
-## 🧪 Benchmark round verdict (2026-08-29, Agency AE, ~$12 total)
+## 🧪 Benchmark round verdict (FINAL, 2026-08-29 — control-corrected)
 
-Fixed holdout (99 → common 75), 50/50 pass-reject, leakage-free, cross-validated:
+Full n=99 holdout, every config ×1 and ×3, leakage-free, cross-validated.
+**The v0×3 control overturned the interim verdict** (interim "anchored×3 wins" was an
+n=75 subset artifact — the control run caught it before we shipped a worse prompt):
 
-| config | AUC | κ_cv | acc | $/cand | note |
-|---|--:|--:|--:|--:|---|
-| v0 (production) ×1 | 0.787 | 0.414 | 0.71 | 0.019 | current judge |
-| **anchored ×3 (mean)** | **0.823** | **0.532** ✅ | **0.76** | 0.056 | **winner — clears the κ≥0.45 gate** |
-| anchored ×1 | 0.764* | 0.295 | 0.65 | 0.019 | single-run is WORSE than v0 on decisions |
-| percentile ×1 | 0.793 | 0.258 | 0.63 | 0.018 | best high-margin bands (m10: 24%@94%) but unstable across subsets |
-| anchored @medium effort | 0.797 | 0.352 | 0.67 | 0.020 | effort doesn't help |
-| anchored @haiku-4.5 | 0.686 | 0.135 | 0.57 | 0.013 | cheap model costs real quality; verbose (≈cap) — rejected |
+| config | AUC | κ_cv | cov@85 | cov@80 |
+|---|--:|--:|--:|--:|
+| **v0 ×3 (ADOPTED)** | **0.795** | **0.396** | **50.5%** | **63.6%** |
+| v0 ×1 (previous prod) | 0.783 | 0.356 | 48.5% | 48.5% |
+| percentile ×3 | 0.766 | 0.334 | 40.4% | 48.5% |
+| anchored ×3 | 0.772 | 0.316 | 0% | 42.4% |
+| anchored @haiku-4.5 | 0.686 | 0.135 | 0% | 0% |
 
-*(n=99; others n=75 common set)*
+**Adopted 2026-08-29:** production judge = original v0 prompt, `JUDGE_RUNS=3`
+(3-run mean fit, ~$0.056/CV), τ recalibrated to **24**, `position_taus` updated
+(live tally follows automatically).
 
 **What the round proved:**
-1. **Prompt framing is NOT the lever** — all single-run sonnet configs rank at AUC
-   0.74–0.79. Score compression persisted even under an aggressive rubric: the judge
-   genuinely reads most of this pool as weak vs the brief; passes average fit ~31–35.
-2. **Self-consistency (score 3×, average) IS a lever**: +0.03–0.04 AUC, κ 0.41→0.53,
-   per-candidate run-std only 2.2 (the judge is stable; averaging sharpens the boundary).
-3. **coverage@90 is still ~4–10% (fragile)** — the 70–90% goal needs better BRIEFS,
-   not better prompts (hand-built Eng Director brief previously hit AUC 0.90 — teaching
-   depth moves ranking; wording doesn't).
-4. **The safe wedge exists today:** auto-REJECT precision hits 0.90–1.0 at modest margins
-   across configs (~20–40% of CVs). Since rejects are human-confirmed by protocol anyway,
-   a "pre-rejected, one-click-confirm" queue is deployable before full auto-decide.
+1. **Prompt redesign FAILED** — both panel prompts underperform the original on the
+   full holdout. Score compression is the judge's honest read of the pool vs a
+   10-rating brief, not a framing artifact. Prompt work on this axis is closed.
+2. **3-run averaging is real but modest** (+0.01–0.02 AUC, +0.04 κ) — adopted.
+3. **The deployable wedge (v0×3, τ=24):** margin 6 → **50% of CVs at 86% agreement**
+   (auto-rejects 94% precise); margin 8 → 35% at 86% with **auto-rejects 100% precise
+   (13/13)**. coverage@90 ≈ 1% — the 90-bar needs better briefs, full stop.
+4. haiku-4.5 rejected (quality loss, barely cheaper); medium effort no help.
 
 ## ⬜ Next (in order)
 
-1. **v0 ×3 control** (~$3.4, next budget day): does averaging alone get v0 to κ~0.5?
-   Decides production config: anchored×3 vs v0×3.
-2. **Adopt winner in production scoring** (3-run mean fit) + recalibrate τ; re-measure.
-3. **Deepen briefs** — the real AUC lever: more teaching rounds per position (target
-   20–30 rated cases), richer reason capture; consider LLM-composed brief from
-   ratings+notes+JD (validate vs deterministic builder on the same holdout).
-4. **Ship the reject wedge**: pre-rejected queue at ≥90% precision margin in Slack,
-   one-click recruiter confirm. First real workload relief, fully protocol-safe.
-5. **Confidence gate v1** for advances (auto-advance only in ≥90% bands as they emerge).
-6. **Scale teaching** to remaining published positions (`kickoff <position> [@recruiter]`).
-7. **Phase ② SHADOW for Agency AE** — continuous scoring + weekly agreement/drift readout.
+1. **Deepen briefs — the only remaining AUC lever** (hand-built Eng Director brief
+   hit 0.90 vs 0.795 today): (a) get Noga + Mor through their open rounds; (b) second
+   teaching round for Jade (20–30 total cases); (c) LLM-composed brief from
+   ratings+notes+JD, validated vs the deterministic builder on this same holdout.
+2. **Ship the reject wedge** in Slack: candidates with fit ≤ τ−8 land in a
+   "pre-rejected — one-click confirm" queue (100%-precision band today, protocol-safe).
+3. **Confidence gate v1** for advances as ≥90% bands emerge with better briefs.
+4. **Scale teaching** to remaining published positions (`kickoff <position> [@recruiter]`).
+5. **Phase ② SHADOW for Agency AE** — continuous ×3 scoring + weekly agreement/drift.
+6. Human-ceiling check: small double-labeling exercise (inter-recruiter κ) before
+   chasing AUC > 0.9.
 
 ## 🔄 Also open
 
