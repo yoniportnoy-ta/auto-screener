@@ -73,11 +73,14 @@ VARIANTS: Dict[str, Dict[str, Any]] = {}  # populated below after panel output
 
 
 def register_variant(key: str, system: str, *, model: Optional[str] = None,
-                     effort: str = "low", use_thinking: bool = True) -> None:
+                     effort: str = "low", use_thinking: bool = True,
+                     brief: Optional[str] = None) -> None:
     if "DO-NOT-LEARN" not in system:
         raise ValueError(f"variant {key}: missing DO-NOT-LEARN")
+    if brief is not None and "DO-NOT-LEARN" not in brief:
+        raise ValueError(f"variant {key}: brief override missing DO-NOT-LEARN")
     VARIANTS[key] = {"system": system, "model": model, "effort": effort,
-                     "use_thinking": use_thinking}
+                     "use_thinking": use_thinking, "brief": brief}
 
 
 # ── Bench set ─────────────────────────────────────────────────────────────
@@ -167,7 +170,8 @@ def run_bench(position_uid: str, variant_keys: List[str], runs: int = 1,
                         break
                     try:
                         cand = cc.get_candidate(uid)
-                        res = score_candidate(cand, position, brief["brief"],
+                        use_brief = cfg.get("brief") or brief["brief"]
+                        res = score_candidate(cand, position, use_brief,
                                               system=cfg["system"], model=cfg["model"],
                                               effort=cfg["effort"], use_thinking=cfg["use_thinking"]) if cand else None
                     except Exception as exc:  # noqa: BLE001
@@ -368,6 +372,49 @@ register_variant("v0", SYSTEM_V0)
 register_variant("anchored_med", _ANCHORED_SYSTEM, effort="medium")
 # axis: can the cheap model match? (production scaling cost; intro sonnet pricing ends 2026-08-31)
 register_variant("anchored_haiku", _ANCHORED_SYSTEM, model="claude-haiku-4-5", use_thinking=False)
+
+
+
+# ── Enriched-brief experiment (Agency AE only — brief is position-specific) ─
+# Hypothesis: the AUC ceiling (~0.795) comes from a thin, generic brief (tag
+# counts, no role definition) + an empty Comeet JD. This brief makes the same
+# recruiter signal SPECIFIC: what Riverside sells, what the agency-AE core
+# function is, and what "right company type / industry" concretely mean —
+# grounded ONLY in the recruiter's 10 ratings + the public JD (2+yrs closing at
+# a tech company, consultative, high-velocity pipeline, media a plus).
+_AAE_RICH_BRIEF = """POSITION CRITERIA — Agency Account Executive (Riverside, Canada, remote, senior IC).
+
+ROLE CONTEXT: Riverside is an AI-powered audio/video content-creation SaaS platform
+(podcast/video recording, editing, production tooling) sold to businesses, media teams,
+and agencies. This role is a quota-carrying, full-cycle ACCOUNT EXECUTIVE for the agency
+segment: prospect-to-close ownership, consultative selling, high-velocity pipeline.
+
+MUST-HAVES — the recruiter consistently rejected candidates missing ANY of these:
+1. REAL B2B CLOSING EXPERIENCE (the core function): 2+ years as a quota-carrying AE /
+   closing seller at a technology company, owning full sales cycles to close. Backgrounds
+   that are only account management, customer success, SDR/BDR prospecting without
+   closing, retail, or consumer sales do NOT satisfy this.
+2. RIGHT COMPANY TYPE: product/technology companies — SaaS or software vendors.
+   Careers spent only at non-tech employers (traditional services, industrial,
+   finance-ops, staffing) were consistently rejected as "wrong company type/tier".
+3. RELEVANT INDUSTRY/DOMAIN: SaaS sales, media/content/creator technology,
+   marketing/advertising technology, or selling INTO agencies. Purely unrelated
+   verticals were consistently rejected as "wrong industry/domain".
+
+SUPPORTING SIGNALS the recruiter advanced on: seniority matched to a senior IC AE
+(not executive-heavy, not entry-level), role-relevant experience that is RECENT,
+evidence of consultative selling and a fast, multi-deal pipeline, track record of
+quota attainment. Media-industry exposure is a plus.
+
+Weigh the three MUST-HAVES most heavily: a CV clearly evidencing all three merits a
+high score; a CV clearly missing any one of them merits a low score. Use the middle
+of the range only for genuinely mixed evidence.
+
+DO-NOT-LEARN (hard rule): never use or infer accent, national origin, country of
+education, years-in-country, or name/photo-based nationality/gender/age. Judge only
+job-relevant evidence in the CV."""
+
+register_variant("v0_richbrief", SYSTEM_V0, brief=_AAE_RICH_BRIEF)
 
 
 if __name__ == "__main__":

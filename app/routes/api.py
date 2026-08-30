@@ -2118,3 +2118,52 @@ def position_prime(body: PrimeBody) -> dict[str, Any]:
         _PRIMING_NOW.add(pos_uid)
     _threading.Thread(target=_prime_worker, args=(pos_uid, body.limit), daemon=True).start()
     return {"status": "priming", "position_uid": pos_uid, "limit": body.limit}
+
+
+# ── Benchmark over HTTP (SSH-free operation) ──────────────────────────────
+# Render's SSH gateway is intermittently unavailable; these token-guarded
+# endpoints let benchmarks be triggered and read without a shell. Same
+# daemon-thread pattern as /position/prime; results always land in
+# bench_scores, so progress is observable via the DB even mid-run.
+_BENCH_LOCK = _threading.Lock()
+_BENCH_RUNNING: set[str] = set()
+
+
+class BenchRunBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    variants: list[str] = Field(min_length=1)
+    runs: int = Field(default=1, ge=1, le=5)
+    budget_usd: float = Field(default=10.0, gt=0, le=60)
+
+
+def _bench_worker(position_uid: str, variants: list[str], runs: int, budget: float) -> None:
+    try:
+        from ..bench_screen import run_bench
+        out = run_bench(position_uid, variants, runs=runs, budget_usd=budget)
+        log.info("bench(http) %s: %s", position_uid, out)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("bench(http) %s failed: %s", position_uid, exc)
+    finally:
+        with _BENCH_LOCK:
+            _BENCH_RUNNING.discard(position_uid)
+
+
+@router.post("/bench/run", dependencies=[Depends(_require_prime_token)])
+def bench_run(body: BenchRunBody) -> dict[str, Any]:
+    """Kick off (async) a benchmark run. One concurrent run per position."""
+    pos = body.position_uid.strip()
+    with _BENCH_LOCK:
+        if pos in _BENCH_RUNNING:
+            return {"status": "already_running", "position_uid": pos}
+        _BENCH_RUNNING.add(pos)
+    _threading.Thread(target=_bench_worker,
+                      args=(pos, body.variants, body.runs, body.budget_usd),
+                      daemon=True).start()
+    return {"status": "running", "position_uid": pos, "variants": body.variants,
+            "runs": body.runs, "budget_usd": body.budget_usd}
+
+
+@router.get("/bench/analyze", dependencies=[Depends(_require_prime_token)])
+def bench_analyze(position_uid: str) -> dict[str, Any]:
+    from ..bench_screen import analyze
+    return analyze(position_uid.strip())
