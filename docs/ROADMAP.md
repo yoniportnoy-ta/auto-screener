@@ -101,6 +101,34 @@ n=75 subset artifact — the control run caught it before we shipped a worse pro
    (13/13)**. coverage@90 ≈ 1% — the 90-bar needs better briefs, full stop.
 4. haiku-4.5 rejected (quality loss, barely cheaper); medium effort no help.
 
+## 🧬 Brief-enrichment verdict (2026-08-30) — the lever confirmed & ADOPTED
+
+Same judge (v0 ×3), same holdout, ONLY the brief changed — from the deterministic
+tag-count brief to a composed one (what Riverside sells, what agency-AE core
+function means, concrete company-type/industry definitions; grounded in Jade's 10
+ratings + the public JD — the Comeet JD field is empty):
+
+| Agency AE (production basis, n=99) | old brief | **enriched brief** |
+|---|--:|--:|
+| AUC | 0.795 | **0.844** |
+| κ_cv | 0.376 | **0.495** ✅ gate |
+| accuracy | 0.687 | **0.747** |
+| candidates in ≥80%-agreement bands | 64% | **88%** |
+| τ | 24 | **33** |
+
+**Adopted in production:** enriched brief written to `position_briefs` with
+`locked=true` (the per-rating rebuild can't clobber it — pipey mirror respects
+the lock), richbrief ×3 scores promoted, τ recalibrated. coverage@90 still ~0 —
+next push: more teaching cases + recompose the brief from 20–30 ratings.
+
+**Repeatable recipe for every position:** fetch the real JD (public posting if
+Comeet's field is empty) + compose specific must-haves from the recruiter's
+reason tags → validate on that position's decided-candidate holdout → lock.
+
+**Eval hygiene note:** the 6-hourly corpus re-mine shifted holdout labels
+mid-experiment (99→81 joinable). TODO: freeze holdout labels in a snapshot table
+per experiment.
+
 ## ⬜ Next (in order)
 
 1. **Deepen briefs — the only remaining AUC lever** (hand-built Eng Director brief
