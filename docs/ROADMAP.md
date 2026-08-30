@@ -129,6 +129,37 @@ reason tags → validate on that position's decided-candidate holdout → lock.
 mid-experiment (99→81 joinable). TODO: freeze holdout labels in a snapshot table
 per experiment.
 
+## 🧪 Sr PM enrichment test (2026-08-30) — brief lever, second data point
+
+Noga's redo round (17 ratings, rejects included) re-measured with 3-run scoring:
+
+| Sr PM (n=52 decided) | before redo | after redo |
+|---|--:|--:|
+| AUC | 0.708 | **0.741** |
+| κ | 0.165 | **0.204** |
+
+Still far below Agency AE (0.844 / 0.495). Two live hypotheses, not yet separated:
+(a) Sr PM still has the THIN auto-generated brief — Agency AE's jump came from the
+*enriched* brief; (b) Sr PM leans on non-CV signal (Yoni corrected a candidate from
+LinkedIn, not the résumé). **Next test:** enrichment recipe on Sr PM — jump ⇒ briefs
+confirmed as the lever; flat ⇒ real evidence about the role's CV-learnability.
+
+## 🐞 Teaching-flow QA + fix (2026-08-30, pipey 9099e7a)
+
+Adversarial QA confirmed the mixed-card-order / "!" incidents were a REAL
+concurrency bug (deploy churn only amplified it): the rate→next-card path ran
+entirely on the Bolt listener thread (PG mirror + 2 PG connects + Slack file ops
++ Comeet/S3 CV fetch with 5×60s retries) = 7–45s typical, minutes worst case,
+**with the rated card's buttons still live** → re-click forked the flow (second
+modal, duplicate live card, CV uploads deleting each other, double completion).
+
+Fixed: instant card neutralization before slow I/O; already-rated clicks refused;
+per-user single-flight lock with `next_unrated` re-read inside it; one-shot
+completion guard (undo re-arms); bounded interactive CV fetch (Comeet 8s/2
+retries, S3 streamed with 20s deadline + 12MB cap). Verified by concurrency test
++ live smoke (card in 4.3s, CV above card).
+**Ops rule:** deploy only when no session has rated in the last ~30 min.
+
 ## ⬜ Next (in order)
 
 1. **Deepen briefs — the only remaining AUC lever** (hand-built Eng Director brief
