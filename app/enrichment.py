@@ -224,11 +224,15 @@ def _maybe_fetch_resume(url: str | None) -> tuple[str | None, str | None, bool]:
                 or url_lower.endswith((".docx", ".doc"))
                 or content.startswith(b"PK\x03\x04")
             ):
-                from .scan import _extract_docx_text
-                text = _extract_docx_text(content)
+                from .scan import _extract_docx_text, _extract_doc_binary_text
+                text = _extract_docx_text(content) or _extract_doc_binary_text(content)
                 if text:
                     return None, text, False
                 return None, None, True
+            if "rtf" in mime or url_lower.endswith(".rtf") or content.startswith(b"{\\rtf"):
+                from .scan import _extract_rtf_text
+                text = _extract_rtf_text(content)
+                return (None, text, False) if text else (None, None, True)
             return None, None, False
     except Exception as exc:  # noqa: BLE001
         log.info("enrichment: resume fetch failed: %s", exc)

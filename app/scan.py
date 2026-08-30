@@ -1126,6 +1126,42 @@ def _fetch_internal_profile_text(candidate: dict[str, Any]) -> str:
     return text if len(text) > 50 else ""  # only return when we actually got something
 
 
+def _extract_rtf_text(content: bytes) -> str | None:
+    """Best-effort text from an RTF blob — strips control words/groups.
+    Pure stdlib; RTF bodies are mostly plain text, so this recovers CV
+    prose well. Returns None when too little text survives."""
+    try:
+        import re as _re
+        s = content.decode("latin-1", errors="ignore")
+        s = _re.sub(r"\\'[0-9a-fA-F]{2}", " ", s)      # hex escapes
+        s = _re.sub(r"\\[a-zA-Z]+-?\d* ?", " ", s)     # control words
+        s = s.replace("{", " ").replace("}", " ").replace("\\", " ")
+        s = _re.sub(r"\s+", " ", s).strip()
+        return s[:30000] if len(s) > 200 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _extract_doc_binary_text(content: bytes) -> str | None:
+    """Best-effort text from a legacy .doc (OLE2) blob with no new deps:
+    harvest long readable runs from the raw bytes under both encodings Word
+    uses, keep the better one. Crude, but recovers most CV prose — better
+    than silently skipping the candidate."""
+    try:
+        import re as _re
+        best = ""
+        pattern = _re.compile(r"[A-Za-z0-9 ,.;:@()\-\u2013\u2019'/&+%]{40,}")
+        for enc in ("utf-16-le", "latin-1"):
+            s = content.decode(enc, errors="ignore")
+            joined = " ".join(m.group(0).strip() for m in pattern.finditer(s))
+            if len(joined) > len(best):
+                best = joined
+        best = _re.sub(r"\s+", " ", best).strip()
+        return best[:30000] if len(best) > 300 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _maybe_fetch_resume(url: str | None) -> tuple[str | None, str | None, bool]:
     """Download a candidate's resume and return whatever we could parse.
 
@@ -1172,8 +1208,20 @@ def _maybe_fetch_resume(url: str | None) -> tuple[str | None, str | None, bool]:
                 text = _extract_docx_text(content)
                 if text:
                     return None, text, False
+                # python-docx can't read legacy binary .doc — try the crude
+                # printable-run harvest before giving up on the candidate.
+                text = _extract_doc_binary_text(content)
+                if text:
+                    return None, text, False
                 # Couldn't parse — flag as fail so caller falls back to
                 # internal-API enrichment instead of pretending we have nothing.
+                return None, None, True
+
+            # RTF — near-plain-text; strip control words.
+            if "rtf" in mime or url_lower.endswith(".rtf") or content.startswith(b"{\\rtf"):
+                text = _extract_rtf_text(content)
+                if text:
+                    return None, text, False
                 return None, None, True
 
             # Unknown format — log it so we know what else Comeet is serving.
