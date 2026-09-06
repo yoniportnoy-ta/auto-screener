@@ -35,10 +35,23 @@ def _corpus_sample(position_uid: str, per_class: int) -> List[Tuple[str, int]]:
     CV, most-recently-screened first (reflects the current bar)."""
     with engine.begin() as c:
         c.execute(text(_DDL))  # ensure candidate_scores exists
-        rows = c.execute(text(
-            "SELECT candidate_uid, screen_label FROM corpus_screen_labels "
-            "WHERE position_uid=:p AND screen_label IN (0,1) AND has_resume "
-            "ORDER BY cv_screen_time DESC NULLS LAST"), {"p": position_uid}).all()
+        # LEAKAGE GUARD: candidates the recruiter rated in a teaching session are
+        # excluded — the brief quotes their names + decisions, so scoring them
+        # measures recall of the brief, not generalization. (bench_set and
+        # threshold._load already do this; rejudge was the gap.)
+        try:
+            rows = c.execute(text(
+                "SELECT candidate_uid, screen_label FROM corpus_screen_labels cl "
+                "WHERE position_uid=:p AND screen_label IN (0,1) AND has_resume "
+                "AND NOT EXISTS (SELECT 1 FROM screen_ratings r "
+                "  WHERE r.position_uid=cl.position_uid AND r.candidate_uid=cl.candidate_uid) "
+                "ORDER BY cv_screen_time DESC NULLS LAST"), {"p": position_uid}).all()
+        except Exception as exc:  # noqa: BLE001 — screen_ratings absent pre-teaching
+            log.info("rejudge taught-exclusion failed (%s); retrying without", exc)
+            rows = c.execute(text(
+                "SELECT candidate_uid, screen_label FROM corpus_screen_labels "
+                "WHERE position_uid=:p AND screen_label IN (0,1) AND has_resume "
+                "ORDER BY cv_screen_time DESC NULLS LAST"), {"p": position_uid}).all()
     passed = [(str(r[0]), 1) for r in rows if r[1] == 1][:per_class]
     rejected = [(str(r[0]), 0) for r in rows if r[1] == 0][:per_class]
     return passed + rejected
