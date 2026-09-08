@@ -14,7 +14,7 @@ import html
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
@@ -86,3 +86,76 @@ def build_note_payload(text_body: str, author: dict[str, Any], *, is_markdown: b
         },
         "text": body,
     }
+
+
+# ── Identifier resolution ─────────────────────────────────────────────────
+# Every recruiter-facing surface (calendar invite links, Slack summaries, the
+# Comeet profile URL) exposes the NUMERIC id — e.g. app.comeet.co/.../can/61459710
+# — but the Recruiting API keys notes on the ALPHANUMERIC uid (FC.C9A3E) and
+# 404s on the numeric form for both GET and POST. So callers can't resolve it
+# themselves; we do it here and accept either form.
+_UID_MAP_DDL = (
+    "CREATE TABLE IF NOT EXISTS candidate_uid_map ("
+    " numeric_id text PRIMARY KEY, candidate_uid text NOT NULL,"
+    " resolved_at timestamptz DEFAULT now())"
+)
+
+
+def resolve_candidate_uid(ident: str) -> Optional[str]:
+    """Accept either identifier form; return the alphanumeric uid the API needs.
+
+    Order: pass through non-numeric input -> memo table -> mined corpus
+    (covers ~everything that has been screened) -> bounded live scan of open
+    positions (new candidates not yet mined). Returns None when unresolvable.
+    """
+    from sqlalchemy import text as _text
+    from .db import engine
+
+    ident = (ident or "").strip()
+    if not ident:
+        return None
+    if not ident.isdigit():
+        return ident  # already the alphanumeric uid
+
+    with engine.begin() as c:
+        c.execute(_text(_UID_MAP_DDL))
+        row = c.execute(_text("SELECT candidate_uid FROM candidate_uid_map WHERE numeric_id=:n"),
+                        {"n": ident}).first()
+        if row:
+            return str(row[0])
+        # corpus stores profile_url alongside the uid — instant mapping
+        try:
+            row = c.execute(_text(
+                "SELECT candidate_uid FROM corpus_screen_labels "
+                "WHERE profile_url LIKE :pat AND candidate_uid IS NOT NULL LIMIT 1"),
+                {"pat": f"%/can/{ident}"}).first()
+        except Exception:  # noqa: BLE001 — corpus may not be mined yet
+            row = None
+        if row:
+            uid = str(row[0])
+            c.execute(_text("INSERT INTO candidate_uid_map (numeric_id, candidate_uid) VALUES (:n,:u) "
+                            "ON CONFLICT (numeric_id) DO UPDATE SET candidate_uid=EXCLUDED.candidate_uid"),
+                      {"n": ident, "u": uid})
+            return uid
+
+    # Fallback: brand-new candidate not yet mined. Bounded scan of OPEN
+    # positions only; first match wins and is memoised so this runs once.
+    from .comeet_client import ComeetClient
+    try:
+        with ComeetClient() as cc:
+            for pos in cc.list_open_positions():
+                for cand in cc.list_candidates_for_position(str(pos.get("uid") or "")):
+                    url = (cand.get("URL") or "").rstrip("/")
+                    if url.endswith(f"/can/{ident}"):
+                        uid = str(cand.get("uid") or "")
+                        if uid:
+                            with engine.begin() as c:
+                                c.execute(_text(
+                                    "INSERT INTO candidate_uid_map (numeric_id, candidate_uid) VALUES (:n,:u) "
+                                    "ON CONFLICT (numeric_id) DO UPDATE SET candidate_uid=EXCLUDED.candidate_uid"),
+                                    {"n": ident, "u": uid})
+                            log.info("resolved numeric id %s -> uid via live scan", ident)
+                            return uid
+    except Exception as exc:  # noqa: BLE001
+        log.warning("uid resolution scan failed for %s: %s", ident, str(exc)[:120])
+    return None

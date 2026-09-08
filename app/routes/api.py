@@ -2174,6 +2174,10 @@ def bench_analyze(position_uid: str) -> dict[str, Any]:
 # through this service so ATS credentials stay server-side. Guarded by the same
 # dependency as /api/extension/* — this is a WRITE path into the company ATS.
 class CandidateNoteBody(BaseModel):
+    # Accepts EITHER identifier: the alphanumeric uid (FC.C9A3E) or the numeric
+    # id from the profile URL (61459710). Recruiter-facing surfaces — calendar
+    # invites, Slack summaries, the Comeet link — all expose the numeric form,
+    # and the API 404s on it, so we resolve server-side.
     candidate_uid: str = Field(min_length=1)
     text: str = Field(min_length=1)
     author: dict[str, Any]
@@ -2192,8 +2196,13 @@ def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
     if not (body.author or {}).get("email"):
         raise HTTPException(400, "author.email is required — notes must be attributed to the recruiter")
 
+    from ..comeet_notes import resolve_candidate_uid
+    given = body.candidate_uid.strip()
+    uid = resolve_candidate_uid(given)
+    if not uid:
+        raise HTTPException(404, f"could not resolve candidate id {given!r} to a Comeet uid "
+                                 f"(pass the profile-URL number or the FC.XXXXX uid)")
     payload = build_note_payload(body.text, body.author, is_markdown=body.is_markdown)
-    uid = body.candidate_uid.strip()
     try:
         with ComeetClient() as cc:
             result = cc.post_candidate_note(uid, payload)
@@ -2202,5 +2211,6 @@ def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
         raise HTTPException(502, f"Comeet rejected the note: {str(exc)[:200]}")
     log.info("candidate note posted uid=%s author=%s chars=%d",
              uid, (body.author or {}).get("email", "?"), len(payload["text"]))
-    return {"ok": True, "candidate_uid": uid, "note": result or None,
+    return {"ok": True, "candidate_uid": uid, "given_id": given,
+            "resolved": uid != given, "note": result or None,
             "chars": len(payload["text"])}
