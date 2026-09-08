@@ -211,6 +211,18 @@ class ComeetClient:
             url = next_page if next_page else None
         return out
 
+    def post_candidate_note(self, candidate_uid: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /candidates/{uid}/notes — attach a note to a candidate profile.
+
+        Unversioned base is correct (verified 2026-09-06). Never logs the note
+        body: notes can contain candidate-sensitive interview detail.
+        """
+        resp = self._request("POST", f"/candidates/{candidate_uid}/notes", json=payload)
+        try:
+            return resp.json() if resp.content else {}
+        except Exception:  # noqa: BLE001 — some writes return an empty body
+            return {}
+
     def find_duplicates(self, *, email: str = "", first_name: str = "", last_name: str = "",
                         linkedin_url: str = "", phone_number: str = "") -> list[dict[str, Any]]:
         """`/sourcing/candidates/find_duplicates` — used to surface past hiring processes."""

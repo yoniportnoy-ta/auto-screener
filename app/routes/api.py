@@ -2167,3 +2167,40 @@ def bench_run(body: BenchRunBody) -> dict[str, Any]:
 def bench_analyze(position_uid: str) -> dict[str, Any]:
     from ..bench_screen import analyze
     return analyze(position_uid.strip())
+
+
+# ── Comeet candidate notes ────────────────────────────────────────────────
+# Recruiters approve an interview summary in Claude, then post it to Comeet
+# through this service so ATS credentials stay server-side. Guarded by the same
+# dependency as /api/extension/* — this is a WRITE path into the company ATS.
+class CandidateNoteBody(BaseModel):
+    candidate_uid: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    author: dict[str, Any]
+    is_markdown: bool = True
+
+
+@router.post("/candidate/note", dependencies=[Depends(_require_extension_token)])
+def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
+    from ..comeet_notes import build_note_payload
+
+    # Fail closed on missing credentials, naming the absent var (never its value).
+    missing = [n for n, v in (("COMEET_API_KEY", settings.comeet_api_key),
+                              ("COMEET_API_SECRET", settings.comeet_api_secret)) if not v]
+    if missing:
+        raise HTTPException(500, f"Comeet credentials not configured: {', '.join(missing)}")
+    if not (body.author or {}).get("email"):
+        raise HTTPException(400, "author.email is required — notes must be attributed to the recruiter")
+
+    payload = build_note_payload(body.text, body.author, is_markdown=body.is_markdown)
+    uid = body.candidate_uid.strip()
+    try:
+        with ComeetClient() as cc:
+            result = cc.post_candidate_note(uid, payload)
+    except Exception as exc:  # noqa: BLE001 — surface status, never the JWT/body
+        log.warning("candidate note POST failed for %s: %s", uid, str(exc)[:200])
+        raise HTTPException(502, f"Comeet rejected the note: {str(exc)[:200]}")
+    log.info("candidate note posted uid=%s author=%s chars=%d",
+             uid, (body.author or {}).get("email", "?"), len(payload["text"]))
+    return {"ok": True, "candidate_uid": uid, "note": result or None,
+            "chars": len(payload["text"])}
