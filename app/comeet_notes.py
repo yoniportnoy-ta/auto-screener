@@ -115,6 +115,18 @@ def resolve_candidate_uid(ident: str, *, scan_budget_s: float = 8.0) -> Optional
     ident = (ident or "").strip()
     if not ident:
         return None
+    # Full Comeet profile URL (what a recruiter pastes from the browser, and
+    # what Comeet's own calendar invites contain):
+    #   https://app.comeet.co/app/?goto_url=/req/462504/can/61537386
+    m = re.search(r"/can/(\d+)", ident)
+    if m:
+        ident = m.group(1)
+    elif ident.startswith("http"):
+        # URL we don't recognise — try a trailing alphanumeric uid, else give up
+        m2 = re.search(r"([0-9A-F]{2}\.[0-9A-F]{4,6})", ident, re.I)
+        if not m2:
+            return None
+        ident = m2.group(1)
     if not ident.isdigit():
         return ident  # already the alphanumeric uid
 

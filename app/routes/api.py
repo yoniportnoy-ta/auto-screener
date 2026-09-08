@@ -5,8 +5,10 @@ Same conceptual endpoints, returning the same shape so the JS port stays minimal
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -2173,19 +2175,65 @@ def bench_analyze(position_uid: str) -> dict[str, Any]:
 # Recruiters approve an interview summary in Claude, then post it to Comeet
 # through this service so ATS credentials stay server-side. Guarded by the same
 # dependency as /api/extension/* — this is a WRITE path into the company ATS.
+@lru_cache(maxsize=1)
+def _recruiter_token_map() -> dict[str, dict[str, str]]:
+    """token -> recruiter identity. Bad JSON is treated as EMPTY (fail closed)
+    rather than partially parsed."""
+    raw = (settings.screener_recruiter_tokens or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return {str(k): dict(v) for k, v in data.items() if isinstance(v, dict)}
+    except Exception as exc:  # noqa: BLE001 — never log the map itself
+        log.error("SCREENER_RECRUITER_TOKENS is not valid JSON (%s) — treating as unconfigured",
+                  type(exc).__name__)
+        return {}
+
+
+def _require_recruiter(
+    x_screener_token: str | None = Header(default=None, alias="X-Screener-Token"),
+) -> dict[str, str]:
+    """Identify the RECRUITER behind a write that gets attributed to a person.
+
+    Distinct from _require_extension_token: that one validates a single shared
+    secret embedded in every /extension.zip download, so it cannot say WHO is
+    calling. Notes land on a candidate's profile under a name, so identity must
+    come from the credential — never from the request body, which any holder of
+    the shared token could forge.
+    """
+    people = _recruiter_token_map()
+    if not people:
+        raise HTTPException(503, "recruiter tokens not configured on server "
+                                 "(set SCREENER_RECRUITER_TOKENS)")
+    who = people.get((x_screener_token or "").strip())
+    if not who:
+        raise HTTPException(401, "invalid or missing X-Screener-Token")
+    if not (who.get("email") or "").strip():
+        raise HTTPException(500, "recruiter token is configured without an email")
+    return who
+
+
 class CandidateNoteBody(BaseModel):
-    # Accepts EITHER identifier: the alphanumeric uid (FC.C9A3E) or the numeric
-    # id from the profile URL (61459710). Recruiter-facing surfaces — calendar
-    # invites, Slack summaries, the Comeet link — all expose the numeric form,
-    # and the API 404s on it, so we resolve server-side.
-    candidate_uid: str = Field(min_length=1)
+    # `candidate` accepts ANY form a recruiter can hand over: the alphanumeric
+    # uid (FC.C9A3E), the numeric profile id (61459710), or a full profile URL
+    # (…/req/462504/can/61537386). Everything upstream — Comeet calendar
+    # invites, pasted profile links, links in posted Slack summaries — yields
+    # the numeric form, which the Comeet API 404s on, so we resolve server-side.
+    candidate: str | None = Field(default=None, min_length=1)
+    candidate_uid: str | None = Field(default=None, min_length=1)  # legacy alias
     text: str = Field(min_length=1)
-    author: dict[str, Any]
+    author: dict[str, Any] | None = None   # IGNORED — identity comes from the token
     is_markdown: bool = True
 
+    @property
+    def candidate_ref(self) -> str:
+        return (self.candidate or self.candidate_uid or "").strip()
 
-@router.post("/candidate/note", dependencies=[Depends(_require_extension_token)])
-def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
+
+@router.post("/candidate/note")
+def candidate_note(body: CandidateNoteBody,
+                   recruiter: dict[str, str] = Depends(_require_recruiter)) -> dict[str, Any]:
     from ..comeet_notes import build_note_payload
 
     # Fail closed on missing credentials, naming the absent var (never its value).
@@ -2193,16 +2241,17 @@ def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
                               ("COMEET_API_SECRET", settings.comeet_api_secret)) if not v]
     if missing:
         raise HTTPException(500, f"Comeet credentials not configured: {', '.join(missing)}")
-    if not (body.author or {}).get("email"):
-        raise HTTPException(400, "author.email is required — notes must be attributed to the recruiter")
 
     from ..comeet_notes import resolve_candidate_uid
-    given = body.candidate_uid.strip()
+    given = body.candidate_ref
+    if not given:
+        raise HTTPException(400, "candidate is required (uid, numeric id, or profile URL)")
     uid = resolve_candidate_uid(given)
     if not uid:
         raise HTTPException(404, f"could not resolve candidate id {given!r} to a Comeet uid "
                                  f"(pass the profile-URL number or the FC.XXXXX uid)")
-    payload = build_note_payload(body.text, body.author, is_markdown=body.is_markdown)
+    # Attribution comes from the AUTHENTICATED token, never the request body.
+    payload = build_note_payload(body.text, recruiter, is_markdown=body.is_markdown)
     try:
         with ComeetClient() as cc:
             result = cc.post_candidate_note(uid, payload)
@@ -2210,7 +2259,7 @@ def candidate_note(body: CandidateNoteBody) -> dict[str, Any]:
         log.warning("candidate note POST failed for %s: %s", uid, str(exc)[:200])
         raise HTTPException(502, f"Comeet rejected the note: {str(exc)[:200]}")
     log.info("candidate note posted uid=%s author=%s chars=%d",
-             uid, (body.author or {}).get("email", "?"), len(payload["text"]))
-    return {"ok": True, "candidate_uid": uid, "given_id": given,
-            "resolved": uid != given, "note": result or None,
-            "chars": len(payload["text"])}
+             uid, recruiter.get("email", "?"), len(payload["text"]))
+    return {"ok": True, "candidate_uid": uid, "given": given,
+            "resolved": uid != given, "author": recruiter.get("email"),
+            "note": result or None, "chars": len(payload["text"])}

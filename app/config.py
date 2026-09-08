@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     port: int = 8000
     screener_api_token: str = Field(default="changeme", description="Shared secret for write endpoints")
     prime_api_token: str = Field(default="", description="Shared secret for the /position/prime teaching-prep trigger (Comeet Helper)")
+    # Per-recruiter tokens for write paths that must be ATTRIBUTED to a person
+    # (e.g. posting a Comeet note). JSON: {"<token>": {"first_name","last_name","email"}}
+    # Separate from screener_api_token, which the Chrome extension shares across
+    # everyone and therefore cannot identify an individual.
+    screener_recruiter_tokens: str = Field(default="", description="JSON map: token -> recruiter identity")
 
     # ─── Database ────────────────────────────────────────────────────────────
     database_url: str = Field(default="postgresql://localhost/auto_screener_dev")
