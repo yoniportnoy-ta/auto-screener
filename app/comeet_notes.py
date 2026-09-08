@@ -101,12 +101,13 @@ _UID_MAP_DDL = (
 )
 
 
-def resolve_candidate_uid(ident: str) -> Optional[str]:
+def resolve_candidate_uid(ident: str, *, scan_budget_s: float = 8.0) -> Optional[str]:
     """Accept either identifier form; return the alphanumeric uid the API needs.
 
     Order: pass through non-numeric input -> memo table -> mined corpus
-    (covers ~everything that has been screened) -> bounded live scan of open
-    positions (new candidates not yet mined). Returns None when unresolvable.
+    (covers ~everything that has been screened) -> live scan of open positions
+    capped at `scan_budget_s` (new candidates not yet mined). Returns None when
+    unresolvable, so the caller can answer 404 promptly.
     """
     from sqlalchemy import text as _text
     from .db import engine
@@ -138,12 +139,19 @@ def resolve_candidate_uid(ident: str) -> Optional[str]:
                       {"n": ident, "u": uid})
             return uid
 
-    # Fallback: brand-new candidate not yet mined. Bounded scan of OPEN
-    # positions only; first match wins and is memoised so this runs once.
+    # Fallback: brand-new candidate not yet mined. Scan OPEN positions, but on a
+    # HARD WALL-CLOCK DEADLINE — an unresolvable id would otherwise walk every
+    # position (measured >120s) and hammer Comeet on every bad request. Better to
+    # answer 404 quickly; the 6-hourly corpus mine will pick the candidate up.
+    import time as _time
+    deadline = _time.monotonic() + scan_budget_s
     from .comeet_client import ComeetClient
     try:
         with ComeetClient() as cc:
             for pos in cc.list_open_positions():
+                if _time.monotonic() > deadline:
+                    log.info("uid resolution for %s hit the %.0fs scan budget", ident, scan_budget_s)
+                    break
                 for cand in cc.list_candidates_for_position(str(pos.get("uid") or "")):
                     url = (cand.get("URL") or "").rstrip("/")
                     if url.endswith(f"/can/{ident}"):
