@@ -20,6 +20,14 @@ from app.db import engine
 
 ADVANCE_TYPES = {"Phone Interview", "Video Interview"}
 
+# Per-position mine ledger. Lets the miner skip closed reqs it has already read
+# (they never change) while still re-reading every open one.
+_POSITIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS corpus_positions ("
+    " position_uid text PRIMARY KEY, position_name text, status text,"
+    " mined_at timestamptz default now())"
+)
+
 
 def _is_cv_screen(step: dict) -> bool:
     return "cv screen" in (step.get("name") or "").lower()
@@ -98,26 +106,59 @@ def main() -> None:
         ai_by_uid[r["candidate_uid"]] = dict(r)
     print(f"[ai] loaded {len(ai_by_uid)} scored candidates from debug_scoring", file=sys.stderr)
 
-    # 2) Enumerate open positions.
+    # 2) Enumerate positions — OPEN *and* CLOSED.
+    #
+    # Closed reqs are where the completed hiring outcomes live (screened ->
+    # interviewed -> offered -> hired). Mining only open ones kept ~5% of the
+    # catalogue and silently erased a position's entire screening history the
+    # day it was filled — i.e. exactly when it became most informative.
+    full_refresh = "--full" in sys.argv
     with ComeetClient() as client:
-        positions = client.list_open_positions()
-    pos_names = {str(p["uid"]): (p.get("name") or "") for p in positions if p.get("uid")}
-    print(f"[pos] {len(pos_names)} open positions", file=sys.stderr)
+        positions = client.list_positions()
+    pos_meta = {
+        str(p["uid"]): {"name": p.get("name") or "", "status": (p.get("status") or "").lower()}
+        for p in positions if p.get("uid")
+    }
+    pos_names = {u: m["name"] for u, m in pos_meta.items()}
+    n_open = sum(1 for m in pos_meta.values() if m["status"] == "open")
+    print(f"[pos] {len(pos_meta)} positions ({n_open} open, {len(pos_meta) - n_open} closed)",
+          file=sys.stderr)
+
+    # Incremental plan. A closed req is immutable, so it only needs mining once;
+    # open ones are re-read every run. A position whose status changed since its
+    # last mine is re-read too — that is the open->closed transition, which
+    # carries the final round of decisions.
+    with engine.begin() as conn:
+        conn.execute(text(_POSITIONS_DDL))
+        prior = {r[0]: r[1] for r in conn.execute(
+            text("SELECT position_uid, status FROM corpus_positions")).all()}
+
+    todo_pos = {
+        uid: m for uid, m in pos_meta.items()
+        if full_refresh or uid not in prior or prior[uid] != m["status"] or m["status"] == "open"
+    }
+    print(f"[pos] mining {len(todo_pos)}, skipping {len(pos_meta) - len(todo_pos)} "
+          f"already-mined closed reqs{' (--full: forcing all)' if full_refresh else ''}",
+          file=sys.stderr)
 
     corpus: list[dict] = []
     cat_counter: Counter = Counter()
     per_pos = defaultdict(lambda: {"n": 0, "pos": 0, "neg": 0})
     per_rec = defaultdict(lambda: {"screened": 0, "pos": 0, "neg": 0})
     deleted = blank = 0
+    deleted_rows: list[dict] = []
+    failed_pos: set[str] = set()
 
-    for i, (uid, name) in enumerate(sorted(pos_names.items()), 1):
+    for i, (uid, _meta) in enumerate(sorted(todo_pos.items()), 1):
+        name = _meta["name"]
         try:
             with ComeetClient() as client:
                 cands = client.list_candidates_for_position(uid)
         except Exception as exc:  # noqa: BLE001
             print(f"[skip] {uid} {name[:30]}: {exc}", file=sys.stderr)
+            failed_pos.add(uid)
             continue
-        print(f"[{i}/{len(pos_names)}] {uid} {name[:32]:32} -> {len(cands)} candidates", file=sys.stderr)
+        print(f"[{i}/{len(todo_pos)}] {uid} {name[:32]:32} -> {len(cands)} candidates", file=sys.stderr)
         for c in cands:
             cuid = str(c.get("uid") or "")
             if not cuid:
@@ -126,6 +167,9 @@ def main() -> None:
             cat_counter[cat] += 1
             if cat == "deleted":
                 deleted += 1
+                # Upserts never remove rows, so a candidate deleted in Comeet
+                # after an earlier mine has to be dropped explicitly.
+                deleted_rows.append({"candidate_uid": cuid, "position_uid": uid})
                 continue
             if meta.get("status") == "":
                 blank += 1
@@ -172,11 +216,14 @@ def main() -> None:
                 rec["screened"] += 1
                 rec["pos" if label == 1 else "neg"] += 1
 
-    # 3) Persist (fresh rebuild for open positions).
+    # 3) Persist — UPSERT, never rebuild.
+    #
+    # The old path dropped the table every run, which meant any position the run
+    # did not re-read lost its whole history. Upserting makes a partial or failed
+    # run harmless: it can only add or refresh rows.
     with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS corpus_screen_labels"))
         conn.execute(text(
-            "CREATE TABLE corpus_screen_labels ("
+            "CREATE TABLE IF NOT EXISTS corpus_screen_labels ("
             " candidate_uid text, position_uid text, position_name text,"
             " candidate_name text, resume_url text, profile_url text, status text,"
             " category text, screen_label int, cv_screen_assignee text, cv_screen_time timestamptz,"
@@ -189,11 +236,37 @@ def main() -> None:
                 "INSERT INTO corpus_screen_labels "
                 "(candidate_uid, position_uid, position_name, candidate_name, resume_url, profile_url, status,"
                 " category, screen_label, cv_screen_assignee, cv_screen_time, n_completed_steps,"
-                " has_resume, source, ai_final_rating, ai_dims_json, time_created) VALUES "
+                " has_resume, source, ai_final_rating, ai_dims_json, time_created, mined_at) VALUES "
                 "(:candidate_uid, :position_uid, :position_name, :candidate_name, :resume_url, :profile_url, :status,"
                 " :category, :screen_label, :cv_screen_assignee, :cv_screen_time, :n_completed_steps,"
-                " :has_resume, :source, :ai_final_rating, :ai_dims_json, :time_created)"
+                " :has_resume, :source, :ai_final_rating, :ai_dims_json, :time_created, now()) "
+                "ON CONFLICT (candidate_uid, position_uid) DO UPDATE SET "
+                " position_name=excluded.position_name, candidate_name=excluded.candidate_name,"
+                " resume_url=excluded.resume_url, profile_url=excluded.profile_url,"
+                " status=excluded.status, category=excluded.category,"
+                " screen_label=excluded.screen_label, cv_screen_assignee=excluded.cv_screen_assignee,"
+                " cv_screen_time=excluded.cv_screen_time, n_completed_steps=excluded.n_completed_steps,"
+                " has_resume=excluded.has_resume, source=excluded.source,"
+                " ai_final_rating=excluded.ai_final_rating, ai_dims_json=excluded.ai_dims_json,"
+                " time_created=excluded.time_created, mined_at=now()"
             ), corpus)
+        if deleted_rows:
+            conn.execute(text(
+                "DELETE FROM corpus_screen_labels "
+                "WHERE candidate_uid=:candidate_uid AND position_uid=:position_uid"
+            ), deleted_rows)
+        # Record what was mined, so the next run can skip settled closed reqs.
+        done_pos = [
+            {"position_uid": u, "position_name": m["name"], "status": m["status"]}
+            for u, m in todo_pos.items() if u not in failed_pos
+        ]
+        if done_pos:
+            conn.execute(text(
+                "INSERT INTO corpus_positions (position_uid, position_name, status, mined_at) "
+                "VALUES (:position_uid, :position_name, :status, now()) "
+                "ON CONFLICT (position_uid) DO UPDATE SET position_name=excluded.position_name,"
+                " status=excluded.status, mined_at=now()"
+            ), done_pos)
 
     # 4) Report.
     total = len(corpus)

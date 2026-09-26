@@ -167,6 +167,25 @@ class ComeetClient:
         return resp
 
     # -- high-level methods ------------------------------------------------
+    def list_positions(self, status: str | None = None) -> list[dict[str, Any]]:
+        """Walk all pages of `/positions`, optionally filtered by status.
+
+        `status=None` returns OPEN **and** CLOSED reqs. Closed ones are where the
+        completed hiring outcomes live, so anything mining history wants these —
+        only the live-feed paths should filter to open.
+        """
+        out: list[dict[str, Any]] = []
+        url: str | None = "/positions?limit=500" + (f"&status={status}" if status else "")
+        while url:
+            resp = self._request("GET", url)
+            data = resp.json()
+            positions = data.get("positions", []) if isinstance(data, dict) else []
+            out.extend(p for p in positions if p and p.get("uid"))
+            next_page = data.get("next_page") if isinstance(data, dict) else None
+            url = next_page if next_page else None
+        log.info("comeet: %d positions (status=%s)", len(out), status or "any")
+        return out
+
     def list_open_positions(self) -> list[dict[str, Any]]:
         """Walk all pages of `/positions?status=open`. Returns raw position dicts."""
         out: list[dict[str, Any]] = []
