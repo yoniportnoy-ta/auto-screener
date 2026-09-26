@@ -20,6 +20,13 @@ from app.db import engine
 
 ADVANCE_TYPES = {"Phone Interview", "Video Interview"}
 
+
+def _scrub(row: dict) -> dict:
+    """Postgres text columns reject NUL (0x00). A few candidate records carry
+    them (bad PDF-extracted names, mangled source strings), and one poisons the
+    whole batch insert, so strip them at the edge."""
+    return {k: (v.replace("\x00", "") if isinstance(v, str) else v) for k, v in row.items()}
+
 # Per-position mine ledger. Lets the miner skip closed reqs it has already read
 # (they never change) while still re-reading every open one.
 _POSITIONS_DDL = (
@@ -113,15 +120,17 @@ def main() -> None:
     # catalogue and silently erased a position's entire screening history the
     # day it was filled — i.e. exactly when it became most informative.
     full_refresh = "--full" in sys.argv
+    include_closed = "--all" in sys.argv
     with ComeetClient() as client:
-        positions = client.list_positions()
+        positions = client.list_positions() if include_closed else client.list_positions(status="open")
     pos_meta = {
         str(p["uid"]): {"name": p.get("name") or "", "status": (p.get("status") or "").lower()}
         for p in positions if p.get("uid")
     }
     pos_names = {u: m["name"] for u, m in pos_meta.items()}
     n_open = sum(1 for m in pos_meta.values() if m["status"] == "open")
-    print(f"[pos] {len(pos_meta)} positions ({n_open} open, {len(pos_meta) - n_open} closed)",
+    print(f"[pos] {len(pos_meta)} positions ({n_open} open, {len(pos_meta) - n_open} closed)"
+          f"{'' if include_closed else ' — active only; pass --all to include closed reqs'}",
           file=sys.stderr)
 
     # Incremental plan. A closed req is immutable, so it only needs mining once;
@@ -206,6 +215,7 @@ def main() -> None:
                 "ai_dims_json": json.dumps(dims) if dims else None,
                 "time_created": c.get("time_created"),
             })
+            corpus[-1] = _scrub(corpus[-1])
             per_pos[uid]["n"] += 1
             if label == 1:
                 per_pos[uid]["pos"] += 1
@@ -231,7 +241,7 @@ def main() -> None:
             " ai_dims_json text, time_created timestamptz, mined_at timestamptz default now(),"
             " PRIMARY KEY (candidate_uid, position_uid))"
         ))
-        if corpus:
+        for _start in range(0, len(corpus), 5000):
             conn.execute(text(
                 "INSERT INTO corpus_screen_labels "
                 "(candidate_uid, position_uid, position_name, candidate_name, resume_url, profile_url, status,"
@@ -249,7 +259,7 @@ def main() -> None:
                 " has_resume=excluded.has_resume, source=excluded.source,"
                 " ai_final_rating=excluded.ai_final_rating, ai_dims_json=excluded.ai_dims_json,"
                 " time_created=excluded.time_created, mined_at=now()"
-            ), corpus)
+            ), corpus[_start:_start + 5000])
         if deleted_rows:
             conn.execute(text(
                 "DELETE FROM corpus_screen_labels "
