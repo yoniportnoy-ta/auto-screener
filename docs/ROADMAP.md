@@ -1,223 +1,193 @@
 # Auto-Screener Roadmap — Where We Are
 
-**Last updated:** 2026-08-29 · **Owner:** Yoni · **Companions:** `REDESIGN.md`, `OPERATING-PROTOCOL.md`, `TEACHING-LOOP-V1.md`
+**Last updated:** 2026-09-27 · **Owner:** Yoni · **Companions:** `REDESIGN.md`, `OPERATING-PROTOCOL.md`, `TEACHING-LOOP-V1.md`
 
 ---
 
 ## 🎯 North star
 
-> **An auto-screener that screens 70–90% of incoming CVs on its own — high-confidence
-> advances and rejects — and routes only the genuinely uncertain ones to a human.
+> **An auto-screener that decides 70–90% of incoming CVs on its own — high-confidence
+> advances and rejects — and routes only genuinely uncertain ones to a human.
 > Rejections always stay human-confirmed.**
 
-**The goal metric:** `coverage@90` — the fraction of candidates the judge can auto-decide
-in score bands where it historically agrees with the recruiter ≥90% of the time
-(measured out-of-fold, leakage-free). Today that number is the gap between "nice demo"
-and the north star.
+### The metric is TWO numbers, not one
+
+Coverage is not symmetric, and treating it as one number hid this for a month.
+
+- **`reject_coverage@P`** — share of the funnel auto-rejectable at precision ≥ P
+- **`advance_coverage@P`** — share auto-advanceable at precision ≥ P
+
+They move in **opposite** directions with the position's pass rate `p`:
+
+| pass rate | auto-reject | auto-advance |
+|---|---|---|
+| low (BDR, 17%) | easy — most of the funnel is genuinely a no | near-impossible |
+| high (Sr PM, 66%) | little to gain | easy |
+
+**Hard ceiling (arithmetic, not model quality):** auto-advancing the top `q` of the
+funnel caps at precision `p/q`. Advancing the top 20% at 85% therefore *requires*
+`p ≥ 23.5%`. Below that, no amount of teaching can reach it — the passes do not exist
+to fill the slice.
 
 ---
 
-## 🗺️ The path (per position — every role earns autonomy separately)
+## 0️⃣ TRIAGE — do this before teaching anything
+
+One free query decides which end of the funnel a position can automate:
+
+```sql
+SELECT position_uid, max(position_name),
+       count(*) FILTER (WHERE screen_label=1 AND has_resume) pass,
+       count(*) FILTER (WHERE screen_label=0 AND has_resume) rej
+FROM corpus_screen_labels GROUP BY position_uid;
+```
+
+- `p ≥ 23.5%` → **advance-side candidate**, chase `advance_coverage`
+- `p < 23.5%` → **reject-side only**, chase `reject_coverage` — and that is fine
+- labelled `< ~150` → **not measurable yet**; fix labels first (§ Blockers), don't teach
+
+As of today only **4 of 23** measured positions can ever support top-20% auto-advance
+(Sr PM 66%, Agency AE-EMEA 38%, Agency AE 32%, Sr Backend Platform 29%). The other 19
+are reject-side plays. That is not failure — it is most of the 70–90%.
+
+---
+
+## 🗺️ The ladder (per position — every role earns autonomy separately)
 
 ```
 ① TEACH    recruiter rates ~10 boundary-spanning CVs in Slack (Advance/Reject + why)
    │        → builds the position BRIEF (criteria in the recruiter's own words)
    ▼
-② SHADOW   judge scores incoming CVs with the brief; takes NO action
-   │        → measure agreement vs recruiter decisions (AUC / κ at calibrated τ)
-   ▼        → gates: AUC ≥ 0.80, κ_cv ≥ 0.45, curve plateaued
-③ SELF     judge auto-decides ONLY in >90%-agreement confidence bands;
-            everything else → human. Drift → auto-demote to ②.
+② SHADOW   judge scores incoming CVs; takes NO action, nobody is notified
+   │        → measure agreement vs real recruiter decisions, leakage-free
+   ▼        → gates to leave ②: AUC ≥ 0.80, κ_cv ≥ 0.45, curve plateaued
+③ SELF     judge acts ONLY inside bands meeting the precision bar for that side;
+            everything else → human. Rejections stay one-click-confirm. Drift → ②.
 ```
 
+**Shadow costs the recruiter nothing.** It is scoring + storage. Any position with a
+brief should be in shadow permanently; there is no reason to gate it.
+
 ---
 
-## 🏗️ System map
+## 📍 Per-position state (measured, leakage-free, current briefs)
 
-| piece | where | role |
+| position | uid | taught | brief | AUC | κ_cv | τ | pass rate | phase | play |
+|---|---|---|---|---|--:|--:|--:|---|---|
+| Agency Account Executive | 48.16A | Jade, 10 | ✅ n=10 🔒 enriched | **0.841** | **0.556** | 33 | 32% | ② gates passed | either side; reject ≤10 = 31% @ 93% |
+| Business Development Rep | 41.264 | Yoni, 19 | ✅ n=19 | **0.807** | **0.500** | 44 | 17% | ② gates passed | **reject wedge** ≤20 = 26% @ 97% |
+| Senior Product Manager | 99.667 | Noga, 17 | ✅ n=17 | 0.851 | 0.412 | 33 | 66% | ② κ short | advance side looks strong, n too small |
+| Senior Frontend Infra | EE.E69 | Mor, 10 | ✅ n=10 | — | — | — | 4% | ① never scored | reject-side; needs a shadow run |
+| Controller | AE.078 | Gili+Yoni, 14 | ✅ n=14 | — | — | — | — | req CLOSED | history lost; recoverable via `--all` mine |
+
+**Caveats worth carrying:** BDR is a single measurement on a brief built the same day —
+do not lock τ=44 on it. Sr PM's numbers rest on 38 held-out candidates and its corpus
+is capped at 43 (see Blockers).
+
+---
+
+## ✅ What we have actually proved
+
+| date | finding | evidence |
 |---|---|---|
-| **Comeet Helper** (pipey-bot) | Slack bot, Render worker (Oregon) | recruiter-facing: teaching sessions, live agreement tally, kickoffs |
-| **auto-screener** | Render web svc (Frankfurt) + Postgres | the judge (Claude), corpus mining, τ calibration, benchmarks |
-| **bridge** | `SCREENER_DATABASE_URL` (external host!) | pipey ⇄ auto-screener Postgres: ratings/briefs in, scores/τ out |
-| key tables | auto-screener Postgres | `screen_ratings`, `position_briefs`, `candidate_scores` (production), `corpus_screen_labels` (history, re-mined 6-hourly), `position_taus`, `bench_scores` (experiments only) |
+| 08-28 | Teaching transfers at all | Jade's round → AUC 0.756 on 50+50 holdout |
+| 08-28 | **Binary teaching beats 3-way** — "hard to tell" as a reason, not an option | Noga's 7/10-borderline round taught ~nothing |
+| 08-29 | **Prompt redesign is a dead end** — compression is an honest read, not framing | full n=99 ×1 and ×3; both panel prompts lost to v0 |
+| 08-29 | 3-run ensemble is real but modest (+0.01 AUC, +0.04 κ) | adopted as production judge |
+| 08-30 | **Brief enrichment is the biggest known lever** | Agency AE 0.795 → **0.844**, κ 0.376 → 0.495 |
+| 09-26 | **One good round can clear both gates** | BDR: 7 new cards, n=19 brief → 0.807 / 0.500 first try |
+| 09-26 | **Auto-advance is base-rate capped** | top-20% ceiling = p/0.20; BDR maxes at 83.5% |
+| 09-26 | Reject side is where coverage lives on low-p reqs | BDR ≤25 → 39% of funnel at ~97.5% |
+
+**Repeatable brief recipe:** real JD (public posting if Comeet's field is empty) +
+must-haves composed from the recruiter's own reason tags → validate on that position's
+decided holdout → lock.
 
 ---
 
-## ✅ Done (proven, deployed)
+## 🧱 What is ACTUALLY blocking (not teaching)
 
-| date | milestone | evidence |
-|---|---|---|
-| 08-26 | Teaching flow in Slack (rate + reason → brief) | briefs land in `position_briefs` |
-| 08-26 | Judge scores with taught briefs (`screen_judge`, v4 config) | validated AUC 0.814 BDR / 0.899 Eng Director (earlier corpus) |
-| 08-27 | 3 pilots launched w/ lead recruiters (Jade/AE, Noga/SrPM, Mor/FEInfra) | DMs + sessions live |
-| 08-27 | **Bridge outage found+fixed** (internal DB host cross-region = dead; all errors swallowed) | external host; ratings/scores flow |
-| 08-27 | Rejected candidates wired into teaching (live feed has zero rejects → corpus source) + 4/3/3 reject/advance/fresh mix | queue composition verified |
-| 08-27 | CV links fixed (15-min presigned S3 → signed always-fresh redirect `/cv/<uid>`) | click → real CV, 403 on tamper |
-| 08-28 | **First proof teaching works:** Jade's decisive round → AUC 0.756, κ 0.48 @ optimal τ | `rejudge` on 50 pass + 50 reject |
-| 08-28 | **Binary teaching** (Advance/Reject only; "Hard to tell from CV alone" = reason, excluded from metrics) | Noga's 7/10-borderline round taught ~nothing → root cause |
-| 08-28 | **τ calibration** (`app/threshold.py`): per-position threshold, 5-fold CV, persisted, used by live tally | Agency AE: **τ=30** saved |
-| 08-28 | Leakage guards (teaching-set candidates excluded from all eval — the brief names them) + 23 review findings fixed | adversarial review workflow |
+These cost more progress than brief quality ever did.
 
-## 📌 Honest baseline (Agency AE, v0 judge, n=99, cross-validated)
+**1. Nothing runs on a schedule.** The three auto-screener crons all belong to the
+legacy v2 scorer. The taught judge has **no cron**. It has produced **296 scores in 7
+weeks, across 7 distinct days** — every one a day someone SSH'd in and fired it by
+hand. 10,991 labelled candidates sit unscored. *Fix: nightly scoring cron + weekly
+metrics roll-up into `position_taus`.* **Highest leverage item on this page.**
 
-| metric | value | meaning |
-|---|--:|---|
-| AUC | **0.754** | ranking is good |
-| κ_cv @ τ=30 | **0.374** | decisions are mediocre |
-| **coverage@90** | **0.0** | **can auto-decide NOTHING at the 90% bar** |
-| why | scores compressed 15–40 | "calibrated likelihood" framing → scores cluster at the ~31% base rate |
+**2. The label classifier discards ~1,066 valid labels.** `classify()` requires a step
+whose name contains `"cv screen"`. Reqs that reject straight from the application, or
+name the step differently, lose their history:
+  - **987** candidates rejected with reason *"Doesn't Meet Minimum Qualifications"* —
+    the cleanest CV-only rejections that exist — are labelled NULL
+  - **79** who reached `Phone screen / Recruiter` or later are dropped instead of
+    labelled 1
+  - **213** *"Rejected by knockout questionnaire"* must stay excluded — automated form
+    rule, no human read the CV. **Do not loosen this one.**
+  - Effect: BDR labels at 90%, Sr PM at 8.5% — a workflow-config difference, not a
+    role difference. Sr PM's ceiling of 43 holdout candidates is entirely this.
 
-**The insight driving the current round:** the compression is *caused by what we asked
-for*. Fix = change what the score *means* (absolute rubric / percentile-in-pool),
-not "please use the full range."
-
----
-
-## 🧪 Benchmark round verdict (FINAL, 2026-08-29 — control-corrected)
-
-Full n=99 holdout, every config ×1 and ×3, leakage-free, cross-validated.
-**The v0×3 control overturned the interim verdict** (interim "anchored×3 wins" was an
-n=75 subset artifact — the control run caught it before we shipped a worse prompt):
-
-| config | AUC | κ_cv | cov@85 | cov@80 |
-|---|--:|--:|--:|--:|
-| **v0 ×3 (ADOPTED)** | **0.795** | **0.396** | **50.5%** | **63.6%** |
-| v0 ×1 (previous prod) | 0.783 | 0.356 | 48.5% | 48.5% |
-| percentile ×3 | 0.766 | 0.334 | 40.4% | 48.5% |
-| anchored ×3 | 0.772 | 0.316 | 0% | 42.4% |
-| anchored @haiku-4.5 | 0.686 | 0.135 | 0% | 0% |
-
-**Adopted 2026-08-29:** production judge = original v0 prompt, `JUDGE_RUNS=3`
-(3-run mean fit, ~$0.056/CV), τ recalibrated to **24**, `position_taus` updated
-(live tally follows automatically).
-
-**What the round proved:**
-1. **Prompt redesign FAILED** — both panel prompts underperform the original on the
-   full holdout. Score compression is the judge's honest read of the pool vs a
-   10-rating brief, not a framing artifact. Prompt work on this axis is closed.
-2. **3-run averaging is real but modest** (+0.01–0.02 AUC, +0.04 κ) — adopted.
-3. **The deployable wedge (v0×3, τ=24):** margin 6 → **50% of CVs at 86% agreement**
-   (auto-rejects 94% precise); margin 8 → 35% at 86% with **auto-rejects 100% precise
-   (13/13)**. coverage@90 ≈ 1% — the 90-bar needs better briefs, full stop.
-4. haiku-4.5 rejected (quality loss, barely cheaper); medium effort no help.
-
-## 🧬 Brief-enrichment verdict (2026-08-30) — the lever confirmed & ADOPTED
-
-Same judge (v0 ×3), same holdout, ONLY the brief changed — from the deterministic
-tag-count brief to a composed one (what Riverside sells, what agency-AE core
-function means, concrete company-type/industry definitions; grounded in Jade's 10
-ratings + the public JD — the Comeet JD field is empty):
-
-| Agency AE (production basis, n=99) | old brief | **enriched brief** |
-|---|--:|--:|
-| AUC | 0.795 | **0.844** |
-| κ_cv | 0.376 | **0.495** ✅ gate |
-| accuracy | 0.687 | **0.747** |
-| candidates in ≥80%-agreement bands | 64% | **88%** |
-| τ | 24 | **33** |
-
-**Adopted in production:** enriched brief written to `position_briefs` with
-`locked=true` (the per-rating rebuild can't clobber it — pipey mirror respects
-the lock), richbrief ×3 scores promoted, τ recalibrated. coverage@90 still ~0 —
-next push: more teaching cases + recompose the brief from 20–30 ratings.
-
-**Repeatable recipe for every position:** fetch the real JD (public posting if
-Comeet's field is empty) + compose specific must-haves from the recruiter's
-reason tags → validate on that position's decided-candidate holdout → lock.
-
-**Eval hygiene note:** the 6-hourly corpus re-mine shifted holdout labels
-mid-experiment (99→81 joinable). TODO: freeze holdout labels in a snapshot table
-per experiment.
-
-## 🧪 Sr PM enrichment test (2026-08-30) — brief lever, second data point
-
-Noga's redo round (17 ratings, rejects included) re-measured with 3-run scoring:
-
-| Sr PM (n=52 decided) | before redo | after redo |
-|---|--:|--:|
-| AUC | 0.708 | **0.741** |
-| κ | 0.165 | **0.204** |
-
-Still far below Agency AE (0.844 / 0.495). Two live hypotheses, not yet separated:
-(a) Sr PM still has the THIN auto-generated brief — Agency AE's jump came from the
-*enriched* brief; (b) Sr PM leans on non-CV signal (Yoni corrected a candidate from
-LinkedIn, not the résumé). **Next test:** enrichment recipe on Sr PM — jump ⇒ briefs
-confirmed as the lever; flat ⇒ real evidence about the role's CV-learnability.
-
-## 🐞 Teaching-flow QA + fix (2026-08-30, pipey 9099e7a)
-
-Adversarial QA confirmed the mixed-card-order / "!" incidents were a REAL
-concurrency bug (deploy churn only amplified it): the rate→next-card path ran
-entirely on the Bolt listener thread (PG mirror + 2 PG connects + Slack file ops
-+ Comeet/S3 CV fetch with 5×60s retries) = 7–45s typical, minutes worst case,
-**with the rated card's buttons still live** → re-click forked the flow (second
-modal, duplicate live card, CV uploads deleting each other, double completion).
-
-Fixed: instant card neutralization before slow I/O; already-rated clicks refused;
-per-user single-flight lock with `next_unrated` re-read inside it; one-shot
-completion guard (undo re-arms); bounded interactive CV fetch (Comeet 8s/2
-retries, S3 streamed with 20s deadline + 12MB cap). Verified by concurrency test
-+ live smoke (card in 4.3s, CV above card).
-**Ops rule:** deploy only when no session has rated in the last ~30 min.
-
-## ⬜ Next (in order)
-
-1. **Deepen briefs — the only remaining AUC lever** (hand-built Eng Director brief
-   hit 0.90 vs 0.795 today): (a) get Noga + Mor through their open rounds; (b) second
-   teaching round for Jade (20–30 total cases); (c) LLM-composed brief from
-   ratings+notes+JD, validated vs the deterministic builder on this same holdout.
-2. **Ship the reject wedge** in Slack: candidates with fit ≤ τ−8 land in a
-   "pre-rejected — one-click confirm" queue (100%-precision band today, protocol-safe).
-3. **Confidence gate v1** for advances as ≥90% bands emerge with better briefs.
-4. **Scale teaching** to remaining published positions (`kickoff <position> [@recruiter]`).
-5. **Phase ② SHADOW for Agency AE** — continuous ×3 scoring + weekly agreement/drift.
-6. Human-ceiling check: small double-labeling exercise (inter-recruiter κ) before
-   chasing AUC > 0.9.
-
-## 🔄 Also open
-
-- Recruiter rounds: Noga (7-card reject-mix redo), Mor (10 cards) — both waiting.
-- Human-ceiling question: recruiters may pass on non-CV signal (source/referral/LinkedIn)
-  — measure inter-recruiter κ via a small double-labeling exercise before chasing AUC>0.9.
+**3. Corpus history was being destroyed.** *(fixed 2026-09-26, `64d15d3` + `844f54b`)*
+The miner dropped and rebuilt the table every run from open reqs only — so a position's
+whole screening history was erased the day it was filled, and 463 closed reqs were never
+mined at all. Now an upsert; a req mined while open keeps its history after closing.
+Scope is active-only by request; `--all` is a one-off to recover already-closed reqs
+(Controller included).
 
 ---
 
-## 📍 Per-position state
+## ⬜ Next (ordered by leverage, not by appetite)
 
-| position | recruiter | taught | brief | phase | notes |
-|---|---|---|---|---|---|
-| Agency Account Executive | Jade | 10 (decisive ✅) | ✅ n=10 | **① → ② candidate** | AUC 0.75, τ=30 live; best prospect |
-| Senior Product Manager | Noga | 10 (7 borderline ⚠️) + 7-card redo open | ✅ weak | ① | flat AUC ~0.71; redo should sharpen |
-| Senior Frontend Infra | Mor | 0 (10 cards open) | — | ① | ~1 decided historically — teaches on fresh CVs |
-| everything else | — | — | — | not started | corpus + kickoff ready when we are |
+1. **Nightly judge cron + weekly roll-up.** Turns seven snapshots into an actual curve
+   and makes every other item cheaper. ~1h.
+2. **Fix `classify()`** — disposition-reason allowlist → label 0; post-screen interview
+   step → label 1; keep knockout excluded. +~1,066 labels, rescues Sr PM and the other
+   thin reqs. ~15 lines.
+3. **Ship the reject wedge on BDR** at fit ≤ 20 (~19 CVs/week, ~97% precision), as a
+   one-click-confirm queue to whoever screens the req day-to-day. Overrides become
+   fresh labels on exactly the population being automated.
+4. **Shadow everything taught** — Sr FE Infra and Sr PM have briefs and have never been
+   scored on a schedule. Free once (1) exists.
+5. **Teach in parallel, not serially.** Four reqs are ready with 1,000+ labelled
+   candidates each: Mor/Senior Backend Eng, Kourtney/SMB CSM, Jayme/AE-EMEA,
+   Noga/DevOps. ~20 recruiter-minutes each.
+6. **Enrich the BDR brief** (recipe above) and re-measure — the one lever known to move
+   AUC materially.
+7. Human-ceiling check: inter-recruiter κ via small double-labelling, before chasing
+   AUC > 0.9. Recruiters use source/referral/LinkedIn signal absent from the CV.
 
 ---
 
 ## ⚠️ Standing constraints & lessons
 
-- **Shared Anthropic key, $15/day** — every scoring run is budget-capped; benchmarks
-  charge failed calls too. Batch API for any full-corpus scoring later.
-- **Fairness (DO-NOT-LEARN)** is enforced in code on every judge prompt: no accent /
-  national origin / country-of-education / name-based inference, ever.
+- **Fairness (DO-NOT-LEARN)** is enforced in code on every judge prompt: never use or
+  infer accent, national origin, country of education, years-in-country, or
+  name/photo-based nationality/gender/age. Job-relevant evidence only. Work
+  authorisation and genuine language requirements are legitimate and separate.
 - **Rejections are never auto-final** — human-confirmed by protocol.
-- Comeet quirks: live per-position feed hides rejects (use corpus); résumé URLs expire
-  in 15 min (use `/cv/<uid>` redirect); internal DB hostnames don't resolve cross-region.
-- Roles where CV signal is thin (Designer) will *never* clear the gates — that's the
-  system working, not failing.
+- **Pedigree filters are actively harmful here.** On BDR hire outcomes, prior BD
+  experience, outbound volume and university tier all failed to separate good hires
+  from mishires; a screen weighting them ranks the mishires first.
+- Comeet quirks: live per-position feed hides rejects (use the corpus); résumé URLs
+  expire in 15 min (use `/cv/<uid>`); internal DB hostnames don't resolve cross-region;
+  `/candidates/<uid>/files` holds reference PDFs only — never the CV, never the offer;
+  numeric UI ids 404 the API (resolve to the alphanumeric uid first).
+- Roles where CV signal is thin (Designer, 20% pass, 33 passes) will not clear the
+  gates — that is the system working.
+- **Ops rule:** deploy only when no session has rated in the last ~30 min.
 
 ## 🔎 How to check where we are
 
-```
-# per-position learning curve + phase (run on auto-screener host)
+```bash
+# per-position learning curve + phase
 python -m app.learning_curve <position_uid> [--recruiter <slack_id>]
 
-# threshold + coverage (the goal metric)
+# threshold + both coverage sides (the goal metric)
 python -m app.threshold <position_uid> --no-save
 
-# benchmark comparison
-python -m app.bench_screen analyze 48.16A
+# leakage-free measurement against decided history (~$1.80 / 100 candidates)
+python -m app.rejudge <position_uid> --per-class 50
 
-# in Slack (Comeet Helper)
-screen brief <position>       # the learned brief
-kickoff <position> [@person]  # start a teaching round for its recruiter
+# recover history for already-closed reqs (one-off, slow)
+python -m app.corpus.mine_screen_labels --all
 ```
