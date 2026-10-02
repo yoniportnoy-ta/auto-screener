@@ -2263,3 +2263,105 @@ def candidate_note(body: CandidateNoteBody,
     return {"ok": True, "candidate_uid": uid, "given": given,
             "resolved": uid != given, "author": recruiter.get("email"),
             "note": result or None, "chars": len(payload["text"])}
+
+
+# ─── Step actors ─────────────────────────────────────────────────────────────
+#
+# WHY THIS LIVES HERE AND NOT IN comeet-funnel-sync
+#
+# The public Recruit API exposes only `assignees` -- who a step was ASSIGNED
+# to. Steps are routinely assigned to two or three people, so counting
+# assignments credits work to people who did not do it: of 47 steps assigned
+# to one manager over a week, only 34 were actually actioned by him, 7 by
+# someone else and 1 by a third person.
+#
+# The actor is `assigned_to[].filled_by` on the INTERNAL recruiter API, which
+# needs a cookie session behind a captcha-gated login. That session is a
+# singleton -- one row, refreshed every ~2.5 days, each refresh costing a
+# captcha solve. A second service logging in independently would race this one
+# for the cookie and burn solves, so the session stays here and other services
+# ask over HTTP.
+#
+# There is no bulk route: /api/v1/candidates is 405, /steps and
+# /requisitions/{uid}/steps are 404. One request per candidate is the only
+# shape available.
+
+_MAX_STEP_ACTOR_CANDIDATES = 200
+
+
+class StepActorsRequest(BaseModel):
+    candidate_ids: list[int] = Field(
+        ..., min_length=1, max_length=_MAX_STEP_ACTOR_CANDIDATES,
+        description="Comeet NUMERIC candidate ids (the /can/<id> in the URL), "
+                    "not the alphanumeric uid.",
+    )
+
+
+def _actor(person: Any) -> dict[str, Any] | None:
+    if not isinstance(person, dict):
+        return None
+    name = person.get("full_name") or " ".join(
+        p for p in (person.get("first_name"), person.get("last_name")) if p
+    ).strip()
+    return {
+        "id": person.get("id"),
+        "name": name or None,
+        "email": person.get("email"),
+    }
+
+
+@router.post("/candidate/step-actors",
+             dependencies=[Depends(_require_extension_token)])
+def candidate_step_actors(req: StepActorsRequest) -> dict[str, Any]:
+    """Resolve WHO actually completed each step, per candidate.
+
+    Returns {"actors": {"<candidate_id>": [step, ...]}, "errors": {...}}.
+    A step whose `filled_by` is null is returned with ``"filled_by": null`` --
+    that means UNKNOWN (bulk or pre-migration completion), never "the assignee
+    did it". Callers must preserve that distinction.
+    """
+    from ..comeet_app_client import ComeetAppClient
+
+    client = ComeetAppClient()
+    if not client.has_session:
+        client.adopt_cached_session()
+
+    actors: dict[str, list[dict[str, Any]]] = {}
+    errors: dict[str, str] = {}
+    for cid in req.candidate_ids:
+        try:
+            _, steps = client._request("GET", f"/api/v1/candidates/{cid}/steps")
+        except Exception as exc:  # noqa: BLE001
+            errors[str(cid)] = str(exc)[:200]
+            continue
+        rows: list[dict[str, Any]] = []
+        for step in steps if isinstance(steps, list) else []:
+            if not step.get("is_completed"):
+                continue
+            filled = _actor(step.get("filled_by"))
+            assigned: list[dict[str, Any]] = []
+            for person in step.get("assigned_to") or []:
+                entry = _actor(person) or {}
+                who = _actor(person.get("filled_by"))
+                if who and not filled:
+                    filled = who
+                entry["filled"] = bool(who)
+                assigned.append(entry)
+            rows.append({
+                "name": step.get("name"),
+                "step_type": step.get("step_type") or step.get("type"),
+                "time_completed": step.get("time_completed"),
+                "req_step_id": step.get("req_step_id"),
+                "filled_by": filled,
+                "assigned_to": assigned,
+                # Comeet's own verdict fields. `proceed` is the Go/No-go
+                # outcome; it is often null, so it is passed through rather
+                # than interpreted here.
+                "proceed": step.get("proceed"),
+                "status": step.get("status"),
+                "user_action": step.get("user_action"),
+            })
+        actors[str(cid)] = rows
+
+    log.info("step-actors resolved=%d errors=%d", len(actors), len(errors))
+    return {"actors": actors, "errors": errors}
