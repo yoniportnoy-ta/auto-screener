@@ -32,3 +32,4 @@ htmlcov/
 # One-shot migration data exported from the legacy Apps Script. Do NOT commit;
 # contains internal position UIDs and recruiter assignments.
 /migration/
+.venv*/

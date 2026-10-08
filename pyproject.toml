@@ -25,7 +25,15 @@ dependencies = [
     "alembic>=1.13",
 
     # Scoring / LLM
-    "anthropic>=0.39",
+    # Pinned below 1.0 deliberately. The 1.x SDK removed `temperature`
+    # from messages.create() outright -- not a 400 from the API, a
+    # TypeError before the request is even built -- and an unpinned
+    # `pip install -e .` picked it up on a routine redeploy. Every
+    # score_candidate call has raised since. Scoring passes 0.2 and the
+    # extractors 0.0, and this screener's thresholds were measured at
+    # those settings, so dropping the parameter is a recalibration, not
+    # a port. Do that deliberately, not as the side effect of a deploy.
+    "anthropic>=0.39,<1",
     "tenacity>=9.0",         # retries with backoff
 
     # Config
