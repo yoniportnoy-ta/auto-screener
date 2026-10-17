@@ -849,6 +849,94 @@ def post_recruiter_notes(body: RecruiterNotesBody) -> dict[str, Any]:
         raise HTTPException(400, str(exc))
 
 
+# Teaching produces a brief and a set of recruiter decisions; ten is the size
+# of one teaching round and the floor below which a brief is one person's
+# first impression rather than a bar.
+MIN_TEACHING_RATINGS = 10
+
+
+def assess_readiness(*, has_brief: bool, ratings: int, class_id: str | None,
+                     tau: float | None, enabled: bool) -> dict[str, Any]:
+    """Whether auto-screen can be switched on, and what is missing if not.
+
+    Kept pure so the rule is testable without a database, and so the Slack
+    flow and the web UI cannot drift apart on what "ready" means.
+
+    `class_id` is in here because set_auto_screen_enabled refuses without one.
+    Three of the five taught positions have a brief and a full teaching round
+    and still no class -- Agency AE, the only calibrated one, among them -- so
+    a flow that checked only the teaching would offer a button that 400s.
+    """
+    missing: list[str] = []
+    if not has_brief:
+        missing.append("brief")
+    if ratings < MIN_TEACHING_RATINGS:
+        missing.append(f"{MIN_TEACHING_RATINGS - ratings} more rated CVs")
+    if not class_id:
+        missing.append("position class")
+    return {
+        "ready": not missing,
+        "missing": missing,
+        "calibrated": tau is not None,   # a measured threshold, not just taught
+        "enabled": bool(enabled),
+    }
+
+
+@router.get("/screening/readiness")
+def screening_readiness() -> list[dict[str, Any]]:
+    """Per position: taught yet, calibrated yet, auto-screen on yet.
+
+    Each table is read on its own and a missing one is treated as empty. The
+    teaching tables are created by the first teaching round, so on a fresh
+    database three of these four do not exist -- which is exactly the state
+    this endpoint is meant to be able to describe. A single joined query would
+    500 there instead of answering "nothing is taught yet".
+    """
+    from sqlalchemy import text as _text
+    from ..db import engine
+
+    def rows(sql: str) -> list[Any]:
+        with engine.connect() as c:
+            try:
+                return list(c.execute(_text(sql)))
+            except Exception as exc:  # noqa: BLE001 — absent pre-teaching
+                log.info("readiness: %s", exc)
+                return []
+
+    classes = {r[0]: r for r in rows(
+        "SELECT position_uid, class_id, class_name, "
+        "coalesce(auto_screen_enabled, false) FROM position_classes")}
+    briefs = {r[0]: r for r in rows(
+        "SELECT position_uid, position_name FROM position_briefs")}
+    ratings = {r[0]: int(r[1]) for r in rows(
+        "SELECT position_uid, count(*) FROM screen_ratings GROUP BY 1")}
+    taus = {r[0]: r[1] for r in rows(
+        "SELECT position_uid, tau FROM position_taus")}
+
+    out: list[dict[str, Any]] = []
+    for uid in sorted(set(classes) | set(briefs) | set(ratings)):
+        if not uid:
+            continue
+        cls = classes.get(uid)
+        out.append({
+            "positionUid": uid,
+            "positionName": (briefs.get(uid) or (None, None))[1]
+                            or (cls[2] if cls else None) or uid,
+            "classId": cls[1] if cls else None,
+            "className": cls[2] if cls else None,
+            "hasBrief": uid in briefs,
+            "ratings": ratings.get(uid, 0),
+            "tau": taus.get(uid),
+            **assess_readiness(
+                has_brief=uid in briefs, ratings=ratings.get(uid, 0),
+                class_id=cls[1] if cls else None, tau=taus.get(uid),
+                enabled=bool(cls[3]) if cls else False),
+        })
+    # Ready first, then whoever is closest to ready.
+    out.sort(key=lambda r: (not r["ready"], -r["ratings"], r["positionName"]))
+    return out
+
+
 @router.get("/auto-screen/positions")
 def list_auto_screen() -> list[str]:
     """Position UIDs the cron currently scans (debug helper)."""
