@@ -108,6 +108,63 @@ def queue(position_uid: str, limit: int = 50) -> dict[str, Any]:
     return {"position_uid": pos, "waiting": len(waiting), "candidates": [_summary(c) for c in waiting[:limit]]}
 
 
+@router.get("/my-positions", dependencies=[Depends(_require_gateway)])
+def my_positions(email: str = "", all: bool = False) -> dict[str, Any]:
+    """Open positions with how many CVs wait at CV screen on each.
+
+    By default only the positions whose lead recruiter is `email`; `all=true` lists every
+    open position with CVs waiting. Counts come from the hourly-warmed cache behind
+    /positions/unscreened-counts, so this is fast after the first call.
+    """
+    from .api import compute_unscreened_counts
+
+    me = email.strip().lower()
+    with ComeetClient() as client:
+        positions = client.list_open_positions()
+    counts = compute_unscreened_counts()
+    out = []
+    for p in positions:
+        uid = str(p.get("uid") or "")
+        if not uid:
+            continue
+        lead = ((p.get("users") or {}).get("lead_recruiter") or {})
+        lead_email = str(lead.get("email") or "").strip().lower()
+        mine = bool(me) and lead_email == me
+        pending = int(counts.get(uid) or 0)
+        if (all and pending) or (not all and mine):
+            out.append({"uid": uid, "name": str(p.get("name") or ""), "pending": pending,
+                        "lead_recruiter": " ".join(x for x in (lead.get("first_name"), lead.get("last_name")) if x)})
+    out.sort(key=lambda x: (-x["pending"], x["name"].lower()))
+    return {"positions": out, "total_pending": sum(x["pending"] for x in out)}
+
+
+@router.get("/batch", dependencies=[Depends(_require_gateway)])
+def batch(position_uid: str, size: int = 25, offset: int = 0, cv_chars: int = 8000) -> dict[str, Any]:
+    """The next `size` candidates waiting at CV screen, oldest first, each with CV text.
+
+    CVs are fetched three at a time (Comeet throttles more) and cut to `cv_chars`.
+    `offset` skips candidates already shown in this session.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    pos = position_uid.strip()
+    if not pos:
+        raise HTTPException(400, "position_uid is required")
+    size, offset, cv_chars = max(1, min(size, 40)), max(0, offset), max(1000, min(cv_chars, sa.CV_TEXT_LIMIT))
+    waiting = sorted((c for c in _position_candidates(pos) if _in_queue(c)), key=lambda c: str(c.get("time_created") or ""))
+    chunk = waiting[offset:offset + size]
+
+    def one(c: dict[str, Any]) -> dict[str, Any]:
+        resume = c.get("resume") or {}
+        text, status = sa.cv_text(resume.get("url") if isinstance(resume, dict) else None)
+        return {**_summary(c), "cv_status": status, "cv_text": text[:cv_chars]}
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        cands = list(pool.map(one, chunk))
+    return {"position_uid": pos, "waiting": len(waiting), "offset": offset,
+            "remaining_after": max(0, len(waiting) - offset - len(chunk)), "candidates": cands}
+
+
 @router.get("/candidate", dependencies=[Depends(_require_gateway)])
 def candidate(position_uid: str, candidate_uid: str) -> dict[str, Any]:
     """One candidate with their CV as text."""

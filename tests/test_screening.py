@@ -247,3 +247,35 @@ def test_decision_without_the_email_flag_never_emails(client):
     r = client.post("/api/screening/decision", json=body, headers=H).json()
     assert r["rejection_email"] is None
     assert not any("sendmessages?parent_id" in c[1] or "832271328" in c[1] for c in client.fake.calls)
+
+
+# ─── My positions + batch ────────────────────────────────────────────────────
+def test_batch_returns_cvs_oldest_first_with_offset(client, monkeypatch):
+    monkeypatch.setattr(sa, "cv_text", lambda url: ("x" * 20000, "ok") if url else ("", "none"))
+    r = client.get("/api/screening/batch?position_uid=P1&size=1&cv_chars=1000", headers=H).json()
+    assert r["waiting"] == 2 and r["remaining_after"] == 1
+    (c,) = r["candidates"]
+    assert c["uid"] == "AB.2" and c["cv_status"] == "none"
+    r = client.get("/api/screening/batch?position_uid=P1&size=5&offset=1&cv_chars=1000", headers=H).json()
+    assert [c["uid"] for c in r["candidates"]] == ["AB.1"] and len(r["candidates"][0]["cv_text"]) == 1000
+
+
+def test_my_positions_filters_by_lead_recruiter(client, monkeypatch):
+    import app.routes.api as api
+    positions = [
+        {"uid": "P1", "name": "AE", "users": {"lead_recruiter": {"email": "Noga@riverside.fm", "first_name": "Noga"}}},
+        {"uid": "P2", "name": "SDR", "users": {"lead_recruiter": {"email": "kourtney@riverside.fm"}}},
+        {"uid": "P3", "name": "PM", "users": {"lead_recruiter": {"email": "noga@riverside.fm"}}},
+    ]
+
+    class Pub:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def list_open_positions(self): return positions
+
+    monkeypatch.setattr(routes, "ComeetClient", Pub)
+    monkeypatch.setattr(api, "compute_unscreened_counts", lambda fresh=False: {"P1": 4, "P2": 9, "P3": 0})
+    mine = client.get("/api/screening/my-positions?email=noga@riverside.fm", headers=H).json()
+    assert [p["uid"] for p in mine["positions"]] == ["P1", "P3"] and mine["total_pending"] == 4
+    every = client.get("/api/screening/my-positions?all=true", headers=H).json()
+    assert [p["uid"] for p in every["positions"]] == ["P2", "P1"]
