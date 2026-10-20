@@ -704,6 +704,15 @@ async def cmd_prewarm_all() -> int:
     """
     from .prewarm import prewarm_all_open_positions
 
+    # Screening plugin: read waiting CVs ahead of time so batches come from the cache.
+    # Runs before the scoring prewarm and never stops it.
+    try:
+        from .routes.screening import prefetch_waiting_cvs
+
+        log.info("prefetch-cvs: %s", prefetch_waiting_cvs(time_budget_s=600.0))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("prefetch-cvs failed: %s", exc)
+
     res = prewarm_all_open_positions(n_per_position=15, time_budget_s=900.0)
     if res.get("error"):
         log.error("prewarm-all: %s", res["error"])

@@ -256,6 +256,47 @@ def cv_text(resume_url: str | None) -> tuple[str, str]:
     return text[:CV_TEXT_LIMIT], "ok"
 
 
+UNREADABLE_RETRY_SECONDS = 6 * 3600  # an unreadable CV may have been a passing download error
+
+
+def cached_cv_text(candidate_uid: str, resume_url: str | None) -> tuple[str, str]:
+    """`cv_text`, kept per candidate and resume link in `cv_text_cache` (see migration 0016).
+
+    A new resume link (the candidate re-uploaded) replaces the old entry. An unreadable
+    CV is retried after a few hours. Cache trouble never blocks screening: it falls back
+    to reading the CV directly.
+    """
+    import hashlib
+
+    from sqlalchemy import text as sql
+
+    from .db import db_session
+
+    if not resume_url or not candidate_uid:
+        return cv_text(resume_url)
+    url_hash = hashlib.sha256(resume_url.encode()).hexdigest()
+    try:
+        with db_session() as s:
+            row = s.execute(
+                sql("select url_hash, status, text, extract(epoch from now() - fetched_at) age "
+                    "from cv_text_cache where candidate_uid = :u"), {"u": candidate_uid}).first()
+        if row and row.url_hash == url_hash and not (row.status == "unreadable" and row.age > UNREADABLE_RETRY_SECONDS):
+            return row.text, row.status
+    except Exception as exc:  # noqa: BLE001
+        log.info("cv cache read failed for %s: %s", candidate_uid, exc)
+    text, status = cv_text(resume_url)
+    try:
+        with db_session() as s:
+            s.execute(
+                sql("insert into cv_text_cache(candidate_uid, url_hash, status, text, fetched_at) "
+                    "values (:u, :h, :st, :t, now()) on conflict (candidate_uid) do update set "
+                    "url_hash = excluded.url_hash, status = excluded.status, text = excluded.text, fetched_at = now()"),
+                {"u": candidate_uid, "h": url_hash, "st": status, "t": text})
+    except Exception as exc:  # noqa: BLE001
+        log.info("cv cache write failed for %s: %s", candidate_uid, exc)
+    return text, status
+
+
 def _pdf_text(content: bytes) -> str:
     try:
         from pypdf import PdfReader
@@ -269,6 +310,7 @@ def _pdf_text(content: bytes) -> str:
 
 __all__ = [
     "ScreeningError", "app_client", "reject_reasons", "numeric_id_from_url", "resolve_numeric_id",
-    "current_cv_screen_step", "submit_decision", "post_comment", "comment_text", "cv_text", "send_rejection_email",
+    "current_cv_screen_step", "submit_decision", "post_comment", "comment_text", "cv_text", "cached_cv_text",
+    "send_rejection_email",
     "ComeetAppError",
 ]

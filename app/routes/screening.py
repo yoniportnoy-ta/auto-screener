@@ -156,7 +156,7 @@ def batch(position_uid: str, size: int = 25, offset: int = 0, cv_chars: int = 80
 
     def one(c: dict[str, Any]) -> dict[str, Any]:
         resume = c.get("resume") or {}
-        text, status = sa.cv_text(resume.get("url") if isinstance(resume, dict) else None)
+        text, status = sa.cached_cv_text(str(c["uid"]), resume.get("url") if isinstance(resume, dict) else None)
         return {**_summary(c), "cv_status": status, "cv_text": text[:cv_chars]}
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -266,3 +266,40 @@ def rejection_email(body: RejectionEmailBody) -> dict[str, Any]:
         _forget(pos)
     log.info("screening: rejection email for %s sent by %s", uid, body.recruiter.email or body.recruiter.name)
     return {"ok": True, "candidate_uid": uid, "comeet_url": str(c.get("URL") or ""), "rejection_email": email}
+
+
+# ─── CV prefetch (hourly, from the prewarm cron) ─────────────────────────────
+def prefetch_waiting_cvs(*, time_budget_s: float = 600.0, per_position: int = 60) -> dict[str, Any]:
+    """Read and cache the CVs waiting at CV screen on every open position with people
+    waiting, oldest first, so recruiters' batches come from the cache. Skips CVs that
+    are already cached; stops when the time budget is used up."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .api import compute_unscreened_counts
+
+    started = time.monotonic()
+    counts = compute_unscreened_counts()
+    fetched = positions = 0
+    for pos, pending in sorted(counts.items(), key=lambda kv: -int(kv[1] or 0)):
+        if not pending:
+            continue
+        if time.monotonic() - started > time_budget_s:
+            break
+        positions += 1
+        try:
+            waiting = sorted((c for c in _position_candidates(str(pos), fresh=True) if _in_queue(c)),
+                             key=lambda c: str(c.get("time_created") or ""))[:per_position]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prefetch: listing %s failed: %s", pos, exc)
+            continue
+
+        def one(c: dict[str, Any]) -> int:
+            if time.monotonic() - started > time_budget_s:
+                return 0
+            resume = c.get("resume") or {}
+            sa.cached_cv_text(str(c["uid"]), resume.get("url") if isinstance(resume, dict) else None)
+            return 1
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fetched += sum(pool.map(one, waiting))
+    return {"positions": positions, "cvs_checked": fetched, "elapsed_s": round(time.monotonic() - started, 1)}
