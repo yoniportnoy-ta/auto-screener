@@ -10,8 +10,14 @@ Payloads were decoded from recruiter-app HAR captures (2026-10-20):
   reject   same call, {"proceed": false, "further_review": "", "disposition_type_id": <id>}
            Sends NO email: the candidate moves on to a "send notification" step that
            waits for a person to send or skip it. Nothing here touches that step.
-  comment  POST /api/v1/sendmessages  [{"action": 2, ...}]
-           action 2 is an internal comment. Other actions send email, so never change it.
+  comment  POST /api/v1/sendmessages  [{"action": 2, "discussion_type": 1, ...}] with NO "to"
+           recipients: an internal comment. Emails also use action 2 but carry "to" and
+           discussion_type 2, so never add recipients or change the type here.
+  email    POST /api/v1/candidates/{num}/steps/{notify}/submit?parent_id={num}
+           {"proceed": true, "further_review": "", "sendmessages": [...]} where sendmessages is
+           what GET .../steps/{notify}/sendmessages returned, plus the fields the recruiter app
+           adds, with send=true on the candidate email only (the team notification goes back
+           with send=false). Comeet applies the template's delay (business hours).
   reasons  GET /api/v1/companies/{company}/disposition-types?parent_id={company}
            status 1 = rejected by the company, status 2 = withdrawn by the candidate.
 """
@@ -183,6 +189,53 @@ def comment_text(recruiter_name: str, decision: str, reason: str | None, note: s
     return f"{text}\n{note}" if note else text
 
 
+# ─── Rejection email ─────────────────────────────────────────────────────────
+REJECTED_STATUS = 3     # candidate status after a reject (0 = in progress)
+NOTIFICATION_STEP = 5   # step_type of a "Send notification" step
+
+
+def send_rejection_email(numeric_id: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """Send the rejection email waiting on a rejected candidate's "Send notification" step.
+
+    Uses Comeet's own template and delay for the position, unchanged. Refused unless the
+    candidate is rejected, their current step is the notification step, and exactly one
+    prepared message is addressed to the candidate.
+    """
+    app = app or app_client()
+    cand = app.get_candidate(numeric_id)
+    if cand.get("status") != REJECTED_STATUS:
+        raise ScreeningError("this candidate isn't rejected, so there's no rejection email to send")
+    steps = _body(app._request("GET", f"/api/v1/candidates/{numeric_id}/steps"))
+    current = next((s for s in (steps or []) if isinstance(s, dict) and not s.get("is_completed")), None)
+    if not current or not (current.get("step_type") == NOTIFICATION_STEP
+                           or "notification" in str(current.get("name") or "").lower()):
+        raise ScreeningError("there's no rejection email waiting for this candidate (it may already be sent or skipped)")
+    step_id = int(current["id"])
+    msgs = _body(app._request("GET", f"/api/v1/candidates/{numeric_id}/steps/{step_id}/sendmessages?parent_id={numeric_id}"))
+    msgs = [m for m in (msgs or []) if isinstance(m, dict)]
+    to_candidate = [m for m in msgs if any(isinstance(t, dict) and t.get("type") == "candidate" for t in (m.get("to") or []))]
+    if len(to_candidate) != 1:
+        raise ScreeningError("couldn't find exactly one rejection email for the candidate on this step", status=409)
+    email = to_candidate[0]
+    address = next((t.get("email") for t in email["to"] if t.get("type") == "candidate"), "") or ""
+    if not address.strip():
+        raise ScreeningError("this candidate has no email address in Comeet", status=409)
+    out = []
+    for m in msgs:
+        m = dict(m, files=[], send=m is email)
+        if m["send"]:
+            m.update(index=1, missing_email=False, show_add_candidate_resume=False, time_to_send_message=None)
+        out.append(m)
+    path = f"/api/v1/candidates/{numeric_id}/steps/{step_id}/submit?parent_id={numeric_id}"
+    _body(app._request("POST", path, json_body={"proceed": True, "sendmessages": out, "further_review": ""}))
+    return {
+        "subject": email.get("subject") or "",
+        "to": address,
+        "delay_hours": email.get("delay_hours") if email.get("is_delayed") else 0,
+        "business_hours": bool(email.get("is_delayed_until_business_hours")),
+    }
+
+
 # ─── CV text ─────────────────────────────────────────────────────────────────
 def cv_text(resume_url: str | None) -> tuple[str, str]:
     """Readable CV text and a status: ok / none / unreadable."""
@@ -213,6 +266,6 @@ def _pdf_text(content: bytes) -> str:
 
 __all__ = [
     "ScreeningError", "app_client", "reject_reasons", "numeric_id_from_url", "resolve_numeric_id",
-    "current_cv_screen_step", "submit_decision", "post_comment", "comment_text", "cv_text",
+    "current_cv_screen_step", "submit_decision", "post_comment", "comment_text", "cv_text", "send_rejection_email",
     "ComeetAppError",
 ]

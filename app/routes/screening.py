@@ -136,6 +136,7 @@ class DecisionBody(BaseModel):
     decision: Literal["pass", "reject"]
     reason_id: int | None = None
     comment: str = ""
+    send_rejection_email: bool = False   # rejects only; the recruiter chose it on this candidate
     recruiter: Recruiter
 
 
@@ -170,7 +171,41 @@ def decision(body: DecisionBody) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  the decision is already saved; report, don't fail
         comment_error = str(exc)[:200]
         log.warning("screening: comment on %s failed: %s", uid, comment_error)
+    email: dict[str, Any] | None = None
+    email_error = ""
+    if body.decision == "reject" and body.send_rejection_email:
+        try:
+            email = sa.send_rejection_email(num)
+            log.info("screening: rejection email for %s sent by %s", uid, body.recruiter.email or body.recruiter.name)
+        except Exception as exc:  # noqa: BLE001  the reject is saved; report, don't fail
+            email_error = str(exc)[:200]
+            log.warning("screening: rejection email for %s failed: %s", uid, email_error)
     return {
         "ok": True, "decision": body.decision, "reason": reason, "candidate_uid": uid, "numeric_id": num,
         "comeet_url": str(c.get("URL") or ""), "comment_posted": comment_posted, "comment_error": comment_error,
+        "rejection_email": email, "rejection_email_error": email_error,
     }
+
+
+class RejectionEmailBody(BaseModel):
+    position_uid: str = Field(min_length=1)
+    candidate_uid: str = Field(min_length=1)
+    recruiter: Recruiter
+
+
+@router.post("/rejection-email", dependencies=[Depends(_require_gateway)])
+def rejection_email(body: RejectionEmailBody) -> dict[str, Any]:
+    """Send the waiting rejection email for a candidate rejected earlier."""
+    pos, uid = body.position_uid.strip(), body.candidate_uid.strip()
+    c = _find(pos, uid)
+    try:
+        num = sa.numeric_id_from_url(str(c.get("URL") or "")) or sa.resolve_numeric_id(uid)
+        email = sa.send_rejection_email(num)
+    except sa.ScreeningError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except sa.ComeetAppError as exc:
+        raise HTTPException(502, f"Comeet error: {exc}") from exc
+    finally:
+        _forget(pos)
+    log.info("screening: rejection email for %s sent by %s", uid, body.recruiter.email or body.recruiter.name)
+    return {"ok": True, "candidate_uid": uid, "comeet_url": str(c.get("URL") or ""), "rejection_email": email}

@@ -175,3 +175,71 @@ def test_decision_refused_for_someone_not_at_cv_screen(client):
 def test_decision_refused_for_unknown_candidate(client):
     body = {"position_uid": "P1", "candidate_uid": "ZZ.9", "decision": "pass", "recruiter": {"name": "Noga"}}
     assert client.post("/api/screening/decision", json=body, headers=H).status_code == 404
+
+
+# ─── Rejection email (from the send-rejection capture) ───────────────────────
+NOTIFY_STEPS = [
+    {"id": 832200946, "name": "CV Screen / Recruiter", "is_completed": True, "step_type": 1},
+    {"id": 832271328, "name": "Send notification", "is_completed": False, "step_type": 5},
+]
+CANDIDATE_EMAIL = {"subject": "Your Application for Full Stack Engineer at Riverside", "body": "<p>Dear test,</p>",
+                   "to": [{"email": "test@example.com", "type": "candidate", "id": 63429397}], "cc": [], "bcc": [],
+                   "action": 2, "event": 1, "template_id": 113768, "delay_hours": 24.0, "is_delayed": True,
+                   "is_delayed_until_business_hours": True, "discussion_type": 2}
+TEAM_NOTICE = {"subject": "Candidate test for Full Stack Engineer", "body": "<p>fyi</p>", "to": [{"type": None}],
+               "action": 2, "event": 1, "template_id": 113777, "delay_hours": 0.0, "is_delayed": False}
+
+
+class EmailApp(FakeApp):
+    def __init__(self, status=3, steps=NOTIFY_STEPS, msgs=(CANDIDATE_EMAIL, TEAM_NOTICE)):
+        super().__init__(steps)
+        self.status, self.msgs = status, [dict(m) for m in msgs]
+
+    def get_candidate(self, uid):
+        return {"id": 63429397, "status": self.status}
+
+    def _request(self, method, path, *, json_body=None, **kw):
+        if "/sendmessages?parent_id=" in path:
+            self.calls.append((method, path, json_body))
+            return 200, self.msgs
+        if path.endswith("/steps/832271328/submit?parent_id=63429397"):
+            self.calls.append((method, path, json_body))
+            return 200, {"id": 71003831, "is_completed": True}
+        return super()._request(method, path, json_body=json_body, **kw)
+
+
+def test_rejection_email_sends_only_the_candidate_email():
+    app = EmailApp()
+    out = sa.send_rejection_email(63429397, app)
+    (method, path, body), = app.writes()
+    assert (method, path) == ("POST", "/api/v1/candidates/63429397/steps/832271328/submit?parent_id=63429397")
+    assert body["proceed"] is True and body["further_review"] == ""
+    email, notice = body["sendmessages"]
+    assert email["send"] is True and email["index"] == 1 and email["missing_email"] is False
+    assert email["delay_hours"] == 24.0 and email["template_id"] == 113768   # Comeet's own template and delay
+    assert notice["send"] is False and notice["subject"] == TEAM_NOTICE["subject"]
+    assert out == {"subject": CANDIDATE_EMAIL["subject"], "to": "test@example.com", "delay_hours": 24.0, "business_hours": True}
+
+
+def test_rejection_email_refused_when_not_rejected_or_not_waiting():
+    with pytest.raises(sa.ScreeningError, match="isn't rejected"):
+        sa.send_rejection_email(63429397, EmailApp(status=0))
+    done = [dict(s, is_completed=True) for s in NOTIFY_STEPS]
+    with pytest.raises(sa.ScreeningError, match="no rejection email waiting"):
+        sa.send_rejection_email(63429397, EmailApp(steps=done))
+    for msgs in ((TEAM_NOTICE,), (CANDIDATE_EMAIL, CANDIDATE_EMAIL)):
+        with pytest.raises(sa.ScreeningError, match="exactly one"):
+            sa.send_rejection_email(63429397, EmailApp(msgs=msgs))
+    no_address = dict(CANDIDATE_EMAIL, to=[{"email": "", "type": "candidate"}])
+    app = EmailApp(msgs=(no_address, TEAM_NOTICE))
+    with pytest.raises(sa.ScreeningError, match="no email address"):
+        sa.send_rejection_email(63429397, app)
+    assert app.writes() == []
+
+
+def test_decision_without_the_email_flag_never_emails(client):
+    body = {"position_uid": "P1", "candidate_uid": "AB.1", "decision": "reject", "reason_id": 33273,
+            "recruiter": {"name": "Noga Kaufman"}}
+    r = client.post("/api/screening/decision", json=body, headers=H).json()
+    assert r["rejection_email"] is None
+    assert not any("sendmessages?parent_id" in c[1] or "832271328" in c[1] for c in client.fake.calls)
