@@ -241,6 +241,12 @@ except ImportError:
     log.warning("routes/api.py not yet implemented")
 
 try:
+    from .routes import screening as screening_routes  # noqa: F401
+    app.include_router(screening_routes.router, prefix="/api/screening", tags=["screening"])
+except ImportError:
+    log.warning("routes/screening.py not importable")
+
+try:
     from .routes import ui as ui_routes  # noqa: F401
     app.include_router(ui_routes.router, tags=["ui"])
 except ImportError:

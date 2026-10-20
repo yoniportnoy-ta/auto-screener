@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Separate from screener_api_token, which the Chrome extension shares across
     # everyone and therefore cannot identify an individual.
     screener_recruiter_tokens: str = Field(default="", description="JSON map: token -> recruiter identity")
+    # The sourcing gateway authenticates each recruiter with their own access code and
+    # calls /api/screening/* on their behalf with this token (Riverside Screening plugin).
+    screener_gateway_token: str = Field(default="", description="Shared secret for the sourcing gateway")
 
     # ─── Database ────────────────────────────────────────────────────────────
     database_url: str = Field(default="postgresql://localhost/auto_screener_dev")
