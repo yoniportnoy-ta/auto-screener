@@ -178,8 +178,12 @@ def test_decision_refused_for_unknown_candidate(client):
 
 
 # ─── Rejection email (from the send-rejection capture) ───────────────────────
+# Order as Comeet returns it after a reject: the added notification step comes AFTER
+# the next interview step, which is still open; an older notification is already done.
 NOTIFY_STEPS = [
     {"id": 832200946, "name": "CV Screen / Recruiter", "is_completed": True, "step_type": 1},
+    {"id": 832200947, "name": "Video Interview/Recruiter", "is_completed": False, "step_type": 2},
+    {"id": 832200988, "name": "Send notification", "is_completed": True, "step_type": 5},
     {"id": 832271328, "name": "Send notification", "is_completed": False, "step_type": 5},
 ]
 CANDIDATE_EMAIL = {"subject": "Your Application for Full Stack Engineer at Riverside", "body": "<p>Dear test,</p>",
@@ -224,7 +228,7 @@ def test_rejection_email_sends_only_the_candidate_email():
 def test_rejection_email_refused_when_not_rejected_or_not_waiting():
     with pytest.raises(sa.ScreeningError, match="isn't rejected"):
         sa.send_rejection_email(63429397, EmailApp(status=0))
-    done = [dict(s, is_completed=True) for s in NOTIFY_STEPS]
+    done = [dict(s, is_completed=True) if s["step_type"] == 5 else s for s in NOTIFY_STEPS]
     with pytest.raises(sa.ScreeningError, match="no rejection email waiting"):
         sa.send_rejection_email(63429397, EmailApp(steps=done))
     for msgs in ((TEAM_NOTICE,), (CANDIDATE_EMAIL, CANDIDATE_EMAIL)):

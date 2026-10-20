@@ -206,11 +206,14 @@ def send_rejection_email(numeric_id: int, app: ComeetAppClient | None = None) ->
     if cand.get("status") != REJECTED_STATUS:
         raise ScreeningError("this candidate isn't rejected, so there's no rejection email to send")
     steps = _body(app._request("GET", f"/api/v1/candidates/{numeric_id}/steps"))
-    current = next((s for s in (steps or []) if isinstance(s, dict) and not s.get("is_completed")), None)
-    if not current or not (current.get("step_type") == NOTIFICATION_STEP
-                           or "notification" in str(current.get("name") or "").lower()):
+    # A reject ADDS a new "Send notification" step, and Comeet lists it after the next
+    # (still open) interview step, so it isn't the first open step. Take the newest open
+    # notification step on the rejected candidate.
+    waiting = [s for s in (steps or []) if isinstance(s, dict) and not s.get("is_completed") and s.get("id")
+               and (s.get("step_type") == NOTIFICATION_STEP or "notification" in str(s.get("name") or "").lower())]
+    if not waiting:
         raise ScreeningError("there's no rejection email waiting for this candidate (it may already be sent or skipped)")
-    step_id = int(current["id"])
+    step_id = max(int(s["id"]) for s in waiting)
     msgs = _body(app._request("GET", f"/api/v1/candidates/{numeric_id}/steps/{step_id}/sendmessages?parent_id={numeric_id}"))
     msgs = [m for m in (msgs or []) if isinstance(m, dict)]
     to_candidate = [m for m in msgs if any(isinstance(t, dict) and t.get("type") == "candidate" for t in (m.get("to") or []))]
