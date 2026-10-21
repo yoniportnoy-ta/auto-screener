@@ -22,6 +22,7 @@ from __future__ import annotations
 import html
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 from . import screening_actions as sa
@@ -192,15 +193,19 @@ def comeet_user(email: str, app: ComeetAppClient | None = None) -> dict[str, Any
     raise sa.ScreeningError(f"{email} isn't a Comeet user, so the reminder has nobody to notify", status=400)
 
 
-def reminder(num: int, recruiter_email: str, text: str, at: str, app: ComeetAppClient | None = None) -> dict[str, Any]:
-    """A Comeet reminder on this lead or candidate for the recruiter, at `at` (ISO 8601 with a timezone)."""
+def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """A Comeet reminder on this lead or candidate for the recruiter at `at`: local wall time in `tz`
+    (IANA name, default Asia/Jerusalem), or ISO 8601 with an offset."""
     app = _app(app)
     try:
         when = datetime.fromisoformat((at or "").strip().replace("Z", "+00:00"))
     except ValueError:
-        raise sa.ScreeningError("pass the reminder time as ISO 8601 with a timezone, e.g. 2026-10-22T10:00:00+03:00", status=400)
+        raise sa.ScreeningError("pass the reminder time like 2026-10-22T10:00 (the recruiter's local time)", status=400)
     if when.tzinfo is None:
-        raise sa.ScreeningError("the reminder time needs a timezone, e.g. +03:00 for Israel", status=400)
+        try:
+            when = when.replace(tzinfo=ZoneInfo((tz or "").strip() or "Asia/Jerusalem"))
+        except (ZoneInfoNotFoundError, ValueError):
+            raise sa.ScreeningError(f"unknown time zone \"{tz}\" (use a name like Asia/Jerusalem or America/Toronto)", status=400)
     when = when.astimezone(timezone.utc)
     if when <= datetime.now(timezone.utc):
         raise sa.ScreeningError("the reminder time is in the past", status=400)

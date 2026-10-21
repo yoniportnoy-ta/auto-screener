@@ -127,7 +127,7 @@ def test_comment_is_internal_and_names_the_recruiter():
 
 def test_reminder_payload_matches_the_l2c_capture():
     app = FakeApp()
-    res = pa.reminder(63470107, "Dana@riverside.com", "Call back <today>", "2099-01-02T10:00:00+02:00", app)
+    res = pa.reminder(63470107, "Dana@riverside.com", "Call back <today>", "2099-01-02T10:00:00+02:00", app=app)
     assert res == {"for": "Dana Levi", "at_utc": "2099-01-02T08:00:00.000Z", "text": "Call back <today>"}
     (method, path, body), = app.writes()
     assert path == "/api/v1/sendmessages"
@@ -138,12 +138,21 @@ def test_reminder_payload_matches_the_l2c_capture():
     assert m["discussion_context"] == {"id": 63470107, "type": "candidate"} and m["time_to_send_message"] == "2099-01-02T08:00:00.000Z"
 
 
+def test_reminder_local_time_follows_the_clock_change():
+    # Israel: summer +03:00 until the last Sunday of October, then +02:00; Toronto in January is -05:00.
+    assert pa.reminder(1, "dana@riverside.fm", "", "2099-07-01T10:00", app=FakeApp())["at_utc"] == "2099-07-01T07:00:00.000Z"
+    assert pa.reminder(1, "dana@riverside.fm", "", "2099-12-01T10:00", app=FakeApp())["at_utc"] == "2099-12-01T08:00:00.000Z"
+    assert pa.reminder(1, "dana@riverside.fm", "", "2099-01-05T10:00", "America/Toronto", app=FakeApp())["at_utc"] == "2099-01-05T15:00:00.000Z"
+
+
 def test_reminder_refuses_past_naive_or_unknown_recruiter():
-    for at in ("2020-01-01T10:00:00+02:00", "2099-01-02T10:00:00", "tomorrow"):
+    for at in ("2020-01-01T10:00:00+02:00", "2020-01-01T10:00", "tomorrow"):
         with pytest.raises(sa.ScreeningError):
-            pa.reminder(1, "dana@riverside.fm", "x", at, FakeApp())
+            pa.reminder(1, "dana@riverside.fm", "x", at, app=FakeApp())
     with pytest.raises(sa.ScreeningError):
-        pa.reminder(1, "nobody@riverside.fm", "x", "2099-01-02T10:00:00+02:00", FakeApp())
+        pa.reminder(1, "dana@riverside.fm", "x", "2099-01-02T10:00", "Mars/Base", app=FakeApp())
+    with pytest.raises(sa.ScreeningError):
+        pa.reminder(1, "nobody@riverside.fm", "x", "2099-01-02T10:00:00+02:00", app=FakeApp())
 
 
 @pytest.fixture
