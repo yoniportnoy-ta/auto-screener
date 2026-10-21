@@ -12,10 +12,16 @@ Yoni's recording of a test lead (2026-10-21):
 Moving a candidate forward is only "pass the current step", and only on steps that need no
 interview summary (step_type 1 review, 3 assignment): interviews and offers stay with people.
 Comments are internal (never emails) and name the recruiter.
+Reminders use the envelope linkedin-to-comeet decoded from the recruiter UI's "Add reminder":
+  POST /api/v1/sendmessages [{"action": 2, "event": 32, "discussion_type": 3, "body": <mention chip + text>,
+       "participants": [<bot>, <recruiter>], "time_to_send_message": "...Z", ...}]
+The recruiter's mention chip plus their id in participants is what makes Comeet notify them.
 """
 from __future__ import annotations
 
+import html
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from . import screening_actions as sa
@@ -172,3 +178,39 @@ def comment(num: int, recruiter_name: str, text: str, app: ComeetAppClient | Non
     if not text:
         raise sa.ScreeningError("the comment is empty", status=400)
     sa.post_comment(num, f"{text}\n({recruiter_name}, via RiverTalent)", _app(app))
+
+
+def comeet_user(email: str, app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """The recruiter's Comeet user (id and name) by work email."""
+    want = (email or "").strip().lower().replace("@riverside.com", "@riverside.fm")
+    if not want:
+        raise sa.ScreeningError("the recruiter's email is missing", status=400)
+    for u in _get(_app(app), "/api/v1/users") or []:
+        if isinstance(u, dict) and str(u.get("email") or "").strip().lower() == want:
+            name = (u.get("full_name") or f"{u.get('first_name') or ''} {u.get('last_name') or ''}").strip()
+            return {"id": int(u["id"]), "name": name or want}
+    raise sa.ScreeningError(f"{email} isn't a Comeet user, so the reminder has nobody to notify", status=400)
+
+
+def reminder(num: int, recruiter_email: str, text: str, at: str, app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """A Comeet reminder on this lead or candidate for the recruiter, at `at` (ISO 8601 with a timezone)."""
+    app = _app(app)
+    try:
+        when = datetime.fromisoformat((at or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise sa.ScreeningError("pass the reminder time as ISO 8601 with a timezone, e.g. 2026-10-22T10:00:00+03:00", status=400)
+    if when.tzinfo is None:
+        raise sa.ScreeningError("the reminder time needs a timezone, e.g. +03:00 for Israel", status=400)
+    when = when.astimezone(timezone.utc)
+    if when <= datetime.now(timezone.utc):
+        raise sa.ScreeningError("the reminder time is in the past", status=400)
+    who = comeet_user(recruiter_email, app)
+    text = (text or "").strip() or "Follow up"
+    iso = when.strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}Z"
+    app._request("POST", "/api/v1/sendmessages", json_body=[{
+        "action": 2, "body": f'<b class="bolder mentionItem">{html.escape(who["name"])}</b> {html.escape(text)}',
+        "event": 32, "files": [], "groups": [],
+        "participants": [{"id": sa.bot_user_id(app), "type": "user"}, {"id": who["id"], "type": "user"}],
+        "visibility": 1, "discussion_context": {"id": num, "type": "candidate"}, "discussion_type": 3,
+        "is_new": True, "time_to_send_message": iso}])
+    return {"for": who["name"], "at_utc": iso, "text": text}

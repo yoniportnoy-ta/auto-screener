@@ -347,6 +347,7 @@ class ProcessBody(BaseModel):
     step: str = ""
     reason_id: int | None = None
     position_id: int | None = None
+    at: str = ""
 
 
 @router.post("/process/comment", dependencies=[Depends(_require_gateway)])
@@ -355,6 +356,14 @@ def process_comment(body: ProcessBody) -> dict[str, Any]:
     _process_call(pa.comment, num, body.recruiter.name, body.text)
     log.info("process: comment on %s by %s", num, body.recruiter.email or body.recruiter.name)
     return {"ok": True, "numeric_id": num}
+
+
+@router.post("/process/reminder", dependencies=[Depends(_require_gateway)])
+def process_reminder(body: ProcessBody) -> dict[str, Any]:
+    num = _process_call(pa.numeric_id, body.candidate)
+    res = _process_call(pa.reminder, num, body.recruiter.email, body.text, body.at)
+    log.info("process: reminder on %s for %s at %s", num, res["for"], res["at_utc"])
+    return {"ok": True, "numeric_id": num, **res}
 
 
 @router.post("/process/pass", dependencies=[Depends(_require_gateway)])

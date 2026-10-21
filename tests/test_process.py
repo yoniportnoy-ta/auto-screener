@@ -45,7 +45,8 @@ class FakeApp:
         if path.endswith("/steps"):
             return 200, self.steps
         if path == "/api/v1/users":
-            return 200, [{"id": 160785, "email": "comeetadmin@riverside.fm"}]
+            return 200, [{"id": 160785, "email": "comeetadmin@riverside.fm"},
+                         {"id": 222, "email": "dana@riverside.fm", "first_name": "Dana", "last_name": "Levi"}]
         if method in ("PATCH", "POST"):
             return 200, {"id": 63470107}
         raise AssertionError(f"unexpected {method} {path}")
@@ -122,6 +123,27 @@ def test_comment_is_internal_and_names_the_recruiter():
     (method, path, body), = app.writes()
     assert path == "/api/v1/sendmessages" and body[0]["action"] == 2 and body[0]["discussion_type"] == 1
     assert "to" not in body[0] and "Dana Levi" in body[0]["body"]
+
+
+def test_reminder_payload_matches_the_l2c_capture():
+    app = FakeApp()
+    res = pa.reminder(63470107, "Dana@riverside.com", "Call back <today>", "2099-01-02T10:00:00+02:00", app)
+    assert res == {"for": "Dana Levi", "at_utc": "2099-01-02T08:00:00.000Z", "text": "Call back <today>"}
+    (method, path, body), = app.writes()
+    assert path == "/api/v1/sendmessages"
+    m = body[0]
+    assert (m["action"], m["event"], m["discussion_type"]) == (2, 32, 3)
+    assert m["participants"] == [{"id": 160785, "type": "user"}, {"id": 222, "type": "user"}]
+    assert m["body"] == '<b class="bolder mentionItem">Dana Levi</b> Call back &lt;today&gt;'
+    assert m["discussion_context"] == {"id": 63470107, "type": "candidate"} and m["time_to_send_message"] == "2099-01-02T08:00:00.000Z"
+
+
+def test_reminder_refuses_past_naive_or_unknown_recruiter():
+    for at in ("2020-01-01T10:00:00+02:00", "2099-01-02T10:00:00", "tomorrow"):
+        with pytest.raises(sa.ScreeningError):
+            pa.reminder(1, "dana@riverside.fm", "x", at, FakeApp())
+    with pytest.raises(sa.ScreeningError):
+        pa.reminder(1, "nobody@riverside.fm", "x", "2099-01-02T10:00:00+02:00", FakeApp())
 
 
 @pytest.fixture
