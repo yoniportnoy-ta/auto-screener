@@ -303,3 +303,93 @@ def prefetch_waiting_cvs(*, time_budget_s: float = 600.0, per_position: int = 60
         with ThreadPoolExecutor(max_workers=3) as pool:
             fetched += sum(pool.map(one, waiting))
     return {"positions": positions, "cvs_checked": fetched, "elapsed_s": round(time.monotonic() - started, 1)}
+
+
+# ─── Any lead or candidate: find, comment, pass a review step, lead steps, convert ───
+from .. import process_actions as pa  # noqa: E402
+
+
+def _process_call(fn, *args):
+    try:
+        return fn(*args)
+    except sa.ScreeningError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except sa.ComeetAppError as exc:
+        raise HTTPException(502, f"Comeet error: {exc}") from exc
+
+
+def _note(num: int, recruiter: "Recruiter", text: str) -> str:
+    """Internal comment recording what the recruiter did; never fails the action."""
+    try:
+        sa.post_comment(num, f"{text} By {recruiter.name} via RiverTalent.")
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        log.warning("process: comment on %s failed: %s", num, exc)
+        return str(exc)[:200]
+
+
+@router.get("/process", dependencies=[Depends(_require_gateway)])
+def process_get(candidate: str) -> dict[str, Any]:
+    """Who this is (lead or candidate), the position, and where they are in it."""
+    num = _process_call(pa.numeric_id, candidate)
+    return _process_call(pa.process, num)
+
+
+@router.get("/withdrawal-reasons", dependencies=[Depends(_require_gateway)])
+def process_withdrawal_reasons() -> dict[str, Any]:
+    return {"reasons": _process_call(pa.withdrawal_reasons)}
+
+
+class ProcessBody(BaseModel):
+    candidate: str = Field(min_length=1)
+    recruiter: Recruiter
+    text: str = ""
+    step: str = ""
+    reason_id: int | None = None
+    position_id: int | None = None
+
+
+@router.post("/process/comment", dependencies=[Depends(_require_gateway)])
+def process_comment(body: ProcessBody) -> dict[str, Any]:
+    num = _process_call(pa.numeric_id, body.candidate)
+    _process_call(pa.comment, num, body.recruiter.name, body.text)
+    log.info("process: comment on %s by %s", num, body.recruiter.email or body.recruiter.name)
+    return {"ok": True, "numeric_id": num}
+
+
+@router.post("/process/pass", dependencies=[Depends(_require_gateway)])
+def process_pass(body: ProcessBody) -> dict[str, Any]:
+    num = _process_call(pa.numeric_id, body.candidate)
+    res = _process_call(pa.pass_current_step, num)
+    log.info("process: passed %s on %s by %s", res["passed"], num, body.recruiter.email or body.recruiter.name)
+    err = _note(num, body.recruiter, f"Passed \"{res['passed']}\"." + (f"\n{body.text.strip()}" if body.text.strip() else ""))
+    return {"ok": True, "numeric_id": num, **res, "comment_error": err}
+
+
+@router.post("/process/lead-step", dependencies=[Depends(_require_gateway)])
+def process_lead_step(body: ProcessBody) -> dict[str, Any]:
+    num = _process_call(pa.numeric_id, body.candidate)
+    name = _process_call(pa.set_lead_step, num, body.step)
+    log.info("process: lead %s -> %s by %s", num, name, body.recruiter.email or body.recruiter.name)
+    err = _note(num, body.recruiter, f"Lead moved to {name}." + (f"\n{body.text.strip()}" if body.text.strip() else ""))
+    return {"ok": True, "numeric_id": num, "lead_step": name, "comment_error": err}
+
+
+@router.post("/process/not-interested", dependencies=[Depends(_require_gateway)])
+def process_not_interested(body: ProcessBody) -> dict[str, Any]:
+    if not body.reason_id:
+        raise HTTPException(400, "pick one of Comeet's withdrawal reasons")
+    num = _process_call(pa.numeric_id, body.candidate)
+    reason = _process_call(pa.lead_not_interested, num, body.reason_id)
+    log.info("process: lead %s not interested (%s) by %s", num, reason, body.recruiter.email or body.recruiter.name)
+    err = _note(num, body.recruiter, f"Lead marked not interested ({reason})." + (f"\n{body.text.strip()}" if body.text.strip() else ""))
+    return {"ok": True, "numeric_id": num, "reason": reason, "comment_error": err}
+
+
+@router.post("/process/convert", dependencies=[Depends(_require_gateway)])
+def process_convert(body: ProcessBody) -> dict[str, Any]:
+    num = _process_call(pa.numeric_id, body.candidate)
+    res = _process_call(pa.convert_lead, num, body.step, body.position_id)
+    log.info("process: lead %s converted to candidate at %s by %s", num, res["step"], body.recruiter.email or body.recruiter.name)
+    err = _note(num, body.recruiter, f"Converted from lead to candidate, starting at \"{res['step']}\"." + (f"\n{body.text.strip()}" if body.text.strip() else ""))
+    return {"ok": True, "numeric_id": num, **res, "comment_error": err}
