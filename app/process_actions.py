@@ -264,6 +264,9 @@ def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", a
     return {"for": who["name"], "at_utc": iso, "text": text}
 
 
+DAY_NAMES = {"7": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat"}
+
+
 def _by_day(slots: list[str]) -> dict[str, list[str]]:
     """UTC slot starts grouped by Israel day: {"Sun 25 Oct": ["10:00", "14:30"]}."""
     out: dict[str, list[str]] = {}
@@ -300,10 +303,11 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         json_body={"id": int(step["id"]), "start": start, "days": days, "parent_id": num,
                    "meeting_room": [], "duration_minutes": minutes})) or {}
     inter = res.get("availability_intersection")
-    if isinstance(inter, dict) and inter.get("is_failed"):
-        # The answer comes from the signed-in Comeet user's Google connection; the bot has none.
-        raise sa.ScreeningError("Comeet couldn't read the interviewers' calendars for the RiverTalent account "
-                                f"({inter.get('message') or 'schedule error'}): availability isn't available yet", status=503)
+    if isinstance(inter, dict) and inter.get("is_failed") and not res.get("assigned_to"):
+        # Comeet reads calendars through the company scheduling calendar (tlv-interviews@riverside.fm,
+        # connected 2026-10-22); without it the answer is empty with code 524.
+        raise sa.ScreeningError("Comeet couldn't read the interviewers' calendars "
+                                f"({inter.get('message') or 'schedule error'}): check the company scheduling calendar in Comeet", status=503)
     people = []
     for a in res.get("assigned_to") or []:
         if not isinstance(a, dict):
@@ -312,6 +316,9 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         people.append({
             "name": _who(a), "slots": _by_day(sch.get("availability") or []),
             "calendar_problem": bool(sch.get("is_failed")),
+            "calendar_error_code": sch.get("error_reason_code"),
+            "working_hours": {DAY_NAMES.get(str(d), str(d)): [f"{w.get('start_time')}-{w.get('end_time')}" for w in ws or []]
+                              for d, ws in sorted((a.get("working_hours") or {}).items(), key=lambda kv: (int(kv[0]) % 7))},
             "minimum_notice_hours": a.get("minimum_scheduling_notice_hours"),
             "max_interview_hours_per_day": a.get("max_interviews_hours_per_day"),
             "out_of_office": [_israel(a.get("ooo_starttime")), _israel(a.get("ooo_endtime"))] if a.get("ooo_starttime") else None,
@@ -319,5 +326,6 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
     return {"step": step.get("name"), "type": STEP_TYPE_NAMES.get(step.get("step_type"), "other"),
             "is_current": step is (open_steps[0] if open_steps else None),
             "already_scheduled": _israel(step.get("time_scheduled")), "duration_minutes": minutes, "days": days,
-            "interviewers": people, "common_slots": _by_day(res.get("availability_intersection") or []),
+            "interviewers": people,
+            "common_slots": _by_day(inter) if isinstance(inter, list) else {},
             "times_in_israel_time": True}

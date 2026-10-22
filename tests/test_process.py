@@ -108,6 +108,26 @@ def test_availability_next_interview_step_read_only():
     assert not [c for c in app.writes() if "interview-availability" not in c[1]]  # nothing else written
 
 
+def test_availability_one_failed_calendar_keeps_the_others(monkeypatch):
+    app = FakeApp(CAND)
+    real = app._request
+    def req(method, path, **kw):
+        if "interview-availability" in path:
+            app.calls.append((method, path, kw.get("json_body")))
+            return 200, {"assigned_to": [
+                {"full_name": "Yoni Portnoy", "working_hours": {"7": [{"start_time": "09:30", "end_time": "11:00"}], "1": [{"start_time": "08:30", "end_time": "12:00"}]},
+                 "scheduling": {"availability": ["2026-10-27T07:30:00Z"]}},
+                {"full_name": "Yahel Shiran", "scheduling": {"is_failed": True, "error_reason_code": 8}}],
+                "availability_intersection": {"code": 524, "is_failed": True}}
+        return real(method, path, **kw)
+    app._request = req
+    out = pa.availability(63470107, app=app)
+    yoni, yahel = out["interviewers"]
+    assert yoni["slots"] == {"Tue 27 Oct": ["09:30"]} and yoni["working_hours"] == {"Sun": ["09:30-11:00"], "Mon": ["08:30-12:00"]}
+    assert yahel["calendar_problem"] is True and yahel["calendar_error_code"] == 8 and yahel["slots"] == {}
+    assert out["common_slots"] == {}
+
+
 def test_availability_refuses_a_lead():
     with pytest.raises(sa.ScreeningError):
         pa.availability(63470107, app=FakeApp(LEAD))
