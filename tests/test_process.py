@@ -3,6 +3,8 @@
 Payloads are pinned to Yoni's recording of a test lead (2026-10-21). A change here should
 come from a new capture, not a guess.
 """
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -138,6 +140,40 @@ def test_availability_reads_calendars_as_the_scheduling_account(monkeypatch):
     monkeypatch.setattr(sa, "scheduler_client", lambda: None)  # not configured: the bot asks
     pa.availability(63470107)
     assert [c for c in bot.calls if "interview-availability" in c[1]]
+
+
+def test_free_slots_follow_hours_notice_busy_and_clock_change():
+    from datetime import datetime, timezone
+    hours = {"7": [{"start_time": "09:00", "end_time": "11:00"}]}  # Sundays only
+    start = datetime(2026, 10, 22, 6, 0, tzinfo=timezone.utc)      # Thu 22 Oct 09:00 Israel
+    busy = [(datetime(2026, 10, 25, 7, 30, tzinfo=timezone.utc), datetime(2026, 10, 25, 8, 0, tzinfo=timezone.utc))]
+    slots = pa.free_slots(hours, 12, "Asia/Jerusalem", busy, start, 7, 30)
+    # Sun 25 Oct is after the clock change (+02:00): 09:00 Israel = 07:00Z; 09:30 is busy.
+    assert slots == ["2026-10-25T07:00:00Z", "2026-10-25T08:00:00Z", "2026-10-25T08:30:00Z"]
+    assert pa.free_slots(hours, 24 * 4, "Asia/Jerusalem", [], start, 7, 30) == []  # notice pushes past Sunday
+
+
+def test_failed_calendar_is_read_like_the_scheduling_screen(monkeypatch):
+    bot, reader = FakeApp(CAND), FakeApp(CAND)
+    def avail(method, path, **kw):
+        if "interview-availability" in path:
+            return 200, {"assigned_to": [{"full_name": "Yahel Shiran", "email": "yahel@riverside.fm", "timezone": "Asia/Jerusalem",
+                                          "minimum_scheduling_notice_hours": 0,
+                                          "working_hours": {str(d): [{"start_time": "09:00", "end_time": "10:00"}] for d in range(1, 8)},
+                                          "scheduling": {"is_failed": True, "error_reason_code": 8}}],
+                         "availability_intersection": {"code": 524, "is_failed": True}}
+        if "google/calendar/events" in path:
+            reader.calls.append((method, path, None))
+            return 200, {"items": [{"summary": "secret 1:1", "start": {"dateTime": "2099-01-01T00:00:00Z"}, "end": {"dateTime": "2099-01-01T01:00:00Z"}}]}
+        return FakeApp._request(reader, method, path, **kw)
+    reader._request = avail
+    monkeypatch.setattr(sa, "app_client", lambda: bot)
+    monkeypatch.setattr(sa, "scheduler_client", lambda: reader)
+    out = pa.availability(63470107)
+    p = out["interviewers"][0]
+    assert p["calendar_problem"] is False and p["computed_from_calendar"] is True and p["slots"]
+    assert any("calendarId=yahel%40riverside.fm" in c[1] for c in reader.calls)
+    assert "secret" not in json.dumps(out)  # meeting titles never leave
 
 
 def test_availability_refuses_a_lead():

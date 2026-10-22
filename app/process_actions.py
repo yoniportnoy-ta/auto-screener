@@ -25,13 +25,17 @@ The recruiter's mention chip plus their id in participants is what makes Comeet 
 from __future__ import annotations
 
 import html
+import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 from . import screening_actions as sa
 from .comeet_app_client import ComeetAppClient
+
+log = logging.getLogger(__name__)
 
 LEAD, CANDIDATE = 2, 1
 OUTREACH = {1: "Not Contacted", 2: "Contacted", 3: "Responded"}
@@ -278,6 +282,57 @@ def _by_day(slots: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def busy_blocks(email: str, start: datetime, end: datetime, app: ComeetAppClient) -> list[tuple[datetime, datetime]]:
+    """An interviewer's busy times from their Google calendar, read the way Comeet's scheduling
+    screen does (/api/v1/google/calendar/events through a Google-connected Comeet user).
+    Keeps only start, end and busy/free: never titles or attendees."""
+    q = urlencode([("calendarId", email), ("eventTypes", "default"), ("eventTypes", "focusTime"),
+                   ("eventTypes", "outOfOffice"), ("maxResults", "2500"), ("singleEvents", "true"),
+                   ("timeMin", start.strftime("%Y-%m-%dT%H:%M:%S+0000")), ("timeMax", end.strftime("%Y-%m-%dT%H:%M:%S+0000")),
+                   ("timeZone", "UTC")])
+    res = _get(app, f"/api/v1/google/calendar/events?{q}") or {}
+    out = []
+    for e in res.get("items") or []:
+        if not isinstance(e, dict) or e.get("status") == "cancelled" or e.get("transparency") == "transparent":
+            continue
+        if any(a.get("self") and a.get("responseStatus") == "declined" for a in e.get("attendees") or [] if isinstance(a, dict)):
+            continue
+        s_, e_ = e.get("start") or {}, e.get("end") or {}
+        if s_.get("dateTime") and e_.get("dateTime"):
+            out.append((datetime.fromisoformat(s_["dateTime"].replace("Z", "+00:00")),
+                        datetime.fromisoformat(e_["dateTime"].replace("Z", "+00:00"))))
+        elif e.get("eventType") == "outOfOffice" and s_.get("date") and e_.get("date"):  # all-day OOO only
+            tz = ZoneInfo("Asia/Jerusalem")
+            out.append((datetime.fromisoformat(s_["date"]).replace(tzinfo=tz), datetime.fromisoformat(e_["date"]).replace(tzinfo=tz)))
+    return out
+
+
+def free_slots(working_hours: dict[str, Any], notice_hours: float, tz_name: str, busy: list[tuple[datetime, datetime]],
+               start: datetime, days: int, minutes: int, step_minutes: int = 30) -> list[str]:
+    """Slot starts (UTC, Comeet's format) inside the person's Comeet working hours, at least
+    `notice_hours` ahead, `minutes` long, overlapping nothing busy. Comeet keys weekdays 1=Mon..7=Sun."""
+    tz = ZoneInfo(tz_name or "Asia/Jerusalem")
+    earliest = start + timedelta(hours=float(notice_hours or 0))
+    length = timedelta(minutes=minutes)
+    out = []
+    day0 = start.astimezone(tz).date()
+    for i in range(days + 1):
+        day = day0 + timedelta(days=i)
+        for w in working_hours.get(str(day.isoweekday())) or []:
+            try:
+                h1, m1 = map(int, str(w.get("start_time")).split(":")[:2])
+                h2, m2 = map(int, str(w.get("end_time")).split(":")[:2])
+            except (ValueError, AttributeError):
+                continue
+            t = datetime(day.year, day.month, day.day, h1, m1, tzinfo=tz)
+            stop = datetime(day.year, day.month, day.day, h2, m2, tzinfo=tz)
+            while t + length <= stop:
+                if t >= earliest and t < start + timedelta(days=days) and not any(b0 < t + length and t < b1 for b0, b1 in busy):
+                    out.append(t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                t += timedelta(minutes=step_minutes)
+    return out
+
+
 def availability(num: int, step_name: str = "", days: int = 7, duration: int | None = None,
                  app: ComeetAppClient | None = None) -> dict[str, Any]:
     """Free slots of the interviewers on one of a candidate's steps: the named step, else the
@@ -310,14 +365,25 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         # connected 2026-10-22); without it the answer is empty with code 524.
         raise sa.ScreeningError("Comeet couldn't read the interviewers' calendars "
                                 f"({inter.get('message') or 'schedule error'}): check the company scheduling calendar in Comeet", status=503)
+    now = datetime.now(timezone.utc)
     people = []
     for a in res.get("assigned_to") or []:
         if not isinstance(a, dict):
             continue
-        sch = a.get("scheduling") or {}
+        sch = dict(a.get("scheduling") or {})
+        if sch.get("is_failed") and reader and a.get("email") and a.get("working_hours"):
+            # Comeet's availability call can't read this calendar; read it like the scheduling screen does.
+            try:
+                busy = busy_blocks(a["email"], now, now + timedelta(days=days + 1), reader)
+                sch = {"availability": free_slots(a["working_hours"], a.get("minimum_scheduling_notice_hours") or 0,
+                                                  a.get("timezone") or "Asia/Jerusalem", busy, now, days, minutes),
+                       "is_failed": False, "computed": True}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("availability: calendar read for %s failed: %s", a.get("email"), exc)
         people.append({
             "name": _who(a), "slots": _by_day(sch.get("availability") or []),
             "calendar_problem": bool(sch.get("is_failed")),
+            "computed_from_calendar": bool(sch.get("computed")),
             "calendar_error_code": sch.get("error_reason_code"),
             "working_hours": {DAY_NAMES.get(str(d), str(d)): [f"{w.get('start_time')}-{w.get('end_time')}" for w in ws or []]
                               for d, ws in sorted((a.get("working_hours") or {}).items(), key=lambda kv: (int(kv[0]) % 7))},
