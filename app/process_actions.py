@@ -12,6 +12,11 @@ Yoni's recording of a test lead (2026-10-21):
 Moving a candidate forward is only "pass the current step", and only on steps that need no
 interview summary (step_type 1 review, 3 assignment): interviews and offers stay with people.
 Comments are internal (never emails) and name the recruiter.
+Availability (read; the recruiter app calls it just to show times):
+  POST /api/v1/candidates/{num}/steps/{step}/interview-availability?parent_id={num}
+       {"id": step, "start": <now Z>, "days": N, "parent_id": num, "meeting_room": [], "duration_minutes": M}
+  -> each assignee's free slots (their Comeet working hours, notice, daily/weekly caps, minus Google busy)
+     and availability_intersection (slots they all share), all in UTC.
 Reminders use the envelope linkedin-to-comeet decoded from the recruiter UI's "Add reminder":
   POST /api/v1/sendmessages [{"action": 2, "event": 32, "discussion_type": 3, "body": <mention chip + text>,
        "participants": [<bot>, <recruiter>], "time_to_send_message": "...Z", ...}]
@@ -249,3 +254,57 @@ def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", a
         "visibility": 1, "discussion_context": {"id": num, "type": "candidate"}, "discussion_type": 3,
         "is_new": True, "time_to_send_message": iso}])
     return {"for": who["name"], "at_utc": iso, "text": text}
+
+
+def _by_day(slots: list[str]) -> dict[str, list[str]]:
+    """UTC slot starts grouped by Israel day: {"Sun 25 Oct": ["10:00", "14:30"]}."""
+    out: dict[str, list[str]] = {}
+    for ts in sorted(slots or []):
+        local = _israel(ts)
+        if local:
+            day, hm = local.rsplit(" ", 1)
+            out.setdefault(day, []).append(hm)
+    return out
+
+
+def availability(num: int, step_name: str = "", days: int = 7, duration: int | None = None,
+                 app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """Free slots of the interviewers on one of a candidate's steps: the named step, else the
+    current step if it's an interview, else the next open interview step."""
+    app = _app(app)
+    _require(num, "candidate", app)
+    steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict) and s.get("id")]
+    open_steps = [s for s in steps if not s.get("is_completed")]
+    want = (step_name or "").strip().lower()
+    if want:
+        step = next((s for s in steps if str(s.get("name") or "").strip().lower() == want), None)
+        if step is None:
+            raise sa.ScreeningError(f"no step \"{step_name}\" (steps: {', '.join(str(s.get('name')) for s in steps)})", status=400)
+    else:
+        step = next((s for s in open_steps if s.get("step_type") == 2), None)
+        if step is None:
+            raise sa.ScreeningError("this candidate has no interview step ahead")
+    days = max(1, min(int(days or 7), 14))
+    minutes = int(duration or step.get("duration_minutes") or 30)
+    start = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    res = sa._body(app._request(
+        "POST", f"/api/v1/candidates/{num}/steps/{int(step['id'])}/interview-availability?parent_id={num}",
+        json_body={"id": int(step["id"]), "start": start, "days": days, "parent_id": num,
+                   "meeting_room": [], "duration_minutes": minutes})) or {}
+    people = []
+    for a in res.get("assigned_to") or []:
+        if not isinstance(a, dict):
+            continue
+        sch = a.get("scheduling") or {}
+        people.append({
+            "name": _who(a), "slots": _by_day(sch.get("availability") or []),
+            "calendar_problem": bool(sch.get("is_failed")),
+            "minimum_notice_hours": a.get("minimum_scheduling_notice_hours"),
+            "max_interview_hours_per_day": a.get("max_interviews_hours_per_day"),
+            "out_of_office": [_israel(a.get("ooo_starttime")), _israel(a.get("ooo_endtime"))] if a.get("ooo_starttime") else None,
+        })
+    return {"step": step.get("name"), "type": STEP_TYPE_NAMES.get(step.get("step_type"), "other"),
+            "is_current": step is (open_steps[0] if open_steps else None),
+            "already_scheduled": _israel(step.get("time_scheduled")), "duration_minutes": minutes, "days": days,
+            "interviewers": people, "common_slots": _by_day(res.get("availability_intersection") or []),
+            "times_in_israel_time": True}

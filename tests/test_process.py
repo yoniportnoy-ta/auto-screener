@@ -44,6 +44,12 @@ class FakeApp:
             return 200, REQ_STEPS
         if path.endswith("/steps"):
             return 200, self.steps
+        if "interview-availability" in path:
+            return 200, {"assigned_to": [{"full_name": "Yoni Portnoy", "minimum_scheduling_notice_hours": 48,
+                                          "max_interviews_hours_per_day": 2,
+                                          "scheduling": {"availability": ["2026-10-27T12:00:00Z", "2026-10-25T08:00:00Z"]}},
+                                         {"full_name": "Itay Schmidt", "scheduling": {"availability": ["2026-10-25T08:00:00Z"]}}],
+                         "availability_intersection": ["2026-10-25T08:00:00Z"]}
         if path == "/api/v1/users":
             return 200, [{"id": 160785, "email": "comeetadmin@riverside.fm"},
                          {"id": 222, "email": "dana@riverside.fm", "first_name": "Dana", "last_name": "Levi"}]
@@ -89,6 +95,22 @@ def test_process_shows_assignees_actor_and_times():
     assert video["scheduled"] == "Sun 25 Oct 10:00" and video["completed_by"] == []  # 2026-10-25 is after the clock change (+02:00)
     assert gng["completed_by"] == []  # unknown actor stays unknown, never "the assignee"
     assert out["current_step"]["name"] == "Video Interview/Recruiter" and out["current_step"]["assignees"] == ["Yoni Portnoy"]
+
+
+def test_availability_next_interview_step_read_only():
+    app = FakeApp(CAND)
+    out = pa.availability(63470107, app=app)
+    assert out["step"] == "Video Interview/Recruiter" and out["duration_minutes"] == 30
+    assert out["interviewers"][0]["slots"] == {"Sun 25 Oct": ["10:00"], "Tue 27 Oct": ["14:00"]}
+    assert out["common_slots"] == {"Sun 25 Oct": ["10:00"]}
+    (method, path, body), = [c for c in app.calls if "interview-availability" in c[1]]
+    assert method == "POST" and body["id"] == 9002 and body["days"] == 7 and body["meeting_room"] == []
+    assert not [c for c in app.writes() if "interview-availability" not in c[1]]  # nothing else written
+
+
+def test_availability_refuses_a_lead():
+    with pytest.raises(sa.ScreeningError):
+        pa.availability(63470107, app=FakeApp(LEAD))
 
 
 def test_lead_step_payload_matches_the_capture():

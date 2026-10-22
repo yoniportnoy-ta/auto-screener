@@ -335,6 +335,13 @@ def process_get(candidate: str) -> dict[str, Any]:
     return _process_call(pa.process, num)
 
 
+@router.get("/process/availability", dependencies=[Depends(_require_gateway)])
+def process_availability(candidate: str, step: str = "", days: int = 7, duration: int | None = None) -> dict[str, Any]:
+    """Free slots of a step's interviewers (read only)."""
+    num = _process_call(pa.numeric_id, candidate)
+    return {"numeric_id": num, **_process_call(pa.availability, num, step, days, duration)}
+
+
 @router.get("/withdrawal-reasons", dependencies=[Depends(_require_gateway)])
 def process_withdrawal_reasons() -> dict[str, Any]:
     return {"reasons": _process_call(pa.withdrawal_reasons)}
