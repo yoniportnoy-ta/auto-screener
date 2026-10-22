@@ -329,17 +329,18 @@ def _note(num: int, recruiter: "Recruiter", text: str) -> str:
 
 
 @router.get("/process", dependencies=[Depends(_require_gateway)])
-def process_get(candidate: str) -> dict[str, Any]:
+def process_get(candidate: str, viewer: str = "") -> dict[str, Any]:
     """Who this is (lead or candidate), the position, and where they are in it."""
     num = _process_call(pa.numeric_id, candidate)
-    return _process_call(pa.process, num)
+    return _process_call(pa.process, num, None, viewer)
 
 
 @router.get("/process/availability", dependencies=[Depends(_require_gateway)])
-def process_availability(candidate: str, step: str = "", days: int = 7, duration: int | None = None) -> dict[str, Any]:
-    """Free slots of a step's interviewers (read only)."""
+def process_availability(candidate: str, step: str = "", days: int = 7, duration: int | None = None,
+                         viewer: str = "") -> dict[str, Any]:
+    """Free slots of a step's interviewers (read only), shown in the viewer's time zone."""
     num = _process_call(pa.numeric_id, candidate)
-    return {"numeric_id": num, **_process_call(pa.availability, num, step, days, duration)}
+    return {"numeric_id": num, **_process_call(pa.availability, num, step, days, duration, None, viewer)}
 
 
 @router.get("/withdrawal-reasons", dependencies=[Depends(_require_gateway)])

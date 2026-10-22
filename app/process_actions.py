@@ -96,18 +96,50 @@ def _who(u: Any) -> str:
     return (u.get("full_name") or f"{u.get('first_name') or ''} {u.get('last_name') or ''}").strip()
 
 
-def _israel(ts: str | None) -> str | None:
-    """Comeet UTC time as Israel wall time, e.g. "Sun 25 Oct 10:00"."""
+ISRAEL = "Asia/Jerusalem"
+_user_tz: dict[str, str] = {}
+
+
+def _zone(name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo((name or "").strip() or ISRAEL)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(ISRAEL)
+
+
+def user_timezone(email: str, app: ComeetAppClient | None = None) -> str:
+    """A Riverside user's time zone from their Comeet profile (Israel when unknown)."""
+    want = (email or "").strip().lower().replace("@riverside.com", "@riverside.fm")
+    if not want:
+        return ISRAEL
+    if want not in _user_tz:
+        for u in _get(_app(app), "/api/v1/users") or []:
+            if isinstance(u, dict) and u.get("email"):
+                _user_tz[str(u["email"]).strip().lower()] = u.get("timezone") or u.get("default_timezone") or ISRAEL
+        _user_tz.setdefault(want, ISRAEL)
+    return _user_tz[want]
+
+
+def default_hours(tz_name: str | None) -> dict[str, list[dict[str, str]]]:
+    """Working hours for someone with none set in Comeet: Israel works Sunday to Thursday,
+    everywhere else Monday to Friday (Comeet keys 1=Mon..7=Sun), in their own time zone."""
+    if (tz_name or ISRAEL) == ISRAEL:
+        return {d: [{"start_time": "09:00", "end_time": "18:00"}] for d in ("7", "1", "2", "3", "4")}
+    return {d: [{"start_time": "09:00", "end_time": "17:00"}] for d in ("1", "2", "3", "4", "5")}
+
+
+def _local(ts: str | None, tz: str = ISRAEL) -> str | None:
+    """Comeet UTC time as wall time in `tz`, e.g. "Sun 25 Oct 10:00"."""
     if not ts:
         return None
     try:
-        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(ZoneInfo("Asia/Jerusalem"))
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(_zone(tz))
     except ValueError:
         return None
     return t.strftime("%a %d %b %H:%M")
 
 
-def _step_view(s: dict[str, Any]) -> dict[str, Any]:
+def _step_view(s: dict[str, Any], tz: str = ISRAEL) -> dict[str, Any]:
     """One candidate step with who it's assigned to, who actually did it and when.
     The actor is assigned_to[].filled_by; null means unknown, never "the assignee"."""
     slots = [a for a in (s.get("assigned_to") or []) if isinstance(a, dict)]
@@ -117,13 +149,14 @@ def _step_view(s: dict[str, Any]) -> dict[str, Any]:
     return {"name": s.get("name"), "done": done, "type": STEP_TYPE_NAMES.get(s.get("step_type"), "other"),
             "assignees": [n for n in dict.fromkeys(_who(a) for a in slots) if n],
             "completed_by": did if done else [],
-            "completed": _israel(s.get("time_completed")) if done else None,
-            "scheduled": _israel(s.get("time_scheduled"))}
+            "completed": _local(s.get("time_completed"), tz) if done else None,
+            "scheduled": _local(s.get("time_scheduled"), tz)}
 
 
-def process(num: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
-    """Who this is, lead or candidate, which position, and where they are."""
+def process(num: int, app: ComeetAppClient | None = None, viewer_email: str = "") -> dict[str, Any]:
+    """Who this is, lead or candidate, which position, and where they are (times in the viewer's zone)."""
     app = _app(app)
+    tz = user_timezone(viewer_email, app) if viewer_email else ISRAEL
     c = _get(app, f"/api/v2/candidates/{num}") or {}
     if not isinstance(c, dict) or not c.get("id"):
         raise sa.ScreeningError("no such lead or candidate in Comeet", status=404)
@@ -144,10 +177,10 @@ def process(num: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
         return out
     steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict)]
     current = next((s for s in steps if not s.get("is_completed")), None)
-    out["steps"] = [_step_view(s) for s in steps]
+    out["steps"] = [_step_view(s, tz) for s in steps]
     out["current_step"] = None if current is None else {
-        **_step_view(current), "can_pass_here": _passable(current)}
-    out["times_in_israel_time"] = True
+        **_step_view(current, tz), "can_pass_here": _passable(current)}
+    out["times_in"] = tz
     return out
 
 
@@ -242,7 +275,7 @@ def comeet_user(email: str, app: ComeetAppClient | None = None) -> dict[str, Any
 
 def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", app: ComeetAppClient | None = None) -> dict[str, Any]:
     """A Comeet reminder on this lead or candidate for the recruiter at `at`: local wall time in `tz`
-    (IANA name, default Asia/Jerusalem), or ISO 8601 with an offset."""
+    (IANA name; default the recruiter's Comeet time zone), or ISO 8601 with an offset."""
     app = _app(app)
     try:
         when = datetime.fromisoformat((at or "").strip().replace("Z", "+00:00"))
@@ -250,7 +283,7 @@ def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", a
         raise sa.ScreeningError("pass the reminder time like 2026-10-22T10:00 (the recruiter's local time)", status=400)
     if when.tzinfo is None:
         try:
-            when = when.replace(tzinfo=ZoneInfo((tz or "").strip() or "Asia/Jerusalem"))
+            when = when.replace(tzinfo=ZoneInfo((tz or "").strip() or user_timezone(recruiter_email, app)))
         except (ZoneInfoNotFoundError, ValueError):
             raise sa.ScreeningError(f"unknown time zone \"{tz}\" (use a name like Asia/Jerusalem or America/Toronto)", status=400)
     when = when.astimezone(timezone.utc)
@@ -271,18 +304,19 @@ def reminder(num: int, recruiter_email: str, text: str, at: str, tz: str = "", a
 DAY_NAMES = {"7": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat"}
 
 
-def _by_day(slots: list[str]) -> dict[str, list[str]]:
-    """UTC slot starts grouped by Israel day: {"Sun 25 Oct": ["10:00", "14:30"]}."""
+def _by_day(slots: list[str], tz: str = ISRAEL) -> dict[str, list[str]]:
+    """UTC slot starts grouped by day in `tz`: {"Sun 25 Oct": ["10:00", "14:30"]}."""
     out: dict[str, list[str]] = {}
     for ts in sorted(slots or []):
-        local = _israel(ts)
+        local = _local(ts, tz)
         if local:
             day, hm = local.rsplit(" ", 1)
             out.setdefault(day, []).append(hm)
     return out
 
 
-def busy_blocks(email: str, start: datetime, end: datetime, app: ComeetAppClient) -> list[tuple[datetime, datetime]]:
+def busy_blocks(email: str, start: datetime, end: datetime, app: ComeetAppClient,
+                tz_name: str = ISRAEL) -> list[tuple[datetime, datetime]]:
     """An interviewer's busy times from their Google calendar, read the way Comeet's scheduling
     screen does (/api/v1/google/calendar/events through a Google-connected Comeet user).
     Keeps only start, end and busy/free: never titles or attendees."""
@@ -302,7 +336,7 @@ def busy_blocks(email: str, start: datetime, end: datetime, app: ComeetAppClient
             out.append((datetime.fromisoformat(s_["dateTime"].replace("Z", "+00:00")),
                         datetime.fromisoformat(e_["dateTime"].replace("Z", "+00:00"))))
         elif e.get("eventType") == "outOfOffice" and s_.get("date") and e_.get("date"):  # all-day OOO only
-            tz = ZoneInfo("Asia/Jerusalem")
+            tz = _zone(tz_name)
             out.append((datetime.fromisoformat(s_["date"]).replace(tzinfo=tz), datetime.fromisoformat(e_["date"]).replace(tzinfo=tz)))
     return out
 
@@ -311,7 +345,7 @@ def free_slots(working_hours: dict[str, Any], notice_hours: float, tz_name: str,
                start: datetime, days: int, minutes: int, step_minutes: int = 30) -> list[str]:
     """Slot starts (UTC, Comeet's format) inside the person's Comeet working hours, at least
     `notice_hours` ahead, `minutes` long, overlapping nothing busy. Comeet keys weekdays 1=Mon..7=Sun."""
-    tz = ZoneInfo(tz_name or "Asia/Jerusalem")
+    tz = _zone(tz_name)
     earliest = start + timedelta(hours=float(notice_hours or 0))
     length = timedelta(minutes=minutes)
     out = []
@@ -334,10 +368,12 @@ def free_slots(working_hours: dict[str, Any], notice_hours: float, tz_name: str,
 
 
 def availability(num: int, step_name: str = "", days: int = 7, duration: int | None = None,
-                 app: ComeetAppClient | None = None) -> dict[str, Any]:
+                 app: ComeetAppClient | None = None, viewer_email: str = "") -> dict[str, Any]:
     """Free slots of the interviewers on one of a candidate's steps: the named step, else the
-    current step if it's an interview, else the next open interview step."""
+    current step if it's an interview, else the next open interview step. Each interviewer's
+    hours are read in their own time zone; slots are shown in the viewer's."""
     app = _app(app)
+    view_tz = user_timezone(viewer_email, app) if viewer_email else ISRAEL
     _require(num, "candidate", app)
     steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict) and s.get("id")]
     open_steps = [s for s in steps if not s.get("is_completed")]
@@ -371,29 +407,32 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         if not isinstance(a, dict):
             continue
         sch = dict(a.get("scheduling") or {})
-        if sch.get("is_failed") and reader and a.get("email") and a.get("working_hours"):
+        person_tz = a.get("timezone") or ISRAEL
+        hours = a.get("working_hours") or default_hours(person_tz)
+        if sch.get("is_failed") and reader and a.get("email"):
             # Comeet's availability call can't read this calendar; read it like the scheduling screen does.
             try:
-                busy = busy_blocks(a["email"], now, now + timedelta(days=days + 1), reader)
-                sch = {"availability": free_slots(a["working_hours"], a.get("minimum_scheduling_notice_hours") or 0,
-                                                  a.get("timezone") or "Asia/Jerusalem", busy, now, days, minutes),
+                busy = busy_blocks(a["email"], now, now + timedelta(days=days + 1), reader, person_tz)
+                sch = {"availability": free_slots(hours, a.get("minimum_scheduling_notice_hours") or 0,
+                                                  person_tz, busy, now, days, minutes),
                        "is_failed": False, "computed": True}
             except Exception as exc:  # noqa: BLE001
                 log.warning("availability: calendar read for %s failed: %s", a.get("email"), exc)
         people.append({
-            "name": _who(a), "slots": _by_day(sch.get("availability") or []),
+            "name": _who(a), "timezone": person_tz, "slots": _by_day(sch.get("availability") or [], view_tz),
             "calendar_problem": bool(sch.get("is_failed")),
             "computed_from_calendar": bool(sch.get("computed")),
             "calendar_error_code": sch.get("error_reason_code"),
             "working_hours": {DAY_NAMES.get(str(d), str(d)): [f"{w.get('start_time')}-{w.get('end_time')}" for w in ws or []]
-                              for d, ws in sorted((a.get("working_hours") or {}).items(), key=lambda kv: (int(kv[0]) % 7))},
+                              for d, ws in sorted(hours.items(), key=lambda kv: (int(kv[0]) % 7))},
+            "hours_source": "comeet" if a.get("working_hours") else "default for their location",
             "minimum_notice_hours": a.get("minimum_scheduling_notice_hours"),
             "max_interview_hours_per_day": a.get("max_interviews_hours_per_day"),
-            "out_of_office": [_israel(a.get("ooo_starttime")), _israel(a.get("ooo_endtime"))] if a.get("ooo_starttime") else None,
+            "out_of_office": [_local(a.get("ooo_starttime"), view_tz), _local(a.get("ooo_endtime"), view_tz)] if a.get("ooo_starttime") else None,
         })
     return {"step": step.get("name"), "type": STEP_TYPE_NAMES.get(step.get("step_type"), "other"),
             "is_current": step is (open_steps[0] if open_steps else None),
-            "already_scheduled": _israel(step.get("time_scheduled")), "duration_minutes": minutes, "days": days,
+            "already_scheduled": _local(step.get("time_scheduled"), view_tz), "duration_minutes": minutes, "days": days,
             "interviewers": people,
-            "common_slots": _by_day(inter) if isinstance(inter, list) else {},
-            "times_in_israel_time": True}
+            "common_slots": _by_day(inter, view_tz) if isinstance(inter, list) else {},
+            "times_in": view_tz}

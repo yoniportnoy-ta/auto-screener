@@ -176,6 +176,41 @@ def test_failed_calendar_is_read_like_the_scheduling_screen(monkeypatch):
     assert "secret" not in json.dumps(out)  # meeting titles never leave
 
 
+def test_default_hours_follow_location():
+    assert sorted(pa.default_hours("Asia/Jerusalem")) == ["1", "2", "3", "4", "7"]      # Sun to Thu
+    assert sorted(pa.default_hours("America/Toronto")) == ["1", "2", "3", "4", "5"]     # Mon to Fri
+    assert pa.default_hours("America/Toronto")["1"] == [{"start_time": "09:00", "end_time": "17:00"}]
+
+
+def test_canadian_interviewer_toronto_viewer(monkeypatch):
+    from datetime import datetime, timezone
+    pa._user_tz.clear()
+    bot, reader = FakeApp(CAND), FakeApp(CAND)
+    def bot_req(method, path, **kw):
+        if path == "/api/v1/users":
+            return 200, [{"id": 1, "email": "kourtney@riverside.fm", "timezone": "America/Toronto"}]
+        return FakeApp._request(bot, method, path, **kw)
+    bot._request = bot_req
+    def reader_req(method, path, **kw):
+        if "interview-availability" in path:
+            return 200, {"assigned_to": [{"full_name": "Jade M", "email": "jade@riverside.fm", "timezone": "America/Toronto",
+                                          "minimum_scheduling_notice_hours": 0, "scheduling": {"is_failed": True}}],
+                         "availability_intersection": {"is_failed": True}}
+        if "google/calendar/events" in path:
+            return 200, {"items": []}
+        return FakeApp._request(reader, method, path, **kw)
+    reader._request = reader_req
+    monkeypatch.setattr(sa, "app_client", lambda: bot)
+    monkeypatch.setattr(sa, "scheduler_client", lambda: reader)
+    out = pa.availability(63470107, viewer_email="Kourtney@riverside.com")
+    jade = out["interviewers"][0]
+    assert out["times_in"] == "America/Toronto" and jade["timezone"] == "America/Toronto"
+    assert jade["hours_source"] == "default for their location" and set(jade["working_hours"]) == {"Mon", "Tue", "Wed", "Thu", "Fri"}
+    for day, times in jade["slots"].items():   # shown in Toronto time: weekdays, 09:00 to 16:30 starts
+        assert day[:3] in {"Mon", "Tue", "Wed", "Thu", "Fri"} and all("09:00" <= t <= "16:30" for t in times)
+    pa._user_tz.clear()
+
+
 def test_availability_refuses_a_lead():
     with pytest.raises(sa.ScreeningError):
         pa.availability(63470107, app=FakeApp(LEAD))
