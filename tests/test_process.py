@@ -73,6 +73,24 @@ def test_numeric_id_from_link_id_or_uid():
     assert pa.numeric_id("1B.D7C35", app) == 63470107
 
 
+def test_process_shows_assignees_actor_and_times():
+    steps = [
+        {"id": 1, "name": "CV Screen / Recruiter", "step_type": 1, "is_completed": True, "time_completed": "2026-10-21T06:30:00Z",
+         "assigned_to": [{"full_name": "Noga Kaufman", "filled_by": None},
+                         {"full_name": "Yoni Portnoy", "filled_by": {"full_name": "Yoni Portnoy"}}]},
+        {"id": 2, "name": "Video Interview/Recruiter", "step_type": 2, "is_completed": False,
+         "time_scheduled": "2026-10-25T08:00:00Z", "assigned_to": [{"first_name": "Yoni", "last_name": "Portnoy"}]},
+        {"id": 3, "name": "Go/No-go", "step_type": 1, "is_completed": True, "assigned_to": [{"full_name": "Itay Schmidt", "filled_by": None}]},
+    ]
+    out = pa.process(63470107, FakeApp(CAND, steps=steps))
+    cv, video, gng = out["steps"]
+    assert cv["assignees"] == ["Noga Kaufman", "Yoni Portnoy"] and cv["completed_by"] == ["Yoni Portnoy"]
+    assert cv["completed"] == "Wed 21 Oct 09:30"
+    assert video["scheduled"] == "Sun 25 Oct 10:00" and video["completed_by"] == []  # 2026-10-25 is after the clock change (+02:00)
+    assert gng["completed_by"] == []  # unknown actor stays unknown, never "the assignee"
+    assert out["current_step"]["name"] == "Video Interview/Recruiter" and out["current_step"]["assignees"] == ["Yoni Portnoy"]
+
+
 def test_lead_step_payload_matches_the_capture():
     app = FakeApp()
     assert pa.set_lead_step(63470107, "responded", app) == "Responded"

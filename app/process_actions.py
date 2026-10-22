@@ -75,6 +75,37 @@ def position_steps(req_id: int, app: ComeetAppClient | None = None) -> list[dict
             for s in steps]
 
 
+def _who(u: Any) -> str:
+    if not isinstance(u, dict):
+        return ""
+    return (u.get("full_name") or f"{u.get('first_name') or ''} {u.get('last_name') or ''}").strip()
+
+
+def _israel(ts: str | None) -> str | None:
+    """Comeet UTC time as Israel wall time, e.g. "Sun 25 Oct 10:00"."""
+    if not ts:
+        return None
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(ZoneInfo("Asia/Jerusalem"))
+    except ValueError:
+        return None
+    return t.strftime("%a %d %b %H:%M")
+
+
+def _step_view(s: dict[str, Any]) -> dict[str, Any]:
+    """One candidate step with who it's assigned to, who actually did it and when.
+    The actor is assigned_to[].filled_by; null means unknown, never "the assignee"."""
+    slots = [a for a in (s.get("assigned_to") or []) if isinstance(a, dict)]
+    did = [n for n in dict.fromkeys(_who(a.get("filled_by")) for a in slots) if n] or (
+        [_who(s.get("filled_by"))] if _who(s.get("filled_by")) else [])
+    done = bool(s.get("is_completed"))
+    return {"name": s.get("name"), "done": done, "type": STEP_TYPE_NAMES.get(s.get("step_type"), "other"),
+            "assignees": [n for n in dict.fromkeys(_who(a) for a in slots) if n],
+            "completed_by": did if done else [],
+            "completed": _israel(s.get("time_completed")) if done else None,
+            "scheduled": _israel(s.get("time_scheduled"))}
+
+
 def process(num: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
     """Who this is, lead or candidate, which position, and where they are."""
     app = _app(app)
@@ -98,11 +129,10 @@ def process(num: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
         return out
     steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict)]
     current = next((s for s in steps if not s.get("is_completed")), None)
-    out["steps"] = [{"name": s.get("name"), "done": bool(s.get("is_completed")), "type": STEP_TYPE_NAMES.get(s.get("step_type"), "other")}
-                    for s in steps]
+    out["steps"] = [_step_view(s) for s in steps]
     out["current_step"] = None if current is None else {
-        "name": current.get("name"), "type": STEP_TYPE_NAMES.get(current.get("step_type"), "other"),
-        "can_pass_here": current.get("step_type") in PASSABLE_STEP_TYPES}
+        **_step_view(current), "can_pass_here": current.get("step_type") in PASSABLE_STEP_TYPES}
+    out["times_in_israel_time"] = True
     return out
 
 
