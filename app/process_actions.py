@@ -402,7 +402,7 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         raise sa.ScreeningError("Comeet couldn't read the interviewers' calendars "
                                 f"({inter.get('message') or 'schedule error'}): check the company scheduling calendar in Comeet", status=503)
     now = datetime.now(timezone.utc)
-    people = []
+    people, free_sets = [], []
     for a in res.get("assigned_to") or []:
         if not isinstance(a, dict):
             continue
@@ -418,6 +418,8 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
                        "is_failed": False, "computed": True}
             except Exception as exc:  # noqa: BLE001
                 log.warning("availability: calendar read for %s failed: %s", a.get("email"), exc)
+        if not sch.get("is_failed"):
+            free_sets.append(set(sch.get("availability") or []))
         people.append({
             "name": _who(a), "timezone": person_tz, "slots": _by_day(sch.get("availability") or [], view_tz),
             "calendar_problem": bool(sch.get("is_failed")),
@@ -434,5 +436,9 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
             "is_current": step is (open_steps[0] if open_steps else None),
             "already_scheduled": _local(step.get("time_scheduled"), view_tz), "duration_minutes": minutes, "days": days,
             "interviewers": people,
-            "common_slots": _by_day(inter, view_tz) if isinstance(inter, list) else {},
+            # Times every interviewer on the step is free (for a panel or pair). Worked out from each
+            # person's slots, since Comeet's own intersection fails whenever one calendar can't be read.
+            "common_slots": _by_day(sorted(set.intersection(*free_sets)), view_tz)
+                            if len(people) > 1 and len(free_sets) == len(people) else {},
+            "common_slots_complete": len(people) < 2 or len(free_sets) == len(people),
             "times_in": view_tz}

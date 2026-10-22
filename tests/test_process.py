@@ -211,6 +211,22 @@ def test_canadian_interviewer_toronto_viewer(monkeypatch):
     pa._user_tz.clear()
 
 
+def test_two_interviewers_get_the_times_both_are_free(monkeypatch):
+    bot, reader = FakeApp(CAND), FakeApp(CAND)
+    def req(method, path, **kw):
+        if "interview-availability" in path:
+            return 200, {"assigned_to": [
+                {"full_name": "Itay Schmidt", "scheduling": {"availability": ["2099-01-04T07:00:00Z", "2099-01-04T07:30:00Z"]}},
+                {"full_name": "Roie Cohen", "scheduling": {"availability": ["2099-01-04T07:30:00Z", "2099-01-04T09:00:00Z"]}}],
+                "availability_intersection": {"is_failed": True}}
+        return FakeApp._request(reader, method, path, **kw)
+    reader._request = req
+    monkeypatch.setattr(sa, "app_client", lambda: bot)
+    monkeypatch.setattr(sa, "scheduler_client", lambda: reader)
+    out = pa.availability(63470107)
+    assert out["common_slots"] == {"Sun 04 Jan": ["09:30"]} and out["common_slots_complete"] is True
+
+
 def test_availability_refuses_a_lead():
     with pytest.raises(sa.ScreeningError):
         pa.availability(63470107, app=FakeApp(LEAD))
