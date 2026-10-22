@@ -157,6 +157,14 @@ def test_pass_only_on_review_steps_never_interviews():
     assert interview_first.writes() == []
 
 
+def test_offer_step_is_never_passed_even_as_type_3():
+    offer = FakeApp(CAND, steps=[{"id": 9009, "name": "Offer", "step_type": 3, "is_completed": False}])
+    with pytest.raises(sa.ScreeningError):
+        pa.pass_current_step(63470107, offer)
+    assert offer.writes() == []
+    assert pa.process(63470107, FakeApp(CAND, steps=[{"id": 9009, "name": "Offer", "step_type": 3, "is_completed": False}]))["current_step"]["can_pass_here"] is False
+
+
 def test_comment_is_internal_and_names_the_recruiter():
     app = FakeApp()
     pa.comment(63470107, "Dana Levi", "Called, interested in March", app)

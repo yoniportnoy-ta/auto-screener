@@ -39,6 +39,12 @@ OUTREACH_BY_NAME = {v.lower(): k for k, v in OUTREACH.items()}
 WITHDRAWN_BY_CANDIDATE = 2
 NOT_INTERESTED_STATUS = 5
 PASSABLE_STEP_TYPES = {1, 3}          # review / approve, send assignment
+# Comeet also gives an "Offer" step type 3 (seen on AI Agents, 2026-10-22): never passable from here.
+NEVER_PASS = re.compile(r"(?i)\boffer")
+
+
+def _passable(step: dict[str, Any]) -> bool:
+    return step.get("step_type") in PASSABLE_STEP_TYPES and not NEVER_PASS.search(str(step.get("name") or ""))
 STEP_TYPE_NAMES = {1: "review", 2: "interview", 3: "assignment", 5: "notification", 8: "offer"}
 
 
@@ -136,7 +142,7 @@ def process(num: int, app: ComeetAppClient | None = None) -> dict[str, Any]:
     current = next((s for s in steps if not s.get("is_completed")), None)
     out["steps"] = [_step_view(s) for s in steps]
     out["current_step"] = None if current is None else {
-        **_step_view(current), "can_pass_here": current.get("step_type") in PASSABLE_STEP_TYPES}
+        **_step_view(current), "can_pass_here": _passable(current)}
     out["times_in_israel_time"] = True
     return out
 
@@ -200,6 +206,8 @@ def pass_current_step(num: int, app: ComeetAppClient | None = None) -> dict[str,
     current = next((s for s in steps if not s.get("is_completed")), None)
     if current is None:
         raise sa.ScreeningError("this candidate has no open step (the process is finished)")
+    if NEVER_PASS.search(str(current.get("name") or "")):
+        raise sa.ScreeningError(f"\"{current.get('name')}\" is an offer step: offers are handled in Comeet, never passed from here")
     if current.get("step_type") not in PASSABLE_STEP_TYPES:
         kind = STEP_TYPE_NAMES.get(current.get("step_type"), "this kind of")
         raise sa.ScreeningError(f"\"{current.get('name')}\" is {'an' if kind[0] in 'aeiou' else 'a'} {kind} step: it needs the "
@@ -291,6 +299,11 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
         "POST", f"/api/v1/candidates/{num}/steps/{int(step['id'])}/interview-availability?parent_id={num}",
         json_body={"id": int(step["id"]), "start": start, "days": days, "parent_id": num,
                    "meeting_room": [], "duration_minutes": minutes})) or {}
+    inter = res.get("availability_intersection")
+    if isinstance(inter, dict) and inter.get("is_failed"):
+        # The answer comes from the signed-in Comeet user's Google connection; the bot has none.
+        raise sa.ScreeningError("Comeet couldn't read the interviewers' calendars for the RiverTalent account "
+                                f"({inter.get('message') or 'schedule error'}): availability isn't available yet", status=503)
     people = []
     for a in res.get("assigned_to") or []:
         if not isinstance(a, dict):
