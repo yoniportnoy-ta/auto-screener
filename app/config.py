@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # ─── Comeet — internal API ───────────────────────────────────────────────
     comeet_app_email: str = ""
     comeet_app_password: str = ""
+    # Scheduling account (tlv-interviews@riverside.fm, its own Comeet user with a Google
+    # connection): reads interviewers' calendars. Empty = availability uses the bot.
+    comeet_scheduler_email: str = ""
+    comeet_scheduler_password: str = ""
     comeet_app_base_url: str = "https://app.comeet.co"
     captcha_api_key: str = ""
     recaptcha_site_key: str = "6LezYW4sAAAAAFyQqneztlSf4Fj_pxDeJDDYxYP7"

@@ -53,20 +53,23 @@ class ComeetAppAuthError(ComeetAppError):
 
 
 # ─── Session persistence ─────────────────────────────────────────────────────
-def load_cached_session() -> tuple[dict[str, str], str, datetime | None] | None:
-    """Read the singleton session row from Postgres. Returns None if absent."""
+BOT_SLOT, SCHEDULER_SLOT = 1, 2
+
+
+def load_cached_session(slot: int = BOT_SLOT) -> tuple[dict[str, str], str, datetime | None] | None:
+    """Read one account's session row from Postgres. Returns None if absent."""
     with db_session() as session:
-        row = session.scalar(select(ComeetAppSession).where(ComeetAppSession.id == 1))
+        row = session.scalar(select(ComeetAppSession).where(ComeetAppSession.id == slot))
         if row is None:
             return None
         return dict(row.cookies_json or {}), row.csrf_token, row.expires_at
 
 
-def save_session(cookies: dict[str, str], csrf_token: str, expires_at: datetime | None) -> None:
-    """Upsert the singleton session row."""
+def save_session(cookies: dict[str, str], csrf_token: str, expires_at: datetime | None, slot: int = BOT_SLOT) -> None:
+    """Upsert one account's session row."""
     with db_session() as session:
         stmt = pg_insert(ComeetAppSession).values(
-            id=1,
+            id=slot,
             cookies_json=cookies,
             csrf_token=csrf_token,
             expires_at=expires_at,
@@ -83,9 +86,9 @@ def save_session(cookies: dict[str, str], csrf_token: str, expires_at: datetime 
         session.execute(stmt)
 
 
-def clear_session() -> None:
+def clear_session(slot: int = BOT_SLOT) -> None:
     with db_session() as session:
-        session.query(ComeetAppSession).filter(ComeetAppSession.id == 1).delete()
+        session.query(ComeetAppSession).filter(ComeetAppSession.id == slot).delete()
 
 
 # ─── Client ──────────────────────────────────────────────────────────────────
@@ -103,7 +106,9 @@ class ComeetAppClient:
         password: str | None = None,
         captcha_api_key: str | None = None,
         impersonate: str = "chrome124",
+        session_slot: int = BOT_SLOT,
     ) -> None:
+        self.session_slot = session_slot
         self.email = email or settings.comeet_app_email
         self.password = password or settings.comeet_app_password
         self.captcha_api_key = captcha_api_key or settings.captcha_api_key
@@ -131,7 +136,7 @@ class ComeetAppClient:
     # -- session lifecycle -------------------------------------------------
     def adopt_cached_session(self) -> bool:
         """Restore the most recent session from Postgres. Returns True on success."""
-        cached = load_cached_session()
+        cached = load_cached_session(self.session_slot)
         if not cached:
             return False
         cookies, csrf, expires_at = cached
@@ -151,7 +156,7 @@ class ComeetAppClient:
         self._cookies = {}
         self._csrf_token = ""
         self._expires_at = None
-        clear_session()
+        clear_session(self.session_slot)
 
     def _ensure_session(self) -> None:
         if not self.has_session and not self.adopt_cached_session():
@@ -248,7 +253,7 @@ class ComeetAppClient:
         self._csrf_token = final_cookies.get("csrftoken", csrf)
         self._expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
 
-        save_session(self._cookies, self._csrf_token, self._expires_at)
+        save_session(self._cookies, self._csrf_token, self._expires_at, self.session_slot)
         log.info(
             "comeet-app login success; cookies=%d csrf_len=%d expires=%s",
             len(self._cookies), len(self._csrf_token), self._expires_at.isoformat(),

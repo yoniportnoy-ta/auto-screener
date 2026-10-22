@@ -298,7 +298,9 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
     days = max(1, min(int(days or 7), 14))
     minutes = int(duration or step.get("duration_minutes") or 30)
     start = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    res = sa._body(app._request(
+    # Calendars are read as the scheduling account when it's configured: the bot has no Google connection.
+    reader = sa.scheduler_client() if app is sa.app_client() else None
+    res = sa._body((reader or app)._request(
         "POST", f"/api/v1/candidates/{num}/steps/{int(step['id'])}/interview-availability?parent_id={num}",
         json_body={"id": int(step["id"]), "start": start, "days": days, "parent_id": num,
                    "meeting_room": [], "duration_minutes": minutes})) or {}

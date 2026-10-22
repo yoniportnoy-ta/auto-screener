@@ -240,10 +240,10 @@ class DebugScoring(Base):
 
 
 class ComeetAppSession(Base):
-    """Single-row table storing the active app.comeet.co session.
+    """The active app.comeet.co sessions, one row per account.
 
-    Mirrors the referral bot's `comeet_app_session` SQLite table. The CHECK
-    constraint pins us to id=1 so the row UPSERTs cleanly.
+    Row 1 is the bot (comeetadmin); row 2 is the scheduling account
+    (tlv-interviews), used only to read interviewers' calendars.
     """
 
     __tablename__ = "comeet_app_session"
@@ -254,7 +254,7 @@ class ComeetAppSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (CheckConstraint("id = 1", name="ck_comeet_app_session_singleton"),)
+    __table_args__ = (CheckConstraint("id in (1, 2)", name="ck_comeet_app_session_slot"),)
 
 
 class TagCatalog(Base):

@@ -128,6 +128,18 @@ def test_availability_one_failed_calendar_keeps_the_others(monkeypatch):
     assert out["common_slots"] == {}
 
 
+def test_availability_reads_calendars_as_the_scheduling_account(monkeypatch):
+    bot, scheduler = FakeApp(CAND), FakeApp(CAND)
+    monkeypatch.setattr(sa, "app_client", lambda: bot)
+    monkeypatch.setattr(sa, "scheduler_client", lambda: scheduler)
+    pa.availability(63470107)
+    assert not [c for c in bot.calls if "interview-availability" in c[1]]
+    assert [c for c in scheduler.calls if "interview-availability" in c[1]]
+    monkeypatch.setattr(sa, "scheduler_client", lambda: None)  # not configured: the bot asks
+    pa.availability(63470107)
+    assert [c for c in bot.calls if "interview-availability" in c[1]]
+
+
 def test_availability_refuses_a_lead():
     with pytest.raises(sa.ScreeningError):
         pa.availability(63470107, app=FakeApp(LEAD))

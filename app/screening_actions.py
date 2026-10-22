@@ -62,6 +62,23 @@ def app_client() -> ComeetAppClient:
         return _app
 
 
+_scheduler: ComeetAppClient | None = None
+
+
+def scheduler_client() -> ComeetAppClient | None:
+    """The scheduling account's client (calendar reads only), or None when not configured."""
+    global _scheduler
+    if not (settings.comeet_scheduler_email and settings.comeet_scheduler_password):
+        return None
+    with _lock:
+        if _scheduler is None:
+            from .comeet_app_client import SCHEDULER_SLOT
+            _scheduler = ComeetAppClient(email=settings.comeet_scheduler_email,
+                                         password=settings.comeet_scheduler_password,
+                                         session_slot=SCHEDULER_SLOT)
+        return _scheduler
+
+
 def _body(resp: tuple[int, Any]) -> Any:
     return resp[1]
 
