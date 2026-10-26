@@ -227,6 +227,19 @@ def test_two_interviewers_get_the_times_both_are_free(monkeypatch):
     assert out["common_slots"] == {"Sun 04 Jan": ["09:30"]} and out["common_slots_complete"] is True
 
 
+def test_sourcing_sources_only_type_10():
+    app = FakeApp()
+    real = app._request
+    def req(method, path, **kw):
+        if path == "/api/v1/sources":
+            return 200, [{"id": 1, "name": "Noga Kaufman (LinkedIn Recruiter)", "source_type": 10},
+                         {"id": 2, "name": "Michal Milner", "source_type": 4},      # an employee referral source
+                         {"id": 3, "name": "Katya - Sourcing", "source_type": 10}]
+        return real(method, path, **kw)
+    app._request = req
+    assert [x["name"] for x in pa.sourcing_sources(app)] == ["Katya - Sourcing", "Noga Kaufman (LinkedIn Recruiter)"]
+
+
 def test_availability_refuses_a_lead():
     with pytest.raises(sa.ScreeningError):
         pa.availability(63470107, app=FakeApp(LEAD))

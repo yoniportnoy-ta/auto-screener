@@ -442,3 +442,17 @@ def availability(num: int, step_name: str = "", days: int = 7, duration: int | N
                             if len(people) > 1 and len(free_sets) == len(people) else {},
             "common_slots_complete": len(people) < 2 or len(free_sets) == len(people),
             "times_in": view_tz}
+
+
+SOURCING_SOURCE_TYPE = 10   # Comeet's "active search" sources: the team's own sourcing sources
+
+
+def sourcing_sources(app: ComeetAppClient | None = None) -> list[dict[str, Any]]:
+    """The team's sourcing sources (type 10), e.g. "Noga Kaufman (LinkedIn Recruiter)". Other types
+    include referral sources named after employees: never offer those for an upload."""
+    items = _get(_app(app), "/api/v1/sources") or []
+    if isinstance(items, dict):
+        items = items.get("results") or []
+    out = [{"id": int(x["id"]), "name": str(x.get("name") or "").strip()} for x in items
+           if isinstance(x, dict) and x.get("id") and x.get("source_type") == SOURCING_SOURCE_TYPE and (x.get("name") or "").strip()]
+    return sorted(out, key=lambda x: x["name"].lower())
