@@ -456,3 +456,23 @@ def sourcing_sources(app: ComeetAppClient | None = None) -> list[dict[str, Any]]
     out = [{"id": int(x["id"]), "name": str(x.get("name") or "").strip()} for x in items
            if isinstance(x, dict) and x.get("id") and x.get("source_type") == SOURCING_SOURCE_TYPE and (x.get("name") or "").strip()]
     return sorted(out, key=lambda x: x["name"].lower())
+
+
+REFERRAL_SOURCE_TYPES = {4: True, 9: False}   # Referrer: Compensated / Uncompensated
+
+
+def referral_sources(app: ComeetAppClient | None = None) -> list[dict[str, Any]]:
+    """Employee referral sources (Comeet types 4 and 9), one per referrer: a "(Slack bot)" duplicate
+    made by Plus1 is hidden when the plain-name source exists. The referral bot credits a candidate
+    added under one of these to that employee (comeet_direct ingest, live since 2026-10-25)."""
+    items = _get(_app(app), "/api/v1/sources") or []
+    if isinstance(items, dict):
+        items = items.get("results") or []
+    refs = [{"id": int(x["id"]), "name": str(x.get("name") or "").strip(),
+             "compensated": REFERRAL_SOURCE_TYPES[x["source_type"]]}
+            for x in items if isinstance(x, dict) and x.get("id") and x.get("source_type") in REFERRAL_SOURCE_TYPES
+            and (x.get("name") or "").strip()]
+    plain = {r["name"].lower() for r in refs if "(slack bot)" not in r["name"].lower()}
+    keep = [r for r in refs if "(slack bot)" not in r["name"].lower()
+            or re.sub(r"\s*\(slack bot\).*$", "", r["name"], flags=re.I).strip().lower() not in plain]
+    return sorted(keep, key=lambda x: x["name"].lower())

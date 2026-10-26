@@ -346,7 +346,7 @@ def process_availability(candidate: str, step: str = "", days: int = 7, duration
 @router.get("/sourcing-sources", dependencies=[Depends(_require_gateway)])
 def sourcing_sources() -> dict[str, Any]:
     """The team's sourcing sources in Comeet (read only)."""
-    return {"sources": _process_call(pa.sourcing_sources)}
+    return {"sources": _process_call(pa.sourcing_sources), "referrals": _process_call(pa.referral_sources)}
 
 
 @router.get("/withdrawal-reasons", dependencies=[Depends(_require_gateway)])
