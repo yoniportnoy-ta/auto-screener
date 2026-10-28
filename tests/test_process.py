@@ -387,15 +387,21 @@ FB_STEPS = [
 
 
 class FeedbackApp(FakeApp):
-    def __init__(self, draft=None, steps=FB_STEPS):
+    def __init__(self, draft=None, steps=FB_STEPS, created_for="joel@riverside.fm"):
         super().__init__(record=CAND, steps=steps)
         self.draft = {"id": 71303438, "candidate_step_id": 9002, "is_completed": False, "notes": "<p>.</p>",
-                      "pros": "<p>Sharp</p>", "salary_expectations": "", **(draft or {})}
+                      "pros": "<p>Sharp</p>", "salary_expectations": "", "interviewer": {"email": "dana@riverside.fm"},
+                      **(draft or {})}
+        self.created_for = created_for
 
     def _request(self, method, path, *, json_body=None, **kw):
         if path.startswith("/api/v1/interviews/") and method == "GET":
             self.calls.append((method, path, json_body))
             return 200, self.draft
+        if method == "POST" and path.endswith(f"/interviews?for_step={json_body['for_step']}"):
+            self.calls.append((method, path, json_body))
+            return 200, {"id": 777, "candidate_step_id": json_body["for_step"], "is_completed": False,
+                         "interviewer": {"email": self.created_for}}
         return super()._request(method, path, json_body=json_body, **kw)
 
 
@@ -427,15 +433,43 @@ def test_feedback_needs_the_recruiters_own_open_draft():
     with pytest.raises(sa.ScreeningError, match="aren't an interviewer"):
         pa.feedback(63429397, "joel@riverside.fm", {"notes": "x"}, interview="https://app.comeet.co/app/interview/71303438?view=evaluate",
                     app=FeedbackApp())
-    with pytest.raises(sa.ScreeningError, match="no feedback draft"):
-        pa.feedback(63429397, "joel@riverside.fm", {"notes": "x"}, step_name="manager", app=FeedbackApp())
+    with pytest.raises(sa.ScreeningError, match="aren't an interviewer"):
+        pa.feedback(63429397, "itay@riverside.fm", {"notes": "x"}, app=FeedbackApp())
     with pytest.raises(sa.ScreeningError, match="already submitted"):
-        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=FeedbackApp(draft={"is_completed": True}))
-    two = [dict(FB_STEPS[1], assigned_to=FB_STEPS[1]["assigned_to"] + [{"email": "joel@riverside.fm", "interview_started": True}])]
-    with pytest.raises(sa.ScreeningError, match="more than one"):
-        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=FeedbackApp(steps=two))
+        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, interview="71303438", app=FeedbackApp(draft={"is_completed": True}))
     with pytest.raises(sa.ScreeningError, match="different candidate"):
         pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, interview="71303438", app=FeedbackApp(draft={"candidate_step_id": 1}))
+
+
+def test_feedback_never_creates_over_an_existing_draft():
+    app = FeedbackApp()
+    pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=app)
+    assert not [c for c in app.calls if c[0] == "POST"]
+    # another interviewer's draft on a step: no create, ask for the link
+    app = FeedbackApp(draft={"interviewer": {"email": "joel@riverside.fm"}})
+    with pytest.raises(sa.ScreeningError, match="another interviewer"):
+        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, step_name="video", app=app)
+    assert not app.writes()
+
+
+def test_feedback_opens_the_draft_when_the_interviewer_is_alone_on_the_step():
+    app = FeedbackApp()
+    res = pa.feedback(63429397, "joel@riverside.fm", {"pros": "Great"}, step_name="manager", app=app)
+    assert res["draft_created"] is True and res["feedback_url"].startswith("https://app.comeet.co/app/interview/777")
+    w = app.writes()
+    assert w[0][0] == "POST" and w[0][2] == {"for_step": 9003}
+    assert all(m == "PATCH" and p == "/api/v1/interviews/777" for m, p, _ in w[1:])
+    # Comeet put it under someone else: nothing is written
+    app = FeedbackApp(created_for="anna@riverside.fm")
+    with pytest.raises(sa.ScreeningError, match="someone else"):
+        pa.feedback(63429397, "joel@riverside.fm", {"pros": "Great"}, step_name="manager", app=app)
+    assert [c[0] for c in app.writes()] == ["POST"]
+    # two interviewers and no draft: Comeet would pick the owner, so no create
+    pair = [dict(FB_STEPS[2], assigned_to=FB_STEPS[2]["assigned_to"] + [{"email": "anna@riverside.fm"}])]
+    app = FeedbackApp(steps=pair)
+    with pytest.raises(sa.ScreeningError, match="more than one interviewer"):
+        pa.feedback(63429397, "joel@riverside.fm", {"pros": "Great"}, app=app)
+    assert not app.writes()
 
 
 # ─── Email: only the email is sent, and the record is read back ───

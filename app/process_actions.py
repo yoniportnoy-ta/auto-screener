@@ -22,9 +22,12 @@ Reminders use the envelope linkedin-to-comeet decoded from the recruiter UI's "A
        "participants": [<bot>, <recruiter>], "time_to_send_message": "...Z", ...}]
 The recruiter's mention chip plus their id in participants is what makes Comeet notify them.
 Interview feedback, text only (Yoni's recording, 2026-10-28; verified on test candidate 63429397):
-  the step's interview draft is GET /api/v1/candidates/{num}/steps -> step.interview.id once its
-  interviewer has typed anything; each field saves alone with
-  PATCH /api/v1/interviews/{id} {"id": id, "<field>": value, "time_updated": now}.
+  the step's latest draft is GET /api/v1/candidates/{num}/steps -> step.interview.id; each field
+  saves alone with PATCH /api/v1/interviews/{id} {"id": id, "<field>": value, "time_updated": now}.
+  No draft yet: POST /api/v1/candidates/{num}/steps/{step}/interviews {"for_step": step} creates
+  one owned by the step's assignee (Comeet ignores any interviewer we name), so it's only done
+  when the recruiter is the step's sole interviewer and step.interview is empty. Never POST over
+  an existing draft: a second create lost the first one's text (test candidate 63470107).
   Submitting is a PUT with is_completed true, and the decision is recommendation /
   decision_candidate_status: none of those is ever sent from here, so feedback stays a draft
   the interviewer submits (with their own recommendation) in Comeet.
@@ -525,6 +528,9 @@ def feedback(num: int, recruiter_email: str, fields: dict[str, str], step_name: 
     steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict)]
     mine = lambda s: [a for a in (s.get("assigned_to") or []) if isinstance(a, dict)
                       and str(a.get("email") or "").lower() == me]
+    owner = lambda d: str((d.get("interviewer") or {}).get("email") or "").lower()
+    link = "paste your feedback link from Comeet (…/app/interview/<number>) so it lands in yours"
+    created = False
     iid = interview_id(interview)
     if iid:
         d = _get(app, f"/api/v1/interviews/{iid}") or {}
@@ -533,21 +539,44 @@ def feedback(num: int, recruiter_email: str, fields: dict[str, str], step_name: 
             raise sa.ScreeningError("that feedback link belongs to a different candidate", status=400)
     else:
         want = (step_name or "").strip().lower()
-        pool = [s for s in steps if mine(s) and (not want or want in str(s.get("name") or "").lower())]
-        started = [s for s in pool if any(a.get("interview_started") and not a.get("interview_submitted") for a in mine(s))]
-        step = started[-1] if started else None   # only a draft the recruiter has opened is theirs
-        if step is None:
-            where = f"\"{step_name}\"" if want else "any step"
-            raise sa.ScreeningError(f"no feedback draft of yours on {where} for this candidate. Open the step's feedback "
-                                    f"in Comeet, type anything (a dot is enough) and close it without submitting, then try again", status=400)
-        if sum(1 for a in step.get("assigned_to") or [] if isinstance(a, dict) and a.get("interview_started")) > 1:
-            raise sa.ScreeningError(f"\"{step.get('name')}\" has more than one interviewer's draft: paste your feedback link "
-                                    f"from Comeet (…/app/interview/<number>) so it lands in yours", status=400)
-        iid = int((step.get("interview") or {}).get("id") or 0)
-        if not iid:
-            raise sa.ScreeningError(f"no feedback draft of yours on \"{step.get('name')}\" yet. Open its feedback in Comeet, "
-                                    f"type anything (a dot is enough) and close it without submitting, then try again", status=400)
-        d = _get(app, f"/api/v1/interviews/{iid}") or {}
+        pool = [s for s in steps if mine(s) and not any(a.get("interview_submitted") for a in mine(s))
+                and (not want or want in str(s.get("name") or "").lower())]
+        if not pool:
+            where = f"\"{step_name}\"" if want else "any open step"
+            raise sa.ScreeningError(f"you aren't an interviewer with unsubmitted feedback on {where} for this candidate", status=400)
+        drafts = []                                   # the recruiter's own open drafts, read from Comeet
+        for s in pool:
+            sid = int((s.get("interview") or {}).get("id") or 0)
+            if sid:
+                d = _get(app, f"/api/v1/interviews/{sid}") or {}
+                if owner(d) == me and not d.get("is_completed"):
+                    drafts.append((s, sid, d))
+        if len(drafts) > 1 and not want:
+            raise sa.ScreeningError("you have open feedback on " + ", ".join(f"\"{s.get('name')}\"" for s, *_ in drafts)
+                                    + ": say which step this feedback is for", status=400)
+        if drafts:
+            step, iid, d = drafts[-1]
+        else:
+            fresh = [s for s in pool if not s.get("is_completed") and s.get("status") != 1]
+            if len(fresh) > 1:
+                current = [s for s in fresh if s.get("status") == 2]
+                fresh = current if len(current) == 1 else fresh
+            if len(fresh) != 1:
+                names = ", ".join(f"\"{s.get('name')}\"" for s in fresh) or "none open"
+                raise sa.ScreeningError(f"say which step this feedback is for ({names})", status=400)
+            step = fresh[0]
+            if (step.get("interview") or {}).get("id"):
+                raise sa.ScreeningError(f"\"{step.get('name')}\" already has another interviewer's feedback: {link}", status=400)
+            if len([a for a in step.get("assigned_to") or [] if isinstance(a, dict)]) != 1:
+                raise sa.ScreeningError(f"\"{step.get('name')}\" has more than one interviewer: open your feedback in Comeet "
+                                        f"once (close it without submitting) or {link}", status=400)
+            sid = int(step["id"])
+            d = sa._body(app._request("POST", f"/api/v1/candidates/{num}/steps/{sid}/interviews?for_step={sid}",
+                                      json_body={"for_step": sid})) or {}
+            iid, created = int(d.get("id") or 0), True
+            if not iid or owner(d) != me:
+                raise sa.ScreeningError(f"Comeet opened the feedback on \"{step.get('name')}\" under someone else: "
+                                        f"nothing was written, {link}", status=409)
     if not mine(step):
         raise sa.ScreeningError(f"you aren't an interviewer on \"{step.get('name')}\", so this feedback isn't yours to write", status=403)
     if d.get("is_completed") or any(a.get("interview_submitted") for a in mine(step)):
@@ -563,7 +592,7 @@ def feedback(num: int, recruiter_email: str, fields: dict[str, str], step_name: 
         app._request("PATCH", f"/api/v1/interviews/{iid}", json_body={
             "id": iid, key: value, "time_updated": now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"})
         written.append(FEEDBACK_FIELDS[key])
-    return {"step": step.get("name"), "fields": written, "submitted": False,
+    return {"step": step.get("name"), "fields": written, "submitted": False, "draft_created": created,
             "feedback_url": f"https://app.comeet.co/app/interview/{iid}?view=evaluate"}
 
 
