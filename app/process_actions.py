@@ -28,6 +28,9 @@ Interview feedback, text only (Yoni's recording, 2026-10-28; verified on test ca
   Submitting is a PUT with is_completed true, and the decision is recommendation /
   decision_candidate_status: none of those is ever sent from here, so feedback stays a draft
   the interviewer submits (with their own recommendation) in Comeet.
+Email (Yoni's "add email" recording, 2026-10-28): PATCH /api/v1/candidates/{num}; the UI sends the
+  whole edit form, here only {"email": ...} is sent and the record is read back to prove nothing
+  else moved. Whether an address is personal (never a work email) is decided by the gateway.
 """
 from __future__ import annotations
 
@@ -562,4 +565,29 @@ def feedback(num: int, recruiter_email: str, fields: dict[str, str], step_name: 
         written.append(FEEDBACK_FIELDS[key])
     return {"step": step.get("name"), "fields": written, "submitted": False,
             "feedback_url": f"https://app.comeet.co/app/interview/{iid}?view=evaluate"}
+
+
+EMAIL_RE = re.compile(r"[^@\s]+@[a-z0-9.-]+\.[a-z0-9-]+")
+KEEP_ON_EMAIL = ("first_name", "last_name", "mobile_phone", "phone", "linkedin_url", "custom_fields")
+
+
+def update_email(num: int, email: str, app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """Set a lead's or candidate's email (Comeet keeps one), then check nothing else changed."""
+    app = _app(app)
+    email = (email or "").strip().lower()
+    if not EMAIL_RE.fullmatch(email):
+        raise sa.ScreeningError("that isn't an email address", status=400)
+    before = _get(app, f"/api/v1/candidates/{num}") or {}
+    if not before.get("id"):
+        raise sa.ScreeningError("no such lead or candidate in Comeet", status=404)
+    old = str(before.get("email") or "").strip().lower()
+    if old == email:
+        return {"email": email, "previous": old, "changed": False}
+    app._request("PATCH", f"/api/v1/candidates/{num}", json_body={"email": email})
+    after = _get(app, f"/api/v1/candidates/{num}") or {}
+    moved = [k for k in KEEP_ON_EMAIL if before.get(k) != after.get(k)]
+    if str(after.get("email") or "").strip().lower() != email or moved:
+        log.error("email on %s: saved %r, other fields changed: %s", num, after.get("email"), moved)
+        raise sa.ScreeningError("Comeet didn't save the email cleanly" + (f" (also changed: {', '.join(moved)})" if moved else ""), status=502)
+    return {"email": email, "previous": old, "changed": True}
 

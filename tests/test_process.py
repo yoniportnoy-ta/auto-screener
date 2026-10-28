@@ -436,3 +436,35 @@ def test_feedback_needs_the_recruiters_own_open_draft():
         pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=FeedbackApp(steps=two))
     with pytest.raises(sa.ScreeningError, match="different candidate"):
         pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, interview="71303438", app=FeedbackApp(draft={"candidate_step_id": 1}))
+
+
+# ─── Email: only the email is sent, and the record is read back ───
+class EmailApp(FakeApp):
+    def __init__(self, after_change=None):
+        super().__init__(record=CAND)
+        self.rec = {"id": 63429397, "email": "old@gmail.com", "first_name": "yoni", "phone": "1", "custom_fields": [{"id": 1, "value": "a"}]}
+        self.after_change = after_change or {}
+
+    def _request(self, method, path, *, json_body=None, **kw):
+        if path == "/api/v1/candidates/63429397":
+            self.calls.append((method, path, json_body))
+            if method == "PATCH":
+                self.rec = {**self.rec, **json_body, **self.after_change}
+            return 200, self.rec
+        return super()._request(method, path, json_body=json_body, **kw)
+
+
+def test_email_patch_sends_only_the_email_and_checks_the_rest():
+    app = EmailApp()
+    res = pa.update_email(63429397, " New.Me@Gmail.com ", app)
+    assert res == {"email": "new.me@gmail.com", "previous": "old@gmail.com", "changed": True}
+    assert app.writes() == [("PATCH", "/api/v1/candidates/63429397", {"email": "new.me@gmail.com"})]
+
+
+def test_email_same_bad_or_side_effects():
+    app = EmailApp()
+    assert pa.update_email(63429397, "old@gmail.com", app)["changed"] is False and not app.writes()
+    with pytest.raises(sa.ScreeningError, match="isn't an email"):
+        pa.update_email(63429397, "not-an-email", EmailApp())
+    with pytest.raises(sa.ScreeningError, match="also changed: phone"):
+        pa.update_email(63429397, "x@gmail.com", EmailApp(after_change={"phone": ""}))

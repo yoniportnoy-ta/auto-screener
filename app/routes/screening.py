@@ -365,6 +365,23 @@ class ProcessBody(BaseModel):
     tz: str = ""
 
 
+class EmailBody(BaseModel):
+    candidate: str = Field(min_length=1)
+    recruiter: Recruiter
+    email: str = Field(min_length=3)
+
+
+@router.post("/process/email", dependencies=[Depends(_require_gateway)])
+def process_email(body: EmailBody) -> dict[str, Any]:
+    """Set the email (the gateway has already checked it's personal) and record who did it."""
+    num = _process_call(pa.numeric_id, body.candidate)
+    res = _process_call(pa.update_email, num, body.email)
+    if res["changed"]:
+        log.info("process: email on %s changed by %s", num, body.recruiter.email or body.recruiter.name)
+        res["comment_error"] = _note(num, body.recruiter, "Email updated" + (" (replaced the previous one)." if res["previous"] else "."))
+    return {"ok": True, "numeric_id": num, **res}
+
+
 class FeedbackBody(BaseModel):
     candidate: str = Field(min_length=1)
     recruiter: Recruiter
