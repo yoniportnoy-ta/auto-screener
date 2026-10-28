@@ -365,6 +365,25 @@ class ProcessBody(BaseModel):
     tz: str = ""
 
 
+class FeedbackBody(BaseModel):
+    candidate: str = Field(min_length=1)
+    recruiter: Recruiter
+    fields: dict[str, str]
+    step: str = ""
+    interview: str = ""
+    replace: bool = False
+
+
+@router.post("/process/feedback", dependencies=[Depends(_require_gateway)])
+def process_feedback(body: FeedbackBody) -> dict[str, Any]:
+    """Interview feedback text into the recruiter's own draft; never submits, never decides."""
+    num = _process_call(pa.numeric_id, body.candidate)
+    res = _process_call(pa.feedback, num, body.recruiter.email, body.fields, body.step, body.interview, body.replace)
+    log.info("process: feedback on %s step %s (%s) by %s", num, res["step"], ",".join(res["fields"]),
+             body.recruiter.email or body.recruiter.name)
+    return {"ok": True, "numeric_id": num, **res}
+
+
 @router.post("/process/comment", dependencies=[Depends(_require_gateway)])
 def process_comment(body: ProcessBody) -> dict[str, Any]:
     num = _process_call(pa.numeric_id, body.candidate)

@@ -374,3 +374,65 @@ def test_lead_step_route_comments_with_recruiter(client):
                     json={"candidate": "63470107", "step": "Contacted", "recruiter": {"name": "Dana Levi"}})
     assert r.status_code == 200 and r.json()["lead_step"] == "Contacted"
     assert [w[1] for w in client.fake.writes()] == ["/api/v1/candidates/63470107/outreach-status", "/api/v1/sendmessages"]
+
+
+# ─── Interview feedback: text into the recruiter's own draft, never submitted ───
+FB_STEPS = [
+    {"id": 9001, "name": "CV Screen / Recruiter", "step_type": 1, "is_completed": True, "interview": {"id": 500},
+     "assigned_to": [{"email": "dana@riverside.fm", "interview_started": True, "interview_submitted": True}]},
+    {"id": 9002, "name": "Video Interview/Recruiter", "step_type": 2, "is_completed": False, "interview": {"id": 71303438},
+     "assigned_to": [{"email": "dana@riverside.fm", "interview_started": True, "interview_submitted": False}]},
+    {"id": 9003, "name": "Interview / Manager", "step_type": 2, "is_completed": False, "interview": None,
+     "assigned_to": [{"email": "joel@riverside.fm", "interview_started": False, "interview_submitted": False}]}]
+
+
+class FeedbackApp(FakeApp):
+    def __init__(self, draft=None, steps=FB_STEPS):
+        super().__init__(record=CAND, steps=steps)
+        self.draft = {"id": 71303438, "candidate_step_id": 9002, "is_completed": False, "notes": "<p>.</p>",
+                      "pros": "<p>Sharp</p>", "salary_expectations": "", **(draft or {})}
+
+    def _request(self, method, path, *, json_body=None, **kw):
+        if path.startswith("/api/v1/interviews/") and method == "GET":
+            self.calls.append((method, path, json_body))
+            return 200, self.draft
+        return super()._request(method, path, json_body=json_body, **kw)
+
+
+def test_feedback_patches_text_fields_only_never_submits():
+    app = FeedbackApp()
+    res = pa.feedback(63429397, "Dana@riverside.com", {"notes": "Strong <SaaS> background\nWants hybrid",
+                      "pros": "Clear communicator", "salary_expectations": "20k NIS"}, app=app)
+    assert res["step"] == "Video Interview/Recruiter" and res["submitted"] is False
+    assert res["feedback_url"] == "https://app.comeet.co/app/interview/71303438?view=evaluate"
+    w = app.writes()
+    assert all(m == "PATCH" and p == "/api/v1/interviews/71303438" for m, p, _ in w)
+    bodies = [b for *_, b in w]
+    for b in bodies:
+        assert not {"is_completed", "recommendation", "decision_candidate_status", "proceed"} & set(b)
+        assert len(set(b) - {"id", "time_updated"}) == 1
+    got = {k: v for b in bodies for k, v in b.items() if k not in ("id", "time_updated")}
+    assert got["notes"] == "<p>Strong &lt;SaaS&gt; background</p><p>Wants hybrid</p>"   # placeholder dot replaced
+    assert got["pros"] == "<p>Sharp</p><p>Clear communicator</p>"                       # added after
+    assert got["salary_expectations"] == "20k NIS"
+
+
+def test_feedback_refuses_decision_fields():
+    for bad in ({"recommendation": "3"}, {"decision_candidate_status": "3"}, {"is_completed": "true"}):
+        with pytest.raises(sa.ScreeningError):
+            pa.feedback(63429397, "dana@riverside.fm", bad, app=FeedbackApp())
+
+
+def test_feedback_needs_the_recruiters_own_open_draft():
+    with pytest.raises(sa.ScreeningError, match="aren't an interviewer"):
+        pa.feedback(63429397, "joel@riverside.fm", {"notes": "x"}, interview="https://app.comeet.co/app/interview/71303438?view=evaluate",
+                    app=FeedbackApp())
+    with pytest.raises(sa.ScreeningError, match="no feedback draft"):
+        pa.feedback(63429397, "joel@riverside.fm", {"notes": "x"}, step_name="manager", app=FeedbackApp())
+    with pytest.raises(sa.ScreeningError, match="already submitted"):
+        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=FeedbackApp(draft={"is_completed": True}))
+    two = [dict(FB_STEPS[1], assigned_to=FB_STEPS[1]["assigned_to"] + [{"email": "joel@riverside.fm", "interview_started": True}])]
+    with pytest.raises(sa.ScreeningError, match="more than one"):
+        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, app=FeedbackApp(steps=two))
+    with pytest.raises(sa.ScreeningError, match="different candidate"):
+        pa.feedback(63429397, "dana@riverside.fm", {"notes": "x"}, interview="71303438", app=FeedbackApp(draft={"candidate_step_id": 1}))

@@ -21,6 +21,13 @@ Reminders use the envelope linkedin-to-comeet decoded from the recruiter UI's "A
   POST /api/v1/sendmessages [{"action": 2, "event": 32, "discussion_type": 3, "body": <mention chip + text>,
        "participants": [<bot>, <recruiter>], "time_to_send_message": "...Z", ...}]
 The recruiter's mention chip plus their id in participants is what makes Comeet notify them.
+Interview feedback, text only (Yoni's recording, 2026-10-28; verified on test candidate 63429397):
+  the step's interview draft is GET /api/v1/candidates/{num}/steps -> step.interview.id once its
+  interviewer has typed anything; each field saves alone with
+  PATCH /api/v1/interviews/{id} {"id": id, "<field>": value, "time_updated": now}.
+  Submitting is a PUT with is_completed true, and the decision is recommendation /
+  decision_candidate_status: none of those is ever sent from here, so feedback stays a draft
+  the interviewer submits (with their own recommendation) in Comeet.
 """
 from __future__ import annotations
 
@@ -476,3 +483,83 @@ def referral_sources(app: ComeetAppClient | None = None) -> list[dict[str, Any]]
     keep = [r for r in refs if "(slack bot)" not in r["name"].lower()
             or re.sub(r"\s*\(slack bot\).*$", "", r["name"], flags=re.I).strip().lower() not in plain]
     return sorted(keep, key=lambda x: x["name"].lower())
+
+
+# Feedback fields as the evaluation screen labels them. HTML fields hold <p> paragraphs; salary and
+# availability are plain text (shown in Comeet behind their links). Nothing else is ever written.
+FEEDBACK_HTML = {"pros": "Pros", "concerns": "Concerns", "further_review": "Further review",
+                 "notes": "Notes", "private_notes": "Private notes"}
+FEEDBACK_PLAIN = {"salary_expectations": "Salary expectations", "availability": "Availability to start"}
+FEEDBACK_FIELDS = {**FEEDBACK_HTML, **FEEDBACK_PLAIN}
+EMPTY_DRAFT = re.compile(r"^\s*(<p>\s*(\.|&nbsp;|<br\s*/?>)?\s*</p>\s*)*$")
+
+
+def _paragraphs(text: str) -> str:
+    return "".join(f"<p>{html.escape(line)}</p>" for line in text.strip().splitlines() if line.strip())
+
+
+def interview_id(ref: str) -> int | None:
+    """A feedback link (…/app/interview/71303438?view=evaluate) or a bare id."""
+    m = re.search(r"/interview/(\d+)", ref or "") or re.fullmatch(r"\s*(\d{6,})\s*", ref or "")
+    return int(m.group(1)) if m else None
+
+
+def feedback(num: int, recruiter_email: str, fields: dict[str, str], step_name: str = "",
+             interview: str = "", replace: bool = False, app: ComeetAppClient | None = None) -> dict[str, Any]:
+    """Write the recruiter's interview feedback text into their own unsubmitted draft on a step.
+    Never submits and never sets a recommendation or decision. Text is added after what's there
+    unless `replace`; a draft holding only a placeholder (a dot) is overwritten."""
+    app = _app(app)
+    unknown = sorted(set(fields) - set(FEEDBACK_FIELDS))
+    if unknown:
+        raise sa.ScreeningError(f"only feedback text can be written ({', '.join(FEEDBACK_FIELDS.values())}); "
+                                f"not {', '.join(unknown)}. Recommendation and decision are set in Comeet by the interviewer", status=400)
+    fields = {k: str(v).strip() for k, v in fields.items() if str(v or "").strip()}
+    if not fields:
+        raise sa.ScreeningError("there's no feedback text to write", status=400)
+    _require(num, "candidate", app)
+    me = (recruiter_email or "").strip().lower().replace("@riverside.com", "@riverside.fm")
+    steps = [s for s in (_get(app, f"/api/v1/candidates/{num}/steps") or []) if isinstance(s, dict)]
+    mine = lambda s: [a for a in (s.get("assigned_to") or []) if isinstance(a, dict)
+                      and str(a.get("email") or "").lower() == me]
+    iid = interview_id(interview)
+    if iid:
+        d = _get(app, f"/api/v1/interviews/{iid}") or {}
+        step = next((s for s in steps if s.get("id") == d.get("candidate_step_id")), None)
+        if step is None:
+            raise sa.ScreeningError("that feedback link belongs to a different candidate", status=400)
+    else:
+        want = (step_name or "").strip().lower()
+        pool = [s for s in steps if mine(s) and (not want or want in str(s.get("name") or "").lower())]
+        started = [s for s in pool if any(a.get("interview_started") and not a.get("interview_submitted") for a in mine(s))]
+        step = started[-1] if started else None   # only a draft the recruiter has opened is theirs
+        if step is None:
+            where = f"\"{step_name}\"" if want else "any step"
+            raise sa.ScreeningError(f"no feedback draft of yours on {where} for this candidate. Open the step's feedback "
+                                    f"in Comeet, type anything (a dot is enough) and close it without submitting, then try again", status=400)
+        if sum(1 for a in step.get("assigned_to") or [] if isinstance(a, dict) and a.get("interview_started")) > 1:
+            raise sa.ScreeningError(f"\"{step.get('name')}\" has more than one interviewer's draft: paste your feedback link "
+                                    f"from Comeet (…/app/interview/<number>) so it lands in yours", status=400)
+        iid = int((step.get("interview") or {}).get("id") or 0)
+        if not iid:
+            raise sa.ScreeningError(f"no feedback draft of yours on \"{step.get('name')}\" yet. Open its feedback in Comeet, "
+                                    f"type anything (a dot is enough) and close it without submitting, then try again", status=400)
+        d = _get(app, f"/api/v1/interviews/{iid}") or {}
+    if not mine(step):
+        raise sa.ScreeningError(f"you aren't an interviewer on \"{step.get('name')}\", so this feedback isn't yours to write", status=403)
+    if d.get("is_completed") or any(a.get("interview_submitted") for a in mine(step)):
+        raise sa.ScreeningError(f"your feedback on \"{step.get('name')}\" is already submitted: edit it in Comeet", status=400)
+    written = []
+    for key, text in fields.items():
+        if key in FEEDBACK_HTML:
+            old = str(d.get(key) or "")
+            value = _paragraphs(text) if replace or EMPTY_DRAFT.match(old) else old + _paragraphs(text)
+        else:
+            value = text if replace or not str(d.get(key) or "").strip() else f"{d[key]}; {text}"
+        now = datetime.now(timezone.utc)
+        app._request("PATCH", f"/api/v1/interviews/{iid}", json_body={
+            "id": iid, key: value, "time_updated": now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"})
+        written.append(FEEDBACK_FIELDS[key])
+    return {"step": step.get("name"), "fields": written, "submitted": False,
+            "feedback_url": f"https://app.comeet.co/app/interview/{iid}?view=evaluate"}
+
